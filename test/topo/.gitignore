@@ -1,0 +1,4 @@
+bin/
+.run/
+# Acceptance runs (kernel round, coexistence monitor): kept apart from .run/, which the fake topology wipes on start.
+.accept/

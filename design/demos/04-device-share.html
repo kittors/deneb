@@ -1,0 +1,922 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>4 · 管理员把设备分给某个人 · Deneb</title>
+    <link rel="stylesheet" href="v3/v3.css" />
+    <style>
+      /* Scene 4 only: a desktop with two windows, the admin console in a
+         browser on the left and 小林's Deneb menu-bar panel on the right.
+         Built from the same tokens as the app (DESIGN.md §3). */
+      .stage {
+        position: absolute;
+        width: 1180px;
+        height: 740px;
+      }
+      .stage > .links {
+        z-index: 20;
+      }
+      .browser {
+        position: absolute;
+        left: 0;
+        top: 20px;
+        width: 852px;
+        height: 700px;
+        border-radius: 14px;
+        background: var(--bg);
+        box-shadow: var(--win-shadow);
+        overflow: hidden;
+      }
+      .b-bar {
+        position: absolute;
+        inset: 0 0 auto 0;
+        height: 46px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 0 16px;
+        border-bottom: 1px solid var(--line);
+        background: var(--bg);
+      }
+      .b-bar .lights {
+        padding: 0;
+      }
+      .url {
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 300px;
+        height: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        border-radius: 999px;
+        background: var(--well);
+        font-size: 12px;
+        color: var(--ink-2);
+      }
+      .url svg {
+        color: var(--ink-3);
+      }
+      .b-side {
+        position: absolute;
+        left: 0;
+        top: 46px;
+        bottom: 0;
+        width: 172px;
+        padding: 18px 10px;
+        background: var(--well);
+      }
+      .b-side .brand {
+        margin: 0 8px 18px;
+        font-size: 14px;
+      }
+      .b-side .nav {
+        height: 34px;
+      }
+      .b-main {
+        position: absolute;
+        left: 172px;
+        top: 46px;
+        right: 0;
+        bottom: 0;
+      }
+      .b-main .title {
+        position: absolute;
+        left: 28px;
+        top: 24px;
+      }
+      .b-main .lede {
+        position: absolute;
+        left: 28px;
+        top: 56px;
+        font-size: 13px;
+        color: var(--ink-2);
+      }
+      .well-card {
+        position: absolute;
+        top: 100px;
+        border-radius: 20px;
+        background: var(--well);
+        padding: 14px 14px 16px;
+      }
+      .well-card .card-label {
+        display: flex;
+        justify-content: space-between;
+        margin: 0 4px 12px;
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--ink-3);
+      }
+      .devs {
+        left: 28px;
+        width: 344px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        row-gap: 10px;
+      }
+      .cell {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 9px;
+        padding: 6px 0 4px;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: grab;
+        user-select: none;
+        transition: opacity 0.2s ease-out;
+      }
+      .cell .dev-s {
+        position: relative;
+        width: 60px;
+        height: 60px;
+      }
+      .cell:hover .tile {
+        transform: translateY(-2px);
+      }
+      .cell:active .tile {
+        transform: scale(0.97);
+      }
+      /* A picked-up cell or row leaves its place empty (the list makes
+         room for it), never a faded copy of itself (DESIGN.md §6.1). */
+      .cell.ghost {
+        visibility: hidden;
+      }
+      .members {
+        left: 388px;
+        width: 264px;
+      }
+      .mrows {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .mrow {
+        border-radius: 14px;
+        background: var(--bg);
+        box-shadow: var(--shadow-sm);
+        cursor: grab;
+        transition: box-shadow 0.16s ease-out, opacity 0.2s ease-out;
+      }
+      .mrow.target {
+        box-shadow: 0 0 0 2px var(--primary), var(--shadow-sm);
+      }
+      .mtop {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        height: 52px;
+        padding: 0 12px 0 10px;
+        font-size: 13px;
+        font-weight: 500;
+      }
+      .mtop .cnt {
+        margin-left: auto;
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        font-size: 12px;
+        font-weight: 400;
+        color: var(--ink-2);
+      }
+      /* The count rolls: the old number leaves upward, the new comes in. */
+      .num {
+        position: relative;
+        display: inline-block;
+        height: 16px;
+        min-width: 7px;
+        overflow: hidden;
+        line-height: 16px;
+        text-align: right;
+      }
+      .num i {
+        display: block;
+        font-style: normal;
+      }
+      .mtop > svg {
+        color: var(--ink-3);
+        transition: transform 0.25s ease-out;
+      }
+      .mrow.open .mtop > svg {
+        transform: rotate(90deg);
+      }
+      .mchips {
+        display: flex;
+        flex-wrap: wrap;
+        align-content: flex-start;
+        gap: 6px;
+        height: 0;
+        overflow: hidden;
+        padding: 0 10px;
+        transition: height 0.32s cubic-bezier(0.25, 0.4, 0.2, 1);
+      }
+      .mchip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        height: 30px;
+        padding: 0 4px 0 4px;
+        border-radius: 999px;
+        background: var(--well);
+        font-size: 12px;
+        font-weight: 500;
+        white-space: nowrap;
+      }
+      .mchip .tile-xs {
+        position: relative;
+        width: 22px;
+        height: 22px;
+      }
+      .mchip .tile {
+        border-radius: 7px;
+      }
+      .mchip .tile::before {
+        left: 3px;
+        top: 2px;
+        width: 12px;
+        height: 6px;
+      }
+      .mchip .x {
+        display: grid;
+        place-items: center;
+        width: 22px;
+        height: 22px;
+        border: 0;
+        border-radius: 50%;
+        background: transparent;
+        color: var(--ink-3);
+        cursor: pointer;
+      }
+      .mchip .x:hover {
+        background: var(--well-2);
+        color: var(--ink);
+      }
+      .empty-note {
+        font-size: 12px;
+        color: var(--ink-3);
+        line-height: 30px;
+        padding-left: 4px;
+      }
+      .mrow:active {
+        transform: scale(0.985);
+      }
+      .mrow.ghost {
+        visibility: hidden;
+      }
+      .cell.target .tile {
+        box-shadow: 0 0 0 4px var(--well), 0 0 0 6px var(--primary), inset 0 1px 0.5px rgba(255, 255, 255, 0.45), 0 8px 18px color-mix(in srgb, var(--c) 30%, transparent);
+      }
+      /* A member being dragged: the person, as a small lifted pill. */
+      .mpill {
+        position: absolute;
+        z-index: 30;
+        transform: translate(-50%, -50%) rotate(-2deg);
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        height: 40px;
+        padding: 0 14px 0 4px;
+        border-radius: 999px;
+        background: var(--bg);
+        box-shadow: var(--shadow-md), 0 0 0 1px var(--line);
+        font-size: 13px;
+        font-weight: 500;
+        white-space: nowrap;
+        pointer-events: none;
+      }
+      /* "Already has it", said in the row itself, where the count was. */
+      .mtop .note {
+        margin-left: auto;
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--ink-2);
+        white-space: nowrap;
+      }
+      .mtop .note + .cnt {
+        display: none;
+      }
+      .b-main .toast {
+        bottom: 24px;
+      }
+
+      /* 小林's menu-bar panel */
+      .mb-label {
+        position: absolute;
+        left: 884px;
+        top: 20px;
+        font-size: 12px;
+        color: var(--ink-3);
+      }
+      .panel {
+        position: absolute;
+        left: 880px;
+        top: 44px;
+        width: 300px;
+        padding: 10px;
+        border-radius: 16px;
+        background: var(--bg);
+        box-shadow: var(--shadow-md), 0 0 0 1px var(--line);
+      }
+      .p-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 36px;
+        padding: 0 6px;
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .p-head svg {
+        color: var(--primary);
+      }
+      .p-head .on {
+        margin-left: auto;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        font-weight: 400;
+        color: var(--ink-2);
+      }
+      .p-head .on .dot {
+        width: 6px;
+        height: 6px;
+        box-shadow: none;
+      }
+      .p-label {
+        display: flex;
+        justify-content: space-between;
+        margin: 8px 6px 4px;
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--ink-3);
+      }
+      .p-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        height: 52px;
+        padding: 0 6px;
+        border-radius: 12px;
+        overflow: hidden;
+      }
+      .p-row .tile-s {
+        position: relative;
+        width: 34px;
+        height: 34px;
+        flex: none;
+      }
+      .p-row .tile {
+        border-radius: 11px;
+      }
+      .p-row .tile::before {
+        left: 5px;
+        top: 3px;
+        width: 18px;
+        height: 8px;
+      }
+      .p-row b {
+        display: block;
+        font-size: 13px;
+        font-weight: 500;
+      }
+      .p-row small {
+        display: block;
+        font-size: 12px;
+        color: var(--ink-2);
+      }
+      .p-row .new {
+        margin-left: auto;
+        height: 18px;
+        padding: 0 7px;
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        background: var(--primary);
+        color: #fff;
+        font-size: 11px;
+        font-weight: 600;
+      }
+      .p-row.flash {
+        animation: k-flash 1.4s ease-out;
+      }
+      .p-sep {
+        height: 1px;
+        margin: 6px 6px;
+        background: var(--line);
+      }
+      .p-foot {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 34px;
+        padding: 0 6px;
+        font-size: 13px;
+        color: var(--ink-2);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script src="shared/motion.js"></script>
+    <script src="shared/demo.js"></script>
+    <script src="v3/glyphs.js"></script>
+    <script src="v3/links.js"></script>
+    <script src="v3/app.js"></script>
+    <script>
+      // Scene 4 (DESIGN.md §9): the admin shares a studio device by dragging
+      // it onto a person in the web console. It flies into their ball, their
+      // count rolls up, and a light carries it over to their own Deneb (小林's
+      // menu-bar panel), where it arrives marked "新". Giving someone what
+      // they already have shakes their row; opening a row and pressing ×
+      // takes a device back, with undo.
+      const P = App.PEOPLE;
+      const TEAM = P.team.c;
+      const DEVICES = [
+        { id: 'gpu', type: 'server', name: 'GPU 主机' },
+        { id: 'build', type: 'server', name: '构建服务器' },
+        { id: 'files', type: 'nas', name: '文件服务器' },
+        { id: 'db', type: 'database', name: '开发数据库' },
+        { id: 'printer', type: 'board', name: '打印机' },
+        { id: 'test', type: 'mini', name: '测试机' },
+      ];
+      const D_ = Object.fromEntries(DEVICES.map((d) => [d.id, d]));
+      const MEMBERS = [
+        { k: 'lin', has: ['build', 'printer'] },
+        { k: 'jie', has: ['gpu', 'build', 'test'] },
+        { k: 'mia', has: ['files'] },
+        { k: 'leo', has: [] },
+      ];
+      const M = Object.fromEntries(MEMBERS.map((m) => [m.k, m]));
+
+      const stage = App.h(`<div class="stage window"></div>`);
+      document.getElementById('app').appendChild(stage);
+      const app = new App({ frame: false, stageEl: stage, trace: ['.cell', '.mrow', '.p-row'] });
+      const $ = (s, r = stage) => r.querySelector(s);
+      const tile = (d, size = 30) => `<div class="tile" style="--c:${TEAM}">${G.device(d.type, size)}</div>`;
+
+      // ---- The admin console ---------------------------------------------------------------
+      stage.innerHTML = `
+        <div class="browser">
+          <div class="b-bar"><div class="lights"><i></i><i></i><i></i></div><div class="url">${G.ui('lock', 12)}admin.deneb.app</div></div>
+          <aside class="b-side">
+            <div class="brand">${G.star(16)}<span>Deneb 后台</span></div>
+            <div class="nav">${G.ui('screen', 18)}设备</div>
+            <div class="nav">${G.ui('people', 18)}成员</div>
+            <div class="nav on">${G.ui('inbox', 18)}设备共享</div>
+            <div class="nav">${G.ui('gear', 18)}设置</div>
+          </aside>
+          <main class="b-main">
+            <div class="title">设备共享</div>
+            <div class="lede">把设备拖到成员身上，就分享给他了</div>
+            <section class="well-card devs"><div class="card-label"><span>工作室的设备</span><span>6 台</span></div>
+              <div class="grid">${DEVICES.map((d) => `<div class="cell" data-d="${d.id}"><div class="dev-s">${tile(d)}</div><span>${d.name}</span></div>`).join('')}</div>
+            </section>
+            <section class="well-card members"><div class="card-label"><span>成员</span><span>4 人</span></div>
+              <div class="mrows">${MEMBERS.map(
+                (m) =>
+                  `<div class="mrow" data-k="${m.k}"><div class="mtop">${App.ball(m.k)}<span>${P[m.k].name}</span><span class="cnt"><span class="num"><i>${m.has.length}</i></span>台</span>${G.ui('chevron', 14)}</div><div class="mchips"></div></div>`
+              ).join('')}</div>
+            </section>
+          </main>
+        </div>
+        <div class="mb-label">小林的电脑 · 菜单栏里的 Deneb</div>
+        <div class="panel">
+          <div class="p-head">${G.star(16)}Deneb<span class="on"><span class="dot"></span>已连上</span></div>
+          <div class="p-sep"></div>
+          <div class="p-label"><span>共享给我</span><span class="p-count">2</span></div>
+          <div class="p-list"></div>
+          <div class="p-sep"></div>
+          <div class="p-foot"><span>打开 Deneb</span>${G.ui('chevron', 14)}</div>
+        </div>`;
+      const layer = new Net.Layer(stage, { zoom: () => app.zoom });
+      addEventListener('resize', () => layer.resize());
+      const page = $('.b-main');
+
+      // Stage coordinates of an element's center (the stage is zoomed).
+      const center = (el) => {
+        const r = el.getBoundingClientRect(), s = stage.getBoundingClientRect();
+        return { x: (r.left - s.left + r.width / 2) / app.zoom, y: (r.top - s.top + r.height / 2) / app.zoom };
+      };
+      const rectOf = (el) => {
+        const r = el.getBoundingClientRect(), s = stage.getBoundingClientRect();
+        return { x: (r.left - s.left) / app.zoom, y: (r.top - s.top) / app.zoom, w: r.width / app.zoom, h: r.height / app.zoom };
+      };
+      const rowOf = (k) => $(`.mrow[data-k="${k}"]`);
+
+      // ---- Counts roll, rows open --------------------------------------------------------------
+      function roll(k) {
+        const box = $('.num', rowOf(k));
+        const n = M[k].has.length;
+        const old = box.firstElementChild;
+        if (old.textContent === String(n)) return;
+        const up = n > +old.textContent;
+        const nu = App.h(`<i>${n}</i>`);
+        box.appendChild(nu);
+        old.style.position = 'absolute';
+        old.style.right = '0';
+        old.animate([{ transform: 'none', opacity: 1 }, { transform: `translateY(${up ? -14 : 14}px)`, opacity: 0 }], { duration: 260, easing: 'ease-in', fill: 'forwards' });
+        nu.animate([{ transform: `translateY(${up ? 14 : -14}px)`, opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 300, easing: 'cubic-bezier(0.3, 1.2, 0.5, 1)' });
+        D.after(270, () => old.remove());
+      }
+      const chip = (k, id) =>
+        `<span class="mchip" data-d="${id}"><span class="tile-xs">${tile(D_[id], 14)}</span>${D_[id].name}<button class="x" title="收回">${G.ui('close', 12)}</button></span>`;
+      function fillChips(k) {
+        const box = $('.mchips', rowOf(k));
+        box.innerHTML = M[k].has.length ? M[k].has.map((id) => chip(k, id)).join('') : `<span class="empty-note">还没分给他设备</span>`;
+        for (const x of box.querySelectorAll('.x'))
+          x.onclick = (e) => {
+            e.stopPropagation();
+            revoke(k, x.closest('.mchip').dataset.d);
+          };
+      }
+      // A row's open height: its chips plus a little air below. Measured
+      // at natural height, so a row that lost a chip shrinks too.
+      const fitChips = (k) => {
+        const row = rowOf(k), box = $('.mchips', row);
+        if (!row.classList.contains('open')) return (box.style.height = '0px');
+        const was = box.style.height;
+        box.style.transition = 'none';
+        box.style.height = 'auto';
+        const h = box.scrollHeight + 10;
+        box.style.height = was;
+        box.offsetHeight; // commit the old height, so the change animates
+        box.style.transition = '';
+        box.style.height = h + 'px';
+      };
+      function toggle(k) {
+        const row = rowOf(k);
+        const open = !row.classList.contains('open');
+        if (open) fillChips(k);
+        row.classList.toggle('open', open);
+        fitChips(k);
+      }
+
+      // ---- 小林's panel ----------------------------------------------------------------------
+      const plist = $('.p-list');
+      const prow = (id, fresh) =>
+        App.h(`<div class="p-row" data-d="${id}"><div class="tile-s">${tile(D_[id], 18)}</div><div><b>${D_[id].name}</b><small>工作室 · 直接连上</small></div>${fresh ? '<span class="new">新</span>' : ''}</div>`);
+      for (const id of M.lin.has) plist.appendChild(prow(id));
+      const pcount = () => ($('.p-count').textContent = M.lin.has.length);
+      function arrive(id, fresh = true) {
+        const r = prow(id, fresh);
+        plist.prepend(r);
+        r.classList.add('flash');
+        r.animate([{ height: '0px', opacity: 0 }, { height: '52px', opacity: 1 }], { duration: 360, easing: 'cubic-bezier(0.25, 0.4, 0.2, 1)' });
+        const nb = $('.new', r);
+        if (nb) nb.animate([{ transform: 'scale(0.4)', opacity: 0 }, { transform: 'scale(1.15)', opacity: 1, offset: 0.6 }, { transform: 'none' }], { duration: 420, delay: 160, easing: 'ease-out', fill: 'backwards' });
+        D.after(1400, () => r.classList.remove('flash'));
+        pcount();
+      }
+      function depart(id) {
+        const r = plist.querySelector(`.p-row[data-d="${id}"]`);
+        if (!r) return;
+        r.animate([{ height: '52px', opacity: 1 }, { height: '0px', opacity: 0 }], { duration: 320, easing: 'cubic-bezier(0.4, 0, 0.6, 1)', fill: 'forwards' });
+        D.after(330, () => r.remove());
+        pcount();
+      }
+
+      // ---- Sharing and taking back ---------------------------------------------------------------
+      async function share(k, id, o = {}) {
+        M[k].has.unshift(id);
+        roll(k);
+        const ball = $('.ball', rowOf(k));
+        ball.animate([{ transform: 'none' }, { transform: 'scale(1.2)', offset: 0.4 }, { transform: 'none' }], { duration: 460, easing: 'cubic-bezier(0.3, 1.3, 0.5, 1)' });
+        if (rowOf(k).classList.contains('open')) {
+          fillChips(k);
+          fitChips(k);
+          const c = $(`.mchip[data-d="${id}"]`, rowOf(k));
+          c.animate([{ transform: 'scale(0.6)', opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 300, easing: 'cubic-bezier(0.3, 1.3, 0.5, 1)' });
+        }
+        // Only 小林's computer is on screen: a light carries the device
+        // from the console over to her Deneb.
+        if (k === 'lin') {
+          const to = plist.firstElementChild ? center($('.tile-s', plist.firstElementChild)) : center(plist);
+          await layer.shoot(center(ball), { x: to.x, y: to.y - 8 }, { ca: TEAM, cb: P.lin.c, bend: -0.22 });
+          arrive(id, !o.quiet);
+        }
+      }
+      function revoke(k, id) {
+        const m = M[k];
+        const i = m.has.indexOf(id);
+        if (i < 0) return;
+        m.has.splice(i, 1);
+        roll(k);
+        const c = $(`.mchip[data-d="${id}"]`, rowOf(k));
+        if (c) {
+          c.animate([{ transform: 'none', opacity: 1 }, { transform: 'scale(0.6)', opacity: 0 }], { duration: 220, easing: 'ease-in', fill: 'forwards' });
+          D.after(230, () => (fillChips(k), fitChips(k)));
+        }
+        if (k === 'lin') depart(id);
+        app.toast(`已收回${D_[id].name}`, {
+          parent: page,
+          x: 340,
+          undo: () => {
+            m.has.splice(i, 0, id);
+            roll(k);
+            if (rowOf(k).classList.contains('open')) (fillChips(k), fitChips(k));
+            if (k === 'lin') arrive(id, false);
+          },
+        });
+      }
+
+      // ---- Lists that keep the order you give them ---------------------------------------------------
+      // The console is a list, not a free canvas (DESIGN.md §6.2): a device
+      // dragged onto another cell takes that place, a member dragged up or
+      // down takes that place, and the rest make way on springs. The order
+      // is remembered on this machine (replay clears it).
+      const grid = $('.grid'), rows = $('.mrows');
+      const orderKey = (name) => `deneb.pos.${app.page}.${name}`;
+      const saveOrder = (name, box, attr) => {
+        if (D.recording) return;
+        try {
+          localStorage.setItem(orderKey(name), JSON.stringify([...box.children].map((el) => el.dataset[attr])));
+        } catch (_) {}
+      };
+      const loadOrder = (name, box, attr) => {
+        if (D.recording) return;
+        try {
+          for (const id of JSON.parse(localStorage.getItem(orderKey(name)) || '[]')) {
+            const el = box.querySelector(`[data-${attr}="${id}"]`);
+            if (el) box.appendChild(el);
+          }
+        } catch (_) {}
+      };
+      loadOrder('devices', grid, 'd');
+      loadOrder('members', rows, 'k');
+      // Put an element at a new index; whatever shifts glides there from
+      // where it was (first-last-invert-play).
+      function reorder(box, el, index) {
+        const items = [...box.children];
+        if (items.indexOf(el) === index) return;
+        const before = new Map(items.map((x) => [x, x.getBoundingClientRect()]));
+        const others = items.filter((x) => x !== el);
+        box.insertBefore(el, others[index] || null);
+        for (const x of box.children) {
+          const a = before.get(x), b = x.getBoundingClientRect();
+          const dx = (a.left - b.left) / app.zoom, dy = (a.top - b.top) / app.zoom;
+          // A gentle start and a quick finish: a cell that leaps in its first
+          // frame reads as a jump.
+          if (Math.abs(dx) + Math.abs(dy) > 0.5) x.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], { duration: 340, easing: 'cubic-bezier(0.25, 0.4, 0.2, 1)' });
+        }
+      }
+      const hit = (el, p, pad = 0) => {
+        const r = rectOf(el);
+        return p.x >= r.x - pad && p.x <= r.x + r.w + pad && p.y >= r.y - pad && p.y <= r.y + r.h + pad;
+      };
+      const rowAt = (p) => MEMBERS.map((m) => m.k).find((k) => hit(rowOf(k), p, 4));
+      const cellAt = (p) => [...grid.children].find((c) => hit(c, p, 2));
+      // Places are read from layout (offsetLeft/Top), never from the boxes
+      // as they glide, or a moving neighbour would make the index flip.
+      const at = (el) => {
+        const b = rectOf(el.offsetParent);
+        return { x: b.x + el.offsetLeft + el.offsetWidth / 2, y: b.y + el.offsetTop + el.offsetHeight / 2 };
+      };
+      // Where in the grid a cell dropped at p goes: the nearest cell's place.
+      const gridIndex = (p) => {
+        let bi = 0, bd = Infinity;
+        [...grid.children].forEach((c, i) => {
+          const q = at(c), d = Math.hypot(q.x - p.x, q.y - p.y);
+          if (d < bd) (bd = d), (bi = i);
+        });
+        return bi;
+      };
+      // Where in the list a row dropped at p goes: below every row whose
+      // middle is above the hand.
+      const rowIndex = (p, row) => [...rows.children].filter((r) => r !== row && at(r).y < p.y).length;
+      // Places change only after the hand rests on one for a moment, so
+      // passing over the grid on the way to a person does not shuffle it.
+      const dwell = () => {
+        let want = null, timer = null;
+        return (box, el, i) => {
+          if (i === want) return;
+          want = i;
+          if (timer) timer.cancel();
+          timer = i == null ? null : D.after(150, () => reorder(box, el, i));
+        };
+      };
+      // Held things stay on the desktop.
+      const clampStage = (p) => ({ x: D.clamp(p.x, 30, 1150), y: D.clamp(p.y, 30, 710) });
+      const lightRow = (k) => {
+        for (const m of MEMBERS) rowOf(m.k).classList.toggle('target', m.k === k);
+      };
+      const lightCell = (c) => {
+        for (const x of grid.children) x.classList.toggle('target', x === c);
+      };
+
+      // Giving someone what they already have: their row shakes, and for a
+      // moment says so where the count was.
+      function nudge(k) {
+        const row = rowOf(k), top = $('.mtop', row);
+        row.animate([{ transform: 'none' }, { transform: 'translateX(-6px)' }, { transform: 'translateX(6px)' }, { transform: 'translateX(-4px)' }, { transform: 'translateX(2px)' }, { transform: 'none' }], { duration: 400, easing: 'ease-out' });
+        const old = $('.note', top);
+        if (old) old.remove();
+        const note = App.h(`<span class="note">已经有了</span>`);
+        $('.cnt', top).before(note);
+        note.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: 'ease-out' });
+        D.after(1800, () => note.isConnected && note.remove());
+      }
+
+      // ---- A device: onto a person (share it), or onto another cell -----------------------------------
+      for (const d of DEVICES) {
+        const cell = $(`.cell[data-d="${d.id}"]`);
+        const settle = dwell();
+        let g = null, from = 0, grab = null;
+        const place = (p, s) => {
+          g.style.left = p.x + 'px';
+          g.style.top = p.y + 'px';
+          if (s != null) g.style.transform = `scale(${s})`;
+        };
+        const home = () => center($('.dev-s', cell));
+        const flyHome = async () => {
+          const el = g, a = { x: parseFloat(el.style.left), y: parseFloat(el.style.top) }, b = home();
+          const s0 = parseFloat((el.style.transform.match(/scale\(([\d.]+)\)/) || [0, 1])[1]);
+          el.style.transition = '';
+          await App.tween(320, (t) => place({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }, s0 + (1 - s0) * t), D.Ease.out);
+          el.remove();
+          cell.classList.remove('ghost');
+        };
+        app.drag(cell, {
+          ref: stage,
+          start: (p0, p) => {
+            from = [...grid.children].indexOf(cell);
+            // Where it was grabbed stays under the hand at first, then the
+            // tile eases to the hand's middle (it may shrink there, §6.1).
+            const c = home();
+            grab = { x: p0.x - c.x, y: p0.y - c.y, t: D.now() };
+            // The device goes with the hand as a whole: tile and name.
+            g = App.h(`<div class="dev dragging">${tile(d)}<div class="name"><span class="nm">${d.name}</span></div></div>`);
+            g.style.transition = 'transform 0.22s cubic-bezier(0.3, 1.3, 0.5, 1)';
+            stage.appendChild(g);
+            place(home(), 1);
+            cell.classList.add('ghost');
+          },
+          move: (p) => {
+            const q = clampStage(p);
+            const overGrid = hit($('.devs'), q);
+            const k = D.Ease.out(Math.max(0, 1 - (D.now() - grab.t) / 220));
+            // Over the grid it is full size and its place follows the hand;
+            // elsewhere it is small, so the member rows show (§6.1).
+            place({ x: q.x - grab.x * k, y: q.y - grab.y * k }, overGrid ? 1 : 0.6);
+            lightRow(rowAt(q));
+            settle(grid, cell, overGrid ? gridIndex(q) : null);
+          },
+          end: async (p, cancel) => {
+            lightRow(null);
+            settle(grid, cell, null);
+            const q = p && clampStage(p);
+            const k = !cancel && q ? rowAt(q) : null;
+            if (cancel || !q || !hit($('.devs'), q)) reorder(grid, cell, from);
+            else {
+              reorder(grid, cell, gridIndex(q));
+              saveOrder('devices', grid, 'd');
+            }
+            if (k && !M[k].has.includes(d.id)) {
+              // Into their ball, which takes it with a little bounce.
+              const el = g, a = { x: parseFloat(el.style.left), y: parseFloat(el.style.top) }, b = center($('.ball', rowOf(k)));
+              await App.tween(300, (t) => {
+                place({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }, 0.6 - 0.45 * t);
+                el.style.opacity = 1 - 0.8 * t;
+              }, D.Ease.in);
+              el.remove();
+              // The device stays in the studio's list: its cell comes back.
+              cell.classList.remove('ghost');
+              cell.animate([{ opacity: 0, transform: 'scale(0.9)' }, { opacity: 1, transform: 'none' }], { duration: 260, easing: 'cubic-bezier(0.3, 1.3, 0.5, 1)' });
+              share(k, d.id);
+              return;
+            }
+            if (k) nudge(k);
+            await flyHome();
+          },
+        });
+      }
+
+      // ---- A member: up or down the list, or onto a device (share it) ---------------------------------
+      for (const m of MEMBERS) {
+        const row = rowOf(m.k);
+        const settle = dwell();
+        let g = null, from = 0;
+        app.drag(row, {
+          ref: stage,
+          ignore: 'button',
+          click: () => toggle(m.k),
+          start: (p0, p) => {
+            from = [...rows.children].indexOf(row);
+            // The row is wide; what follows the hand is the person, small
+            // enough to show the device cells it passes over.
+            g = App.h(`<div class="mpill">${App.ball(m.k)}<span>${P[m.k].name}</span></div>`);
+            g.style.left = p.x + 'px';
+            g.style.top = p.y + 'px';
+            stage.appendChild(g);
+            g.animate([{ transform: 'translate(-50%, -50%) scale(0.9)', opacity: 0.6 }, { transform: 'translate(-50%, -50%) rotate(-2deg)', opacity: 1 }], { duration: 200, easing: 'cubic-bezier(0.3, 1.3, 0.5, 1)' });
+            row.classList.add('ghost');
+          },
+          move: (p) => {
+            const q = clampStage(p);
+            g.style.left = q.x + 'px';
+            g.style.top = q.y + 'px';
+            lightCell(cellAt(q));
+            settle(rows, row, hit($('.members'), q) ? rowIndex(q, row) : null);
+          },
+          end: async (p, cancel) => {
+            lightCell(null);
+            settle(rows, row, null);
+            const q = p && clampStage(p);
+            const c = !cancel && q ? cellAt(q) : null;
+            if (cancel || !q || !hit($('.members'), q)) reorder(rows, row, from);
+            else {
+              reorder(rows, row, rowIndex(q, row));
+              saveOrder('members', rows, 'k');
+            }
+            const el = g;
+            if (c) {
+              const id = c.dataset.d;
+              el.animate([{ opacity: 1 }, { opacity: 0, transform: 'translate(-50%, -50%) scale(0.6)' }], { duration: 220, easing: 'ease-in', fill: 'forwards' });
+              D.after(230, () => el.remove());
+              row.classList.remove('ghost');
+              if (M[m.k].has.includes(id)) {
+                nudge(m.k);
+                return;
+              }
+              // The device answers with a little hop, the person takes it.
+              $('.tile', c).animate([{ transform: 'none' }, { transform: 'translateY(-6px) scale(1.04)', offset: 0.4 }, { transform: 'none' }], { duration: 420, easing: 'cubic-bezier(0.3, 1.3, 0.5, 1)' });
+              share(m.k, id);
+              return;
+            }
+            // Back to its row.
+            const a = { x: parseFloat(el.style.left), y: parseFloat(el.style.top) }, b = center($('.ball', row));
+            await App.tween(280, (t) => {
+              el.style.left = a.x + (b.x - a.x) * t + 'px';
+              el.style.top = a.y + (b.y - a.y) * t + 'px';
+              el.style.opacity = 1 - t;
+            }, D.Ease.out);
+            el.remove();
+            row.classList.remove('ghost');
+          },
+        });
+      }
+
+      window.RECORDING = {
+        title: '04-把设备分给某个人',
+        duration: 24600,
+        actions: [
+          { at: 1000, shot: '后台和小林的面板', clean: true },
+          // A device onto another cell: it takes that place, the rest slide.
+          { at: 1300, glide: { sel: '.cell[data-d="test"] .tile' }, dur: 700 },
+          { at: 2200, down: true },
+          { at: 2300, glide: { sel: '.cell[data-d="gpu"] .tile' }, dur: 900, arc: 30 },
+          { at: 2950, shot: '换个位置' },
+          { at: 3400, up: true },
+          // A member up the list: the others make way.
+          { at: 3800, glide: { sel: '.mrow[data-k="leo"] .mtop', x: 140, y: 26 }, dur: 600 },
+          { at: 4600, down: true },
+          { at: 4700, glide: { sel: '.mrow[data-k="lin"] .mtop', x: 140, y: 14 }, dur: 800 },
+          { at: 5300, shot: '成员排序' },
+          { at: 5700, up: true },
+          // A member onto a device: that shares it too.
+          { at: 6100, glide: { sel: '.mrow[data-k="mia"] .mtop', x: 140, y: 26 }, dur: 600 },
+          { at: 6900, down: true },
+          { at: 7000, glide: { sel: '.cell[data-d="printer"] .tile' }, dur: 900, arc: 30 },
+          { at: 7700, shot: '把人拖到设备上' },
+          { at: 8100, up: true },
+          { at: 8500, glide: [866, 600], dur: 500 },
+          { at: 9300, glide: { sel: '.cell[data-d="gpu"] .tile' }, dur: 800 },
+          { at: 10300, down: true },
+          { at: 10400, glide: { sel: '.mrow[data-k="jie"] .mtop', x: 140, y: 26 }, dur: 900, arc: 30 },
+          { at: 11300, glide: { sel: '.mrow[data-k="lin"] .mtop', x: 140, y: 26 }, dur: 500 },
+          { at: 11700, shot: '拖到小林身上' },
+          { at: 12000, up: true },
+          { at: 12300, glide: [866, 600], dur: 600 },
+          { at: 13600, shot: '出现在小林的面板', clean: true },
+          { at: 14000, glide: { sel: '.cell[data-d="gpu"] .tile' }, dur: 700 },
+          { at: 14900, down: true },
+          { at: 15000, glide: { sel: '.mrow[data-k="jie"] .mtop', x: 140, y: 26 }, dur: 900, arc: 30 },
+          { at: 16100, up: true },
+          { at: 16400, shot: '阿杰已经有了' },
+          { at: 16600, glide: [866, 600], dur: 500 },
+          { at: 17300, glide: { sel: '.mrow[data-k="lin"] .mtop', x: 200, y: 26 }, dur: 700 },
+          { at: 18200, down: true },
+          { at: 18280, up: true },
+          { at: 18500, glide: [866, 520], dur: 500 },
+          { at: 19200, shot: '展开小林的设备' },
+          { at: 19400, glide: { sel: '.mrow[data-k="lin"] .mchip[data-d="gpu"] .x' }, dur: 700 },
+          { at: 20300, down: true },
+          { at: 20380, up: true },
+          { at: 20600, glide: [866, 600], dur: 500 },
+          { at: 21500, shot: '收回以后可以撤销' },
+          { at: 21800, glide: { sel: '.b-main .toast button' }, dur: 700 },
+          { at: 22700, down: true },
+          { at: 22780, up: true },
+          { at: 23000, glide: [866, 600], dur: 500 },
+          { at: 24200, shot: '撤销后又回来了' },
+        ],
+      };
+      window.__ready = true;
+    </script>
+  </body>
+</html>

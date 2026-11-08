@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>5 · 局域网里各管各的设备 · Deneb</title>
+    <link rel="stylesheet" href="v3/v3.css" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script src="shared/motion.js"></script>
+    <script src="shared/demo.js"></script>
+    <script src="v3/glyphs.js"></script>
+    <script src="v3/links.js"></script>
+    <script src="v3/app.js"></script>
+    <script src="v3/lan.js"></script>
+    <script>
+      // Scene 5 (DESIGN.md §9): one LAN, three people, each in charge of
+      // their own devices. I drag my NAS in from the tray; I move things
+      // around (the relay, my NAS onto 阿杰's desktop: it takes the nearest
+      // free spot); on this computer's card I close one service (阿杰, who
+      // was using it, gets a red light that breaks up at my door) and stop
+      // Mia from using it (her link goes to dots); Mia's MacBook can be
+      // moved but not taken out; my game console goes back to the tray
+      // (undo brings it back); Leo joins.
+      const app = new App({
+        title: '周末联机',
+        sub: '',
+        stack: ['me', 'mia', 'jie'],
+        action: '邀请朋友',
+        side: [
+          { group: '局域网' },
+          { id: 'weekend', dots: ['me', 'mia', 'jie'], label: '周末联机', on: true },
+          { id: 'team', dots: ['me', 'lin', 'jie'], label: '工作室' },
+          { id: 'new', icon: 'plus', label: '新建局域网' },
+          { gap: true },
+          { group: '设备' },
+          { id: 'mine', icon: 'home', label: '我的设备', count: 4 },
+          { id: 'shared', icon: 'inbox', label: '共享给我', count: 2 },
+        ],
+        controls: [{ label: 'Leo 加入', onClick: (b) => lan.join(b) }],
+      });
+      const lan = Lan(app, {
+        people: ['me', 'mia', 'jie'],
+        mine: [
+          { k: 'screen', icon: 'screen', name: '远程桌面', on: true, port: 3389 },
+          { k: 'folder', icon: 'folder', name: '共享文件夹', on: true, port: 445 },
+          { k: 'term', icon: 'terminal', name: '命令行', on: true, port: 22 },
+        ],
+      });
+
+      window.RECORDING = {
+        title: '05-局域网里各管各的',
+        duration: 35900,
+        actions: [
+          { at: 1000, shot: '三个人的局域网', clean: true },
+          { at: 1300, glide: { sel: '.tray .mini[data-id="mynas"] .tile' }, dur: 800 },
+          { at: 2400, down: true },
+          { at: 2500, glide: [822, 366], dur: 1100, arc: 40 },
+          { at: 3200, shot: '把我的NAS拖进来' },
+          { at: 3800, up: true },
+          { at: 4100, glide: [1100, 640], dur: 600 },
+          { at: 5200, shot: '加进来以后' },
+          // The relay moves too; the link through it follows like a rope.
+          { at: 5500, glide: { sel: '.relay[data-id="hk"] .orb' }, dur: 700 },
+          { at: 6300, down: true },
+          { at: 6400, glide: { sel: '.relay[data-id="hk"] .orb', x: 90, y: 64 }, dur: 700 },
+          { at: 6900, shot: '挪动中转站' },
+          { at: 7300, up: true },
+          // My NAS dropped onto 阿杰's desktop: it leans away, the NAS takes
+          // the nearest free spot.
+          { at: 7700, glide: { sel: '.dev[data-id="mynas"] .tile' }, dur: 700 },
+          { at: 8500, down: true },
+          { at: 8600, glide: { sel: '.dev[data-id="jdesk"] .tile' }, dur: 900, arc: 30 },
+          { at: 9600, shot: '放到阿杰的设备上' },
+          { at: 9900, up: true },
+          { at: 10300, glide: { sel: '.dev[data-id="mac"] .tile' }, dur: 800 },
+          { at: 11300, down: true },
+          { at: 11380, up: true },
+          { at: 11700, glide: { sel: '.sheet .sw[data-k="term"]' }, dur: 900 },
+          { at: 12800, down: true },
+          { at: 12880, up: true },
+          { at: 13100, glide: [1100, 690], dur: 600 },
+          { at: 13800, shot: '关掉命令行' },
+          { at: 14400, glide: { sel: '.sheet .chip[data-k="mia"] .ball' }, dur: 800 },
+          { at: 15400, down: true },
+          { at: 15480, up: true },
+          { at: 15700, glide: [1100, 690], dur: 500 },
+          { at: 16700, shot: '不让Mia用' },
+          { at: 17000, glide: { sel: '.sheet .chip[data-k="mia"] .ball' }, dur: 600 },
+          { at: 17800, down: true },
+          { at: 17880, up: true },
+          { at: 18200, glide: { sel: '.sheet .sheet-close' }, dur: 600 },
+          { at: 19000, down: true },
+          { at: 19080, up: true },
+          // Mia's MacBook can be moved, but not into the tray: it stops
+          // above it, and the tray says why. Then back to her place.
+          { at: 19400, glide: { sel: '.dev[data-id="mia"] .tile' }, dur: 700 },
+          { at: 20300, down: true },
+          { at: 20400, glide: [600, 650], dur: 1100, arc: 30 },
+          { at: 21600, shot: '别人的设备拖不进托盘' },
+          { at: 21800, up: true },
+          { at: 22100, glide: { sel: '.dev[data-id="mia"] .tile' }, dur: 500 },
+          { at: 22800, down: true },
+          { at: 22900, glide: [368, 204], dur: 900 },
+          { at: 23900, up: true },
+          // My game console: near the tray, then over it (a slot opens).
+          { at: 24200, glide: { sel: '.dev[data-id="game"] .tile' }, dur: 700 },
+          { at: 25100, down: true },
+          { at: 25200, glide: [610, 690], dur: 1000 },
+          { at: 26000, shot: '拖回托盘' },
+          { at: 26400, up: true },
+          { at: 26800, glide: [1100, 560], dur: 500 },
+          { at: 27700, shot: '移出后可以撤销' },
+          { at: 28000, glide: { sel: '.toast button' }, dur: 600 },
+          { at: 28800, down: true },
+          { at: 28880, up: true },
+          // Against the window's left edge: it stays inside, name and all.
+          { at: 29600, glide: { sel: '.dev[data-id="game"] .tile' }, dur: 600 },
+          { at: 30400, down: true },
+          { at: 30500, glide: [190, 520], dur: 800 },
+          { at: 31400, up: true },
+          { at: 31600, glide: [1100, 560], dur: 500 },
+          { at: 32300, shot: '贴着边缘放' },
+          { at: 32500, glide: { sel: '.demo-bar .bar-btn' }, dur: 700 },
+          { at: 33400, down: true },
+          { at: 33480, up: true },
+          { at: 33700, glide: [1100, 640], dur: 600 },
+          { at: 35700, shot: 'Leo加入', clean: true },
+        ],
+      };
+      window.__ready = true;
+    </script>
+  </body>
+</html>

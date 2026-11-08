@@ -1,0 +1,1393 @@
+/* Deneb, third design (DESIGN.md §3): soft, friendly, light first.
+   White cards on a pale grey well, pill buttons, glossy colored tiles for
+   devices (colored by owner), and one bright thing: the light flowing
+   along each connection. */
+
+:root,
+[data-theme='light'] {
+  color-scheme: light;
+  --page: #e9e9ed;
+  --bg: #ffffff;
+  --well: #f4f4f6;
+  --well-2: #ececef;
+  --line: rgba(9, 9, 11, 0.07);
+  --line-2: rgba(9, 9, 11, 0.1);
+  --ink: #18181b;
+  --ink-2: #71717a;
+  --ink-3: #a1a1aa;
+  --primary: #2f6bff;
+  --primary-2: #2457e0;
+  --ok: #22c55e;
+  --warn: #f59e0b;
+  --track: rgba(9, 9, 11, 0.09);
+  --shadow-sm: 0 1px 2px rgba(9, 9, 11, 0.06), 0 1px 1px rgba(9, 9, 11, 0.04);
+  --shadow-md: 0 10px 28px rgba(9, 9, 11, 0.09), 0 2px 6px rgba(9, 9, 11, 0.05);
+  --win-shadow: 0 0 0 1px rgba(9, 9, 11, 0.06), 0 30px 70px rgba(9, 9, 11, 0.16), 0 8px 22px rgba(9, 9, 11, 0.07);
+  --ring: #ffffff;
+  --ball-1: #ffffff;
+  --ball-2: #f1f2f4;
+  --ball-3: #d6d8de;
+}
+[data-theme='dark'] {
+  color-scheme: dark;
+  --page: #08080a;
+  --bg: #111113;
+  --well: #19191c;
+  --well-2: #222226;
+  --line: rgba(255, 255, 255, 0.07);
+  --line-2: rgba(255, 255, 255, 0.1);
+  --ink: #fafafa;
+  --ink-2: #a1a1aa;
+  --ink-3: #6b6b74;
+  --primary: #4c82ff;
+  --primary-2: #3b6ff0;
+  --ok: #34d399;
+  --warn: #fbbf24;
+  --track: rgba(255, 255, 255, 0.085);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  --shadow-md: 0 14px 34px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --win-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 30px 80px rgba(0, 0, 0, 0.6);
+  --ring: #111113;
+  --ball-1: #6a6a73;
+  --ball-2: #44444b;
+  --ball-3: #2b2b30;
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--page);
+  font-family: -apple-system, 'SF Pro Text', 'PingFang SC', 'Microsoft YaHei UI', sans-serif;
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: 'tnum';
+}
+button {
+  font: inherit;
+  color: inherit;
+}
+
+/* ---- Window ---- */
+.win {
+  position: absolute;
+  width: 1180px;
+  height: 740px;
+  border-radius: 16px;
+  background: var(--bg);
+  box-shadow: var(--win-shadow);
+  overflow: hidden;
+}
+.side {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 232px;
+  background: var(--well);
+  padding: 16px 12px 12px;
+  display: flex;
+  flex-direction: column;
+}
+.lights {
+  display: flex;
+  gap: 8px;
+  padding: 2px 6px;
+}
+.lights i {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.12);
+}
+.lights i:nth-child(1) {
+  background: #ff5f57;
+}
+.lights i:nth-child(2) {
+  background: #febc2e;
+}
+.lights i:nth-child(3) {
+  background: #28c840;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 22px 8px 20px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.brand svg {
+  color: var(--primary);
+}
+.group {
+  margin: 0 8px 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-3);
+}
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+  padding: 0 10px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-2);
+  cursor: default;
+  transition: background 0.16s ease-out, color 0.16s ease-out;
+}
+.nav:hover {
+  background: var(--well-2);
+}
+.nav.on {
+  background: var(--bg);
+  color: var(--ink);
+  box-shadow: var(--shadow-sm);
+}
+.nav .count {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.nav svg {
+  flex: none;
+  color: var(--ink-3);
+}
+.nav.on svg {
+  color: var(--ink-2);
+}
+.nav .dots {
+  display: flex;
+  flex: none;
+  width: 18px;
+}
+.nav .dots .ball {
+  width: 10px;
+  height: 10px;
+  margin-right: -4px;
+  box-shadow: 0 0 0 1.5px var(--well);
+}
+.nav.on .dots .ball {
+  box-shadow: 0 0 0 1.5px var(--bg);
+}
+.side .gap {
+  height: 18px;
+}
+.me {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 6px 4px 8px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.me .icon-btn {
+  margin-left: auto;
+}
+
+/* ---- Buttons ---- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: transform 0.18s cubic-bezier(0.3, 1.5, 0.5, 1), background 0.16s, box-shadow 0.16s;
+}
+.btn:active {
+  transform: scale(0.96);
+}
+.btn.primary {
+  color: #fff;
+  background: var(--primary);
+  box-shadow: 0 1px 2px rgba(47, 107, 255, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+.btn.primary:hover {
+  background: var(--primary-2);
+}
+.icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background 0.16s, transform 0.18s cubic-bezier(0.3, 1.5, 0.5, 1);
+}
+.icon-btn:hover {
+  background: var(--well-2);
+}
+.icon-btn:active {
+  transform: scale(0.92);
+}
+
+/* ---- Glossy balls: people and colors ---- */
+.ball {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  background: radial-gradient(circle at 34% 28%, color-mix(in oklab, var(--c) 55%, white) 0%, var(--c) 52%, color-mix(in oklab, var(--c) 82%, black) 100%);
+  box-shadow: inset 0 -1.5px 3px rgba(0, 0, 0, 0.14), 0 2px 6px color-mix(in srgb, var(--c) 30%, transparent);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.18);
+}
+/* Refused (DESIGN.md §6.5): the ball greys, a slash draws out from its
+   middle, and the initial fades, all over 200ms. The grey is a layer over
+   the person's color, so it can fade in rather than switch. */
+.ball {
+  transition: color 0.2s ease-out, text-shadow 0.2s ease-out, box-shadow 0.2s ease-out;
+}
+.ball.off {
+  color: transparent;
+  text-shadow: none;
+  box-shadow: inset 0 -1.5px 3px rgba(0, 0, 0, 0.14), 0 2px 6px rgba(161, 161, 170, 0.3);
+}
+.chip .ball::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle at 34% 28%, color-mix(in oklab, #a1a1aa 55%, white) 0%, #a1a1aa 52%, color-mix(in oklab, #a1a1aa 82%, black) 100%);
+  box-shadow: inset 0 -1.5px 3px rgba(0, 0, 0, 0.14);
+  opacity: 0;
+  transition: opacity 0.2s ease-out;
+}
+.chip .ball::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 8%;
+  width: 2px;
+  height: 84%;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--bg);
+  transform: rotate(-45deg) scaleY(0);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ink) 25%, transparent);
+  transition: transform 0.2s ease-out;
+}
+.chip .ball.off::before {
+  opacity: 1;
+}
+.chip .ball.off::after {
+  transform: rotate(-45deg) scaleY(1);
+}
+
+/* ---- Main ---- */
+.main {
+  position: absolute;
+  left: 232px;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  /* The canvas slides aside for the card; what slides past the edge is
+     clipped here instead of drawing over the sidebar. */
+  overflow: hidden;
+}
+/* A node being dragged is lifted into this layer, over the card, the tray
+   and the toasts (DESIGN.md §6.1). It lies exactly over the canvas. */
+.drag-layer {
+  position: absolute;
+  left: 232px;
+  top: 76px;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 40;
+}
+.head {
+  position: absolute;
+  left: 28px;
+  right: 24px;
+  top: 22px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.title {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.005em;
+}
+.sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent);
+}
+.head .right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.stack {
+  display: flex;
+}
+.stack .ball {
+  width: 30px;
+  height: 30px;
+  font-size: 12px;
+  margin-left: -6px;
+  box-shadow: 0 0 0 2px var(--bg), inset 0 -1.5px 3px rgba(0, 0, 0, 0.14);
+}
+.stack .ball:first-child {
+  margin-left: 0;
+}
+
+/* ---- Canvas ---- */
+.canvas {
+  position: absolute;
+  left: 0;
+  top: 76px;
+  right: 0;
+  bottom: 0;
+  /* Everything on the canvas stays under the card's layer. */
+  z-index: 0;
+}
+.links {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+
+/* ---- Device tiles: glossy, colored by owner ---- */
+.dev {
+  position: absolute;
+  width: 60px;
+  height: 60px;
+  margin: -30px 0 0 -30px;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.tile {
+  position: absolute;
+  inset: 0;
+  border-radius: 18px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(180deg, color-mix(in oklab, var(--c) 80%, white) 0%, var(--c) 58%, color-mix(in oklab, var(--c) 90%, black) 100%);
+  box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.45), inset 0 -2px 6px rgba(0, 0, 0, 0.12), 0 8px 18px color-mix(in srgb, var(--c) 30%, transparent), 0 1px 2px rgba(0, 0, 0, 0.1);
+  transition: transform 0.4s cubic-bezier(0.3, 1.35, 0.5, 1), box-shadow 0.3s ease-out;
+}
+.tile::before {
+  content: '';
+  position: absolute;
+  left: 9px;
+  top: 4px;
+  width: 30px;
+  height: 14px;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0));
+  pointer-events: none;
+}
+.tile svg {
+  position: relative;
+  fill: #fff;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.16));
+}
+.dev:hover .tile {
+  transform: translateY(-2px);
+  box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.45), inset 0 -2px 6px rgba(0, 0, 0, 0.12), 0 12px 24px color-mix(in srgb, var(--c) 36%, transparent), 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+.dev:active .tile {
+  transform: scale(0.96);
+}
+.dev.sel .tile {
+  box-shadow: 0 0 0 4px var(--bg), 0 0 0 6px var(--primary), inset 0 1px 0.5px rgba(255, 255, 255, 0.45), 0 8px 18px color-mix(in srgb, var(--c) 30%, transparent);
+}
+.dev.off .tile {
+  --c: #b4b4bb;
+}
+.dev.off .tile svg {
+  opacity: 0.7;
+}
+.dev .name {
+  position: absolute;
+  left: 50%;
+  top: 70px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 17px;
+}
+.dev .name small {
+  display: block;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink-2);
+}
+.dev.dragging .tile {
+  transform: scale(1.06) rotate(-3deg);
+  /* Lifted: a soft, slightly deeper neutral shadow. Not the owner's color
+     spread wide, which reads as a smudge under the tile. */
+  box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.45), inset 0 -2px 6px rgba(0, 0, 0, 0.12), 0 12px 24px rgba(9, 9, 11, 0.16), 0 3px 8px rgba(9, 9, 11, 0.1);
+}
+[data-theme='dark'] .dev.dragging .tile {
+  box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.45), inset 0 -2px 6px rgba(0, 0, 0, 0.12), 0 12px 24px rgba(0, 0, 0, 0.45), 0 3px 8px rgba(0, 0, 0, 0.3);
+}
+
+/* Relay: a white glossy ball */
+.relay {
+  position: absolute;
+  width: 40px;
+  height: 40px;
+  margin: -20px 0 0 -20px;
+}
+.relay .orb {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--ink-2);
+  background: radial-gradient(circle at 34% 28%, var(--ball-1) 0%, var(--ball-2) 52%, var(--ball-3) 100%);
+  box-shadow: inset 0 -1.5px 3px rgba(0, 0, 0, 0.08), 0 6px 14px rgba(9, 9, 11, 0.12), 0 1px 2px rgba(9, 9, 11, 0.1);
+  transition: box-shadow 0.25s ease-out;
+}
+.relay.pass .orb {
+  box-shadow: inset 0 -1.5px 3px rgba(0, 0, 0, 0.08), 0 0 0 3px color-mix(in srgb, var(--c) 30%, transparent), 0 6px 18px color-mix(in srgb, var(--c) 40%, transparent);
+  transition-duration: 0.08s;
+}
+/* The relay's name sits to its left: tracks leave it above and below. */
+.relay .name {
+  position: absolute;
+  right: 52px;
+  top: 3px;
+  white-space: nowrap;
+  text-align: right;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+  color: var(--ink);
+}
+.relay .name small {
+  display: block;
+  font-weight: 400;
+  color: var(--ink-2);
+}
+
+/* ---- Tray: my other devices, drag them in ---- */
+.tray {
+  position: absolute;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 56px;
+  padding: 0 10px 0 18px;
+  border-radius: 999px;
+  background: var(--bg);
+  box-shadow: var(--shadow-md);
+  font-size: 13px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.tray .mini {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  cursor: grab;
+}
+.tray .mini .tile {
+  border-radius: 13px;
+}
+.tray .mini .tile::before {
+  left: 6px;
+  width: 20px;
+  height: 10px;
+}
+.tray .mini.ghost {
+  opacity: 0.25;
+}
+
+/* ---- Sheet: one device, in plain words ---- */
+.sheet {
+  position: absolute;
+  top: 88px;
+  right: 20px;
+  width: 300px;
+  padding: 16px;
+  border-radius: 20px;
+  background: var(--bg);
+  box-shadow: var(--shadow-md);
+  /* It grows out of its top right corner and shrinks back into it. */
+  transform-origin: 100% 0;
+  overflow: hidden;
+  /* Its own layer, over the devices as it comes and goes (DESIGN.md §6.3). */
+  z-index: 20;
+  transition: opacity 0.22s ease-out;
+}
+/* Stepped aside while something is on the move; back once all is still. */
+.sheet.away {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.14s ease-in;
+}
+.sheet .top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.sheet .top .tile-s {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  flex: none;
+}
+.sheet .top .tile-s .tile {
+  border-radius: 13px;
+}
+.sheet .top .tile-s .tile::before {
+  left: 6px;
+  width: 20px;
+  height: 10px;
+}
+.sheet .top b {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+}
+.sheet .top span {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.open-btn {
+  margin-left: auto;
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--bg);
+  box-shadow: var(--shadow-sm);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: transform 0.18s cubic-bezier(0.3, 1.5, 0.5, 1);
+}
+.open-btn:active {
+  transform: scale(0.94);
+}
+.row.na {
+  color: var(--ink-3);
+}
+.row.na em {
+  margin-left: auto;
+  font-style: normal;
+  font-size: 12px;
+}
+.sheet .top .icon-btn {
+  margin-left: auto;
+  align-self: flex-start;
+  background: var(--well);
+}
+.status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 14px;
+  background: var(--well);
+  font-size: 13px;
+  font-weight: 500;
+}
+.status small {
+  display: block;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink-2);
+}
+.status .badge {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  flex: none;
+  color: #fff;
+  background: radial-gradient(circle at 34% 28%, color-mix(in oklab, var(--c) 55%, white), var(--c) 55%, color-mix(in oklab, var(--c) 85%, black));
+}
+/* "Through a relay" is not a warning: the badge is the relay's own white
+   ball, not a color that could be read as someone's. */
+.status .badge.relay-badge {
+  color: var(--ink-2);
+  background: radial-gradient(circle at 34% 28%, var(--ball-1) 0%, var(--ball-2) 52%, var(--ball-3) 100%);
+  box-shadow: inset 0 -1px 2px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(9, 9, 11, 0.12);
+}
+.status .badge.relay-badge svg {
+  fill: currentColor;
+}
+.label {
+  margin: 18px 4px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-3);
+}
+.rows {
+  border-radius: 14px;
+  background: var(--well);
+  padding: 0 12px;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.row + .row {
+  border-top: 1px solid var(--line);
+}
+.row svg {
+  color: var(--ink-2);
+  flex: none;
+}
+.row .sw {
+  margin-left: auto;
+}
+.people {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 12px 0 4px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--well);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: transform 0.2s cubic-bezier(0.3, 1.5, 0.5, 1), color 0.2s ease-out;
+}
+.chip:active {
+  transform: scale(0.95);
+}
+.chip .ball {
+  width: 26px;
+  height: 26px;
+  font-size: 11px;
+}
+.chip.blocked {
+  color: var(--ink-3);
+}
+.hint {
+  margin: 8px 4px 0;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.more {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: 14px 4px 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 13px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.more svg {
+  transition: transform 0.25s ease-out;
+}
+.more.open svg {
+  transform: rotate(90deg);
+}
+.detail {
+  overflow: hidden;
+  height: 0;
+  transition: height 0.3s cubic-bezier(0.3, 1.1, 0.5, 1);
+}
+.detail p {
+  margin: 8px 4px 0;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--ink-2);
+}
+
+/* ---- Switch ---- */
+.sw {
+  position: relative;
+  width: 38px;
+  height: 22px;
+  flex: none;
+  border: 0;
+  padding: 0;
+  border-radius: 999px;
+  background: var(--line-2);
+  cursor: pointer;
+  transition: background 0.2s ease-out;
+}
+.sw::after {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2), 0 2px 6px rgba(0, 0, 0, 0.08);
+  transition: transform 0.32s cubic-bezier(0.3, 1.45, 0.5, 1);
+}
+.sw.on {
+  background: var(--primary);
+}
+.sw.on::after {
+  transform: translateX(16px);
+}
+
+/* ---- Toast (DESIGN.md §6.5): a light chip like the tray and the card ---- */
+.toast {
+  position: absolute;
+  left: 50%;
+  bottom: 22px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  height: 44px;
+  padding: 0 16px 0 8px;
+  border-radius: 999px;
+  background: var(--bg);
+  box-shadow: 0 0 0 1px var(--line), 0 12px 32px rgba(9, 9, 11, 0.1), 0 2px 6px rgba(9, 9, 11, 0.06);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  transform: translateX(-50%);
+}
+[data-theme='dark'] .toast {
+  box-shadow: 0 0 0 1px var(--line-2), 0 14px 34px rgba(0, 0, 0, 0.5);
+}
+.toast.has-undo {
+  padding-right: 6px;
+}
+.toast-body {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.toast-tile {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  flex: none;
+}
+.toast-tile .tile {
+  border-radius: 9px;
+  box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.45), 0 2px 6px color-mix(in srgb, var(--c) 30%, transparent);
+}
+.toast-tile .tile::before {
+  left: 4px;
+  top: 2px;
+  width: 14px;
+  height: 7px;
+}
+.toast button {
+  height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.12s ease-out, transform 0.18s cubic-bezier(0.3, 1.5, 0.5, 1);
+}
+.toast button:hover {
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+}
+.toast button:active {
+  transform: scale(0.94);
+}
+
+/* ---- Page controls (outside the window, demo only) ---- */
+.page-ctl {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  gap: 8px;
+}
+.page-ctl .icon-btn {
+  background: var(--bg);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Recording only: the visible pointer drawn by shared/demo.js. */
+.fake-cursor {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  z-index: 10000;
+}
+.fake-cursor svg {
+  position: absolute;
+  left: -5px;
+  top: -3px;
+  filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.35));
+}
+.fake-cursor .press {
+  position: absolute;
+  left: -16px;
+  top: -16px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.28);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.4);
+  opacity: 0;
+  transform: scale(0.5);
+}
+.fake-cursor {
+  opacity: 0;
+}
+.fake-cursor.seen {
+  opacity: 1;
+}
+
+/* ---- Shared frame additions (app.js) ---- */
+:root,
+[data-theme='light'] {
+  --dots: rgba(9, 9, 11, 0.32);
+}
+[data-theme='dark'] {
+  --dots: rgba(255, 255, 255, 0.34);
+}
+.side-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.side-list .group {
+  margin-top: 2px;
+}
+.nav-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+}
+.nav .sw {
+  margin-left: auto;
+}
+.sw.sm {
+  width: 32px;
+  height: 19px;
+}
+.sw.sm::after {
+  width: 15px;
+  height: 15px;
+}
+.sw.sm.on::after {
+  transform: translateX(13px);
+}
+.sub .dot[data-tone='warn'] {
+  background: var(--warn);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 18%, transparent);
+}
+.sub .dot[data-tone='off'] {
+  background: var(--ink-3);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ink-3) 18%, transparent);
+}
+.dev .name .nm {
+  display: block;
+}
+.relay .name.below {
+  right: auto;
+  left: 50%;
+  top: 48px;
+  transform: translateX(-50%);
+  text-align: center;
+}
+.relay .name.right {
+  right: auto;
+  left: 52px;
+  text-align: left;
+}
+
+/* Status chip on a link */
+.pill {
+  position: absolute;
+  z-index: 3;
+  transform: translate(-50%, -50%);
+  height: 26px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  background: var(--bg);
+  box-shadow: var(--shadow-sm), 0 0 0 1px var(--line);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.pill[data-tone='ok'] {
+  color: var(--ok);
+}
+.pill[data-tone='bad'] {
+  color: var(--ink-2);
+}
+
+/* Demo bar (not product UI): under the window */
+.demo-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 40px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--bg);
+  box-shadow: var(--shadow-sm), 0 0 0 1px var(--line);
+  font-size: 13px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  z-index: 50;
+}
+.demo-bar .icon-btn {
+  width: 28px;
+  height: 28px;
+}
+.bar-title {
+  padding: 0 6px;
+  color: var(--ink);
+  font-weight: 500;
+}
+.bar-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--line-2);
+}
+.bar-btn {
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--well);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.bar-btn:active {
+  transform: scale(0.96);
+}
+.seg {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--well);
+}
+.seg button {
+  height: 24px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background 0.18s, color 0.18s;
+}
+.seg button.on {
+  background: var(--bg);
+  color: var(--ink);
+  box-shadow: var(--shadow-sm);
+}
+
+/* ---- Relay tray (scene 2) ---- */
+.tray .rchip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 12px 0 6px;
+  border-radius: 999px;
+  background: var(--well);
+  cursor: grab;
+  transition: opacity 0.2s, transform 0.2s cubic-bezier(0.3, 1.5, 0.5, 1);
+}
+.tray .rchip:active {
+  transform: scale(0.96);
+}
+.tray .rchip.ghost {
+  opacity: 0.3;
+}
+.tray .rchip .orb {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  color: var(--ink-2);
+  background: radial-gradient(circle at 34% 28%, var(--ball-1) 0%, var(--ball-2) 52%, var(--ball-3) 100%);
+  box-shadow: inset 0 -1.5px 3px rgba(0, 0, 0, 0.08), 0 2px 6px rgba(9, 9, 11, 0.12);
+}
+.tray .rchip .orb svg {
+  fill: currentColor;
+}
+.tray .rchip b {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 16px;
+  color: var(--ink);
+}
+.tray .rchip small {
+  display: block;
+  font-size: 11.5px;
+  line-height: 14px;
+  color: var(--ink-2);
+}
+.tray.target {
+  box-shadow: var(--shadow-md), 0 0 0 2px var(--primary);
+}
+.relay.dragging .orb {
+  transform: scale(1.08) rotate(-3deg);
+  box-shadow: inset 0 -1.5px 3px rgba(0, 0, 0, 0.08), 0 14px 26px rgba(9, 9, 11, 0.18), 0 3px 8px rgba(9, 9, 11, 0.12);
+}
+.relay .orb {
+  transition: transform 0.3s cubic-bezier(0.3, 1.4, 0.5, 1), box-shadow 0.25s ease-out;
+}
+.relay svg {
+  fill: currentColor;
+}
+.relay {
+  cursor: grab;
+}
+
+/* ---- Groups on the canvas (scene 3): a soft grey area per LAN ---- */
+.area {
+  position: absolute;
+  border-radius: 24px;
+  background: var(--well);
+  transition: opacity 0.3s ease-out;
+}
+.area .area-title {
+  position: absolute;
+  left: 16px;
+  top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.area .area-title .dots {
+  display: flex;
+}
+.area .area-title .ball {
+  width: 12px;
+  height: 12px;
+  margin-right: -4px;
+  box-shadow: 0 0 0 1.5px var(--well);
+}
+.area .paused {
+  position: absolute;
+  right: 14px;
+  top: 12px;
+  height: 22px;
+  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  background: var(--bg);
+  box-shadow: var(--shadow-sm);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-2);
+  opacity: 0;
+  transform: scale(0.9);
+  transition: opacity 0.2s, transform 0.25s cubic-bezier(0.3, 1.4, 0.5, 1);
+}
+.area.is-paused .paused {
+  opacity: 1;
+  transform: none;
+}
+.dev,
+.relay {
+  cursor: grab;
+  /* translate: a crowded node leaning out of the way (DESIGN.md §6.3). */
+  transition: opacity 0.3s ease-out, translate 0.3s cubic-bezier(0.3, 1.3, 0.5, 1);
+}
+.relay:not(.dragging):hover .orb {
+  transform: translateY(-2px);
+}
+.relay:not(.dragging):active .orb {
+  transform: scale(0.96);
+}
+.relay.dragging {
+  cursor: grabbing;
+}
+.area {
+  transition: opacity 0.3s ease-out, box-shadow 0.16s ease-out, background-color 0.16s ease-out;
+}
+/* A drop target lights up as the pointer comes near (DESIGN.md §6.1). */
+/* An area can be picked up and moved with its devices (DESIGN.md §6.2). */
+.area {
+  cursor: grab;
+}
+.area.lifted {
+  cursor: grabbing;
+  box-shadow: 0 18px 40px rgba(9, 9, 11, 0.12), 0 4px 10px rgba(9, 9, 11, 0.06);
+}
+[data-theme='dark'] .area.lifted {
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+.area.target {
+  background: color-mix(in srgb, var(--primary) 6%, var(--well));
+  box-shadow: inset 0 0 0 2px var(--primary);
+}
+.nav.target {
+  background: var(--bg);
+  color: var(--ink);
+  box-shadow: 0 0 0 2px var(--primary);
+}
+/* The device every link leaves from has its name above (DESIGN.md §4). */
+.dev.up .name {
+  top: auto;
+  bottom: 70px;
+}
+.dev .name {
+  border-radius: 8px;
+  transition: opacity 0.15s ease-out, background-color 0.15s ease-out, box-shadow 0.15s ease-out;
+}
+/* Held over another node, the lifted name would print over that node's
+   name. While held it sits on the window's color (a spread shadow, so its
+   size does not change), readable over whatever is below. */
+.dev.dragging .name,
+.relay.dragging .name {
+  background-color: var(--bg);
+  box-shadow: 0 0 0 4px var(--bg);
+}
+.relay .name {
+  border-radius: 8px;
+  transition: background-color 0.15s ease-out, box-shadow 0.15s ease-out;
+}
+.dev.dragging {
+  z-index: 30;
+  cursor: grabbing;
+}
+/* Lifted, a device shows in full color even if its LAN is paused. */
+.dev.dragging .tile {
+  filter: none;
+  opacity: 1;
+}
+
+.dim {
+  opacity: 0.32;
+}
+.dev.paused-dev:not(.dragging) .tile {
+  filter: saturate(0.25);
+  opacity: 0.55;
+}
+
+/* ---- Invite card (scene 3) ---- */
+/* A notification, so it sits in the window's top corner, over the
+   header's empty right side, clear of the canvas. */
+.invite {
+  position: absolute;
+  top: 18px;
+  right: 20px;
+  width: 300px;
+  padding: 16px;
+  border-radius: 20px;
+  background: var(--bg);
+  box-shadow: var(--shadow-md);
+}
+.invite .who {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.invite .who .ball {
+  width: 40px;
+  height: 40px;
+  font-size: 15px;
+}
+.invite b {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+}
+.invite span.s {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.invite .acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+.btn.ghost {
+  background: var(--well);
+  color: var(--ink);
+}
+.nav.flash {
+  animation: k-flash 1.4s ease-out;
+}
+@keyframes k-flash {
+  0% {
+    background: color-mix(in srgb, var(--primary) 18%, transparent);
+  }
+  100% {
+    background: transparent;
+  }
+}
+
+/* ---- The tray's states (DESIGN.md §6.5): what it says follows the hand ---- */
+.tray {
+  border: 1.5px solid var(--bg);
+  transition: background-color 0.2s ease-out, border-color 0.2s ease-out, transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.3s ease-out, box-shadow 0.2s ease-out;
+}
+[data-theme='dark'] .tray {
+  border-color: var(--line);
+}
+.tray .tray-label {
+  display: inline-block;
+  overflow: hidden;
+  white-space: nowrap;
+  flex: none;
+  transition: color 0.2s ease-out;
+}
+/* One of mine is near: it can go in here. */
+.tray.offer {
+  border-color: color-mix(in srgb, var(--primary) 40%, transparent);
+}
+.tray.offer .tray-label,
+.tray.armed .tray-label {
+  color: var(--primary);
+  font-weight: 500;
+}
+/* It is over the tray (or on its way in). */
+.tray.armed {
+  background: color-mix(in srgb, var(--primary) 7%, var(--bg));
+  border-color: var(--primary);
+}
+/* Empty and nothing in the hand: it sinks away. */
+.tray.away {
+  opacity: 0;
+  transform: translate(-50%, 24px);
+  pointer-events: none;
+}
+/* The room the tray opens at its end for a device coming in. */
+.tray .slot {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--primary) 30%, transparent);
+}
+/* A tray tile whose device is out: its place shows faintly (§6.1). */
+.tray .mini.ghost,
+.tray .rchip.ghost {
+  opacity: 0.3;
+}
+/* Scene 3: why someone else's device stops at its LAN's edge. */
+.area-note {
+  position: absolute;
+  z-index: 2;
+  height: 26px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  background: var(--bg);
+  box-shadow: 0 0 0 1px var(--line), var(--shadow-sm);
+  font-size: 12px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.16s ease-out;
+}
+.area-note.show {
+  opacity: 1;
+}
+
+/* The card's last row: "更多" on the left; for my own devices, the click
+   that takes one out of the LAN on the right (DESIGN.md §6.4). */
+.card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 14px 4px 2px;
+}
+.card-foot .more {
+  margin: 0;
+}
+.out-btn {
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  font-size: 12px;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background-color 0.12s ease-out, transform 0.18s cubic-bezier(0.3, 1.5, 0.5, 1);
+}
+.out-btn:hover {
+  background: var(--well);
+}
+.out-btn:active {
+  transform: scale(0.96);
+}

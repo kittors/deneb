@@ -1,0 +1,213 @@
+package control
+
+import (
+	"crypto/sha256"
+	"encoding/json"
+	"sync"
+	"time"
+
+	"github.com/kittors/deneb/proto"
+)
+
+// hub keeps the open streams and which devices are online. After every
+// change it computes each stream's frame and hands over the ones whose
+// content changed; a device whose map and view stayed the same hears
+// nothing.
+type hub struct {
+	mu      sync.Mutex
+	subs    map[*sub]bool
+	streams map[proto.DeviceID]int         // open streams per device
+	online  map[proto.DeviceID]bool        // as last published
+	offline map[proto.DeviceID]*time.Timer // pending offline marks, for the grace period
+	now     func() time.Time
+}
+
+// offlineGrace is how long a device that dropped its stream still shows
+// online, so a reconnect does not flicker every peer's screen.
+const offlineGrace = 10 * time.Second
+
+func newHub(now func() time.Time) *hub {
+	return &hub{
+		subs:    map[*sub]bool{},
+		streams: map[proto.DeviceID]int{},
+		online:  map[proto.DeviceID]bool{},
+		offline: map[proto.DeviceID]*time.Timer{},
+		now:     now,
+	}
+}
+
+// sub is one open stream. The writer waits on notify and sends what is in
+// pending; only the newest frame is kept, as each frame is whole.
+type sub struct {
+	device proto.DeviceID
+	view   bool // the stream asked for the user view too
+
+	mu       sync.Mutex
+	pending  []byte
+	ended    bool // the last frame (LoggedOut) is pending or sent
+	notify   chan struct{}
+	sent     bool
+	lastHash [32]byte
+	lastV    uint64
+}
+
+// take returns the frame to send, if any, and whether it ends the stream.
+func (s *sub) take() ([]byte, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b := s.pending
+	s.pending = nil
+	return b, s.ended && b != nil
+}
+
+func (h *hub) isOnline(id proto.DeviceID) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.online[id]
+}
+
+// onlineSnapshot copies the online set for computing frames without the
+// hub's lock.
+func (h *hub) onlineSnapshot() online {
+	h.mu.Lock()
+	m := make(map[proto.DeviceID]bool, len(h.online))
+	for k, v := range h.online {
+		m[k] = v
+	}
+	h.mu.Unlock()
+	return func(id proto.DeviceID) bool { return m[id] }
+}
+
+// add registers a stream and reports whether its device just came online.
+func (h *hub) add(s *sub) (cameOnline bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.subs[s] = true
+	h.streams[s.device]++
+	if t := h.offline[s.device]; t != nil {
+		t.Stop()
+		delete(h.offline, s.device)
+	}
+	if !h.online[s.device] {
+		h.online[s.device] = true
+		return true
+	}
+	return false
+}
+
+// remove drops a stream. When it was the device's last, goOffline runs
+// after the grace period unless the device reconnected by then.
+func (h *hub) remove(s *sub, goOffline func(proto.DeviceID)) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.subs, s)
+	h.streams[s.device]--
+	if h.streams[s.device] > 0 {
+		return
+	}
+	delete(h.streams, s.device)
+	id := s.device
+	h.offline[id] = time.AfterFunc(offlineGrace, func() {
+		h.mu.Lock()
+		if h.streams[id] > 0 || h.offline[id] == nil {
+			h.mu.Unlock()
+			return
+		}
+		delete(h.offline, id)
+		h.online[id] = false
+		h.mu.Unlock()
+		goOffline(id)
+	})
+}
+
+// publish hands every stream its frame for world w at version v. force
+// names a device whose streams get the frame even if nothing in it
+// changed: the device that just sent an op waits for that version.
+func (h *hub) publish(w *World, v uint64, force proto.DeviceID) {
+	h.mu.Lock()
+	subs := make([]*sub, 0, len(h.subs))
+	for s := range h.subs {
+		subs = append(subs, s)
+	}
+	h.mu.Unlock()
+	isOnline := h.onlineSnapshot()
+	now := h.now()
+	views := map[proto.PersonID]*proto.UserView{}
+	for _, s := range subs {
+		h.deliver(s, w, v, isOnline, now, views, s.device == force)
+	}
+}
+
+// prime sends a new stream its first frame, unless a publish beat it to it.
+func (h *hub) prime(s *sub, w *World, v uint64) {
+	h.deliver(s, w, v, h.onlineSnapshot(), h.now(), map[proto.PersonID]*proto.UserView{}, false)
+}
+
+func (h *hub) deliver(s *sub, w *World, v uint64, isOnline online, now time.Time, views map[proto.PersonID]*proto.UserView, force bool) {
+	f := frameFor(w, s.device, s.view, v, isOnline, now, views)
+	if f == nil {
+		s.mu.Lock()
+		if !s.ended {
+			s.ended = true
+			s.pending, _ = json.Marshal(proto.StreamFrame{LoggedOut: true})
+			s.signal()
+		}
+		s.mu.Unlock()
+		return
+	}
+	// The hash leaves the version out, so a frame that only moved to a
+	// newer version is not news.
+	f.Version, f.NetMap.Version = 0, 0
+	if f.UserView != nil {
+		f.UserView.Version = 0
+	}
+	plain, _ := json.Marshal(f)
+	sum := sha256.Sum256(plain)
+	f.Version, f.NetMap.Version = v, v
+	if f.UserView != nil {
+		f.UserView.Version = v
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ended || v < s.lastV || (s.sent && sum == s.lastHash && !force) {
+		return
+	}
+	b, err := json.Marshal(f)
+	if err != nil {
+		return
+	}
+	s.pending, s.sent, s.lastHash, s.lastV = b, true, sum, v
+	s.signal()
+}
+
+// signal wakes the writer; s.mu is held.
+func (s *sub) signal() {
+	select {
+	case s.notify <- struct{}{}:
+	default:
+	}
+}
+
+// frameFor builds a device's frame, or nil if no one is logged in on it.
+// views caches each person's view across their devices in one publish.
+func frameFor(w *World, id proto.DeviceID, withView bool, v uint64, isOnline online, now time.Time, views map[proto.PersonID]*proto.UserView) *proto.StreamFrame {
+	nm := w.netMap(id, v, isOnline)
+	if nm == nil {
+		return nil
+	}
+	f := &proto.StreamFrame{Version: v, NetMap: nm}
+	if withView {
+		owner := nm.Self.Owner
+		uv, ok := views[owner]
+		if !ok {
+			uv = w.userView(owner, v, isOnline, now)
+			views[owner] = uv
+		}
+		if uv != nil {
+			c := *uv // the hash pass zeroes the version; keep the cached one intact
+			f.UserView = &c
+		}
+	}
+	return f
+}

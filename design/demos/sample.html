@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Deneb · 新版小样</title>
+    <link rel="stylesheet" href="v3/v3.css" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script src="shared/motion.js"></script>
+    <script src="shared/demo.js"></script>
+    <script src="v3/glyphs.js"></script>
+    <script src="v3/links.js"></script>
+    <script src="v3/app.js"></script>
+    <script src="v3/lan.js"></script>
+    <script>
+      // The sample (DESIGN.md §3): the LAN "周末联机" with four people. This
+      // computer's card is open; every node can be moved; my other devices
+      // wait in the tray to be dragged in.
+      const app = new App({
+        title: '周末联机',
+        sub: '',
+        stack: ['me', 'mia', 'jie', 'leo'],
+        action: '邀请朋友',
+        side: [
+          { group: '局域网' },
+          { id: 'weekend', dots: ['me', 'mia', 'jie'], label: '周末联机', on: true },
+          { id: 'team', dots: ['me', 'lin', 'jie'], label: '工作室' },
+          { id: 'new', icon: 'plus', label: '新建局域网' },
+          { gap: true },
+          { group: '设备' },
+          { id: 'mine', icon: 'home', label: '我的设备', count: 4 },
+          { id: 'shared', icon: 'inbox', label: '共享给我', count: 2 },
+        ],
+      });
+      const lan = Lan(app, { people: ['me', 'mia', 'jie', 'leo'] });
+      lan.openCard('mac');
+
+      window.RECORDING = {
+        title: '00-主界面',
+        duration: 28400,
+        actions: [
+          { at: 700, glide: { sel: '.dev[data-id="mia"] .tile' }, dur: 700 },
+          { at: 1800, shot: '主界面', clean: true },
+          { at: 2000, glide: { sel: '.dev[data-id="jnas"] .tile' }, dur: 800 },
+          { at: 2900, down: true },
+          { at: 2980, up: true },
+          { at: 3300, glide: [1040, 600], dur: 600 },
+          { at: 4600, shot: '点开阿杰的NAS' },
+          { at: 5200, glide: { sel: '.dev[data-id="mac"] .tile' }, dur: 800 },
+          { at: 6100, down: true },
+          { at: 6180, up: true },
+          { at: 6900, glide: { sel: '.chip[data-k="leo"]' }, dur: 700 },
+          { at: 7700, down: true },
+          { at: 7780, up: true },
+          { at: 7950, glide: [1040, 660], dur: 400 },
+          { at: 8300, shot: '我的电脑谁能用' },
+          { at: 8400, glide: { sel: '.tray .mini' }, dur: 800 },
+          { at: 9400, down: true },
+          { at: 9500, glide: [332, 356], dur: 1000 },
+          { at: 10400, shot: '把设备拖进来' },
+          { at: 10800, up: true },
+          { at: 11500, glide: [880, 690], dur: 700 },
+          { at: 13000, shot: '加进来以后' },
+          // Any node can be moved: 阿杰's desktop, a little to the right...
+          { at: 13400, glide: { sel: '.dev[data-id="jdesk"] .tile' }, dur: 700 },
+          { at: 14300, down: true },
+          { at: 14400, glide: { sel: '.dev[data-id="jdesk"] .tile', x: 110, y: 46 }, dur: 600 },
+          { at: 15200, up: true },
+          // ...onto this computer: it leans away, the desktop takes the
+          // nearest free spot...
+          { at: 15600, glide: { sel: '.dev[data-id="jdesk"] .tile' }, dur: 500 },
+          { at: 16300, down: true },
+          { at: 16400, glide: { sel: '.dev[data-id="mac"] .tile' }, dur: 900, arc: 30 },
+          { at: 17400, shot: '放到别的设备上' },
+          { at: 17700, up: true },
+          { at: 18100, glide: [880, 690], dur: 500 },
+          { at: 18900, shot: '吸到最近的空位' },
+          // ...pushed up past the top of the canvas: it stays inside...
+          { at: 19100, glide: { sel: '.dev[data-id="jdesk"] .tile' }, dur: 500 },
+          { at: 19800, down: true },
+          { at: 19900, glide: [700, 40], dur: 900 },
+          { at: 21000, up: true },
+          { at: 21400, glide: [880, 690], dur: 500 },
+          { at: 22200, shot: '贴着边缘放' },
+          // ...and Mia's MacBook cannot go into the tray: it stops above
+          // it, and the tray says why. Then back to her place.
+          { at: 22400, glide: { sel: '.dev[data-id="mia"] .tile' }, dur: 700 },
+          { at: 23300, down: true },
+          { at: 23400, glide: [600, 650], dur: 1100, arc: 30 },
+          { at: 24700, shot: '别人的设备拖不进托盘' },
+          { at: 24900, up: true },
+          { at: 25300, glide: { sel: '.dev[data-id="mia"] .tile' }, dur: 500 },
+          { at: 26000, down: true },
+          { at: 26100, glide: [368, 204], dur: 900 },
+          { at: 27100, up: true },
+          { at: 27400, glide: [880, 640], dur: 500 },
+        ],
+      };
+      window.__ready = true;
+    </script>
+  </body>
+</html>

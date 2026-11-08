@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>2 · 拖一个中转站进来 · Deneb</title>
+    <link rel="stylesheet" href="v3/v3.css" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script src="shared/motion.js"></script>
+    <script src="shared/demo.js"></script>
+    <script src="v3/glyphs.js"></script>
+    <script src="v3/links.js"></script>
+    <script src="v3/app.js"></script>
+    <script>
+      // Scene 2 (DESIGN.md §9): Mia and 阿杰 cannot reach each other. Drag
+      // a relay out of the tray and drop it near them: they connect through
+      // it. Drag it back to remove it (undo brings it back where it was).
+      const app = new App({
+        title: '周末联机',
+        sub: 'Mia 和阿杰互相连不上',
+        subDot: 'warn',
+        stack: ['me', 'mia', 'jie'],
+        action: '邀请朋友',
+        side: [
+          { group: '局域网' },
+          { id: 'weekend', dots: ['me', 'mia', 'jie'], label: '周末联机', on: true },
+          { id: 'team', dots: ['me', '#22C55E'], label: '工作室' },
+          { id: 'new', icon: 'plus', label: '新建局域网' },
+          { gap: true },
+          { group: '设备' },
+          { id: 'mine', icon: 'home', label: '我的设备', count: 2 },
+          { id: 'shared', icon: 'inbox', label: '共享给我', count: 2 },
+        ],
+      });
+      app.setTitle('周末联机', 'Mia 和阿杰互相连不上', 'warn');
+      const P = { mia: { x: 210, y: 190 }, jie: { x: 690, y: 190 }, me: { x: 450, y: 420 } };
+      // Where a relay helps most: between Mia and 阿杰, wherever they are.
+      const spot = () => {
+        const a = app.pt('mia'), b = app.pt('jie');
+        return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      };
+      app.device('mia', { type: 'laptop', owner: 'mia', name: 'Mia 的 MacBook', sub: '在酒店', ...P.mia });
+      app.device('jie', { type: 'desktop', owner: 'jie', name: '阿杰的台式机', sub: '用手机热点', ...P.jie });
+      app.device('me', { type: 'laptop', owner: 'me', name: '这台电脑', sub: '你正在用', ...P.me });
+      app.link('me-mia', 'me', 'mia', { bend: -0.1 });
+      app.link('me-jie', 'me', 'jie', { bend: 0.1 });
+      const cut = app.link('cut', 'mia', 'jie', { state: 'dash', bend: 0 });
+      app.pill(cut, '连不上');
+
+      // ---- Tray -----------------------------------------------------------------
+      const RELAYS = [
+        { id: 'hk', name: '香港', sub: '我的服务器' },
+        { id: 'nas', name: '家里的 NAS', sub: 'Mia 的设备' },
+        { id: 'tokyo', name: '东京', sub: '公共' },
+      ];
+      // The tray and its relays go into the frame log too (motion-check).
+      app.o.trace = (app.o.trace || []).concat(['.tray', '.tray .rchip', '.drag-layer .relay']);
+      const tray = App.h(`<div class="tray" data-k="tray"><span class="tray-label">中转站</span>${RELAYS.map((r) => `<div class="rchip" data-id="${r.id}"><span class="orb">${G.device('relay', 16)}</span><span><b>${r.name}</b><small>${r.sub}</small></span></div>`).join('')}</div>`);
+      app.canvas.appendChild(tray);
+      tray.style.left = '474px';
+      const chipOf = (id) => tray.querySelector(`.rchip[data-id="${id}"]`);
+      const chipPos = (id) => {
+        const c = chipOf(id), r = c.getBoundingClientRect(), cr = app.canvas.getBoundingClientRect();
+        return { x: (r.left - cr.left) / app.zoom + 22, y: (r.top - cr.top) / app.zoom + 22 };
+      };
+      const trayTop = () => tray.offsetTop - 16;
+      const overTray = (p) => p.y > trayTop();
+
+      // ---- A relay in the air (dragging or flying) -------------------------------
+      const ghostEl = (item, p) => {
+        // Out of the tray it travels with its name; its tray slot fades.
+        const el = App.h(`<div class="relay dragging"><div class="orb">${G.device('relay', 18)}</div><div class="name below">${item.name}<small>${item.sub}</small></div></div>`);
+        el.style.left = p.x + 'px';
+        el.style.top = p.y + 'px';
+        app.dragLayer.appendChild(el);
+        return el;
+      };
+      // Mia and 阿杰 reach for a relay coming close: dotted curves, brighter
+      // the nearer it is, while the old dotted line between them fades.
+      const reach = (p) => {
+        const S = spot();
+        const d = Math.hypot(p.x - S.x, p.y - S.y);
+        const a = Math.max(0, Math.min(1, 1 - (d - 60) / 280));
+        app.layer.tendrils = ['mia', 'jie'].map((k) => ({ from: app.pt(k), to: p, alpha: a * 0.9, color: App.PEOPLE[k].c }));
+        cut.alphaTo = 1 - a * 0.85;
+      };
+      const unreach = () => {
+        app.layer.tendrils = [];
+        cut.alphaTo = current ? 0 : 1;
+      };
+      const tween = (dur, fn, ease = D.Ease.inOut) =>
+        new Promise((res) => {
+          const t0 = D.now();
+          const off = D.onFrame((now) => {
+            const k = Math.min(1, (now - t0) / dur);
+            fn(ease(k));
+            if (k >= 1) {
+              off();
+              res();
+            }
+          });
+        });
+
+      // ---- Placing and removing ----------------------------------------------------
+      let current = null; // { item, node, link, from }
+      async function place(item, p) {
+        if (current) await remove({ quiet: true });
+        chipOf(item.id).classList.add('ghost');
+        const node = app.relay('relay', { name: item.name, sub: item.sub, x: p.x, y: p.y, labelSide: 'below', keep: false });
+        // Not on top of a device: the nearest free spot to where it landed.
+        const q = app.freeSpot('relay', p);
+        app.move('relay', q.x, q.y);
+        app.focusId = 'relay';
+        node.el.animate([{ transform: 'scale(0.6)' }, { transform: 'scale(1.1)', offset: 0.55 }, { transform: 'scale(1)' }], { duration: 520, easing: 'cubic-bezier(0.3, 1.1, 0.5, 1)' });
+        current = { item, node };
+        cut.alphaTo = 0;
+        app.hidePill(cut);
+        const l = app.link('via', 'mia', 'jie', { via: 'relay', bend: 0.04 });
+        current.link = l;
+        await app.layer.grow(l, 520, 'center');
+        app.pill(l, `经${item.name}中转，能连上了`, { tone: 'ok', hideAfter: 2600, at: () => (app.nodes.relay ? { x: app.nodes.relay.x, y: app.nodes.relay.y - 44 } : l.mid()) });
+        app.setSub('mia', '能连上阿杰了');
+        app.setSub('jie', '能连上 Mia 了');
+        app.setTitle('周末联机', `都连上了 · 经${item.name}中转`, 'ok');
+      }
+      async function remove(o = {}) {
+        const { item, node, link } = current;
+        // Undo puts it back where it stood before it was dragged away, not
+        // where it was let go over the tray.
+        const from = node.home || { x: node.x, y: node.y };
+        current = null;
+        if (link.pill) app.hidePill(link);
+        await app.layer.retract(link, 'center', 360);
+        app.unlink('via');
+        // The relay flies home to its place in the tray.
+        const to = chipPos(item.id);
+        const a = { x: node.x, y: node.y };
+        app.dropNode('relay');
+        node.el.classList.remove('dragging');
+        node.el.querySelector('.name').style.opacity = 0;
+        // It flies over everything, back to its place in the tray.
+        if (node.el.parentNode !== app.dragLayer) app.dragLayer.appendChild(node.el);
+        await tween(380, (k) => {
+          node.el.style.left = a.x + (to.x - a.x) * k + 'px';
+          node.el.style.top = a.y + (to.y - a.y) * k + 'px';
+          node.el.style.transform = `scale(${1 - 0.2 * k})`;
+        });
+        node.el.remove();
+        chipOf(item.id).classList.remove('ghost');
+        cut.alphaTo = 1;
+        app.pill(cut, '连不上');
+        app.setSub('mia', '在酒店');
+        app.setSub('jie', '用手机热点');
+        app.setTitle('周末联机', 'Mia 和阿杰互相连不上', 'warn');
+        if (!o.quiet) app.toast(`已移除${item.name}`, { undo: () => place(item, from), x: 474, bottom: 96 });
+      }
+      // Clicking a relay in the tray: it flies to the best spot itself.
+      async function flyIn(item) {
+        if (current && current.item.id === item.id) return;
+        if (current) await remove({ quiet: true });
+        const a = chipPos(item.id);
+        const S = spot();
+        const g = ghostEl(item, a);
+        chipOf(item.id).classList.add('ghost');
+        await tween(460, (k) => {
+          const x = a.x + (S.x - a.x) * k, y = a.y + (S.y - a.y) * k - Math.sin(Math.PI * k) * 60;
+          g.style.left = x + 'px';
+          g.style.top = y + 'px';
+          reach({ x, y });
+        });
+        unreach();
+        g.remove();
+        await place(item, S);
+      }
+      // Every node can be moved (app.js); the tray is the one special
+      // place: a relay dropped on it is removed (with undo). Devices are
+      // never put in the tray: let go over it, they take the free spot
+      // nearest it instead.
+      // What the tray says follows the hand (DESIGN.md §6.5): the relay
+      // near, "拖到这里，移除中转站" (a light blue ring); over it, "松手，移除
+      // 中转站" (blue). A device never goes into this tray: it stops above
+      // it, and the tray says why, nothing more.
+      const BAND = 104, H = () => app.canvas.clientHeight;
+      const label = tray.querySelector('.tray-label');
+      const say = (text) => {
+        const t = App.space(text);
+        if (label.textContent === t) return;
+        // From the width it shows now (mid-way, if it is still changing) to
+        // the new words' own width, on the tray's spring: words that change
+        // back and forth make it ease round, never stop dead.
+        const cur = App.softNow(label, 'w');
+        const w0 = cur != null ? cur : label.offsetWidth;
+        label.style.width = '';
+        label.textContent = t;
+        const w1 = label.offsetWidth;
+        label.style.width = w0 + 'px';
+        App.soft(label, 'w', w0, w1, (w, rest) => (label.style.width = rest ? '' : w + 'px'));
+        label.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160, easing: 'ease-out' });
+      };
+      const setMode = (m, text) => {
+        tray.classList.toggle('offer', m === 'offer');
+        tray.classList.toggle('armed', m === 'armed');
+        say(text);
+      };
+      const reasonOf = (n) => (n.id === 'me' ? '正在用的这台电脑不能移出' : `这是${App.PEOPLE[n.owner].name}的设备，只有${App.PEOPLE[n.owner].name}能移出`);
+      app.onNodeBounds = (n) => (n.kind === 'device' ? { y1: H() - BAND - 70 } : null);
+      // Over the tray means on the tray itself, or within 22px of it: only
+      // there does it light up (§6.5); the band beside it does not count.
+      // Near is about when the name comes within reach of it.
+      const onTray = (q) => {
+        const z = app.rectOf(tray), m = 22;
+        return q.x >= z.x - m && q.x <= z.x + z.w + m && q.y >= z.y - m && q.y <= z.y + z.h + m;
+      };
+      const nearTray = (q) => {
+        const z = app.rectOf(tray);
+        const dx = Math.max(z.x - q.x, 0, q.x - (z.x + z.w)), dy = Math.max(z.y - q.y, 0, q.y - (z.y + z.h));
+        return dx * dx + dy * dy < 170 * 170;
+      };
+      // Nothing comes to rest in the tray's band, beside the tray either:
+      // let go there, it goes to the nearest free spot above it.
+      app.spotRules = () => [{ x: -1e4, y: H() - BAND, w: 2e4, h: 1e4 }];
+      app.onNodeTarget = (n) => (n.id === 'relay' && onTray(n) ? { kind: 'tray' } : null);
+      app.onNodeDragging = (n) => {
+        const near = nearTray(n), over = n.id === 'relay' && onTray(n);
+        if (n.id === 'relay') setMode(over ? 'armed' : near ? 'offer' : 'idle', over ? '松手，移除中转站' : near ? '拖到这里，移除中转站' : '中转站');
+        else setMode('idle', near ? reasonOf(n) : '中转站');
+      };
+      app.onNodeEnd = () => setMode('idle', '中转站');
+      app.onNodeDrop = (n, t) => {
+        if (t.kind !== 'tray' || !current) return false;
+        remove();
+      };
+      for (const item of RELAYS) {
+        const chip = chipOf(item.id);
+        let g = null, start = null;
+        app.drag(chip, {
+          start: (p0, p) => {
+            start = chipPos(item.id);
+            g = ghostEl(item, p);
+            chip.classList.add('ghost');
+          },
+          move: (p) => {
+            // It stays inside the window like everything held (§6.3).
+            const q = app.clampTile({ kind: 'relay' }, p);
+            g.style.left = q.x + 'px';
+            g.style.top = q.y + 'px';
+            reach(q);
+          },
+          end: async (p, cancel) => {
+            unreach();
+            if (!cancel && p && !overTray(p)) {
+              g.remove();
+              await place(item, app.clampTile({ kind: 'relay' }, p));
+              return;
+            }
+            // Dropped back on the tray or cancelled: it goes home, leaving
+            // its name behind first (the tray shows none).
+            const a = { x: parseFloat(g.style.left), y: parseFloat(g.style.top) };
+            g.querySelector('.name').style.opacity = 0;
+            await tween(300, (k) => {
+              g.style.left = a.x + (start.x - a.x) * k + 'px';
+              g.style.top = a.y + (start.y - a.y) * k + 'px';
+            });
+            g.remove();
+            if (!current || current.item.id !== item.id) chip.classList.remove('ghost');
+          },
+          click: () => flyIn(item),
+        });
+      }
+
+      window.RECORDING = {
+        title: '02-拖一个中转站进来',
+        duration: 31200,
+        actions: [
+          { at: 1000, shot: '连不上', clean: true },
+          // Any device can be moved: the dotted line and its chip follow...
+          { at: 1200, glide: { sel: '.dev[data-id="mia"] .tile' }, dur: 700 },
+          { at: 2000, down: true },
+          { at: 2100, glide: { sel: '.dev[data-id="mia"] .tile', x: -40, y: 150 }, dur: 700 },
+          { at: 2650, shot: '软绳跟着走' },
+          { at: 3000, up: true },
+          // ...dropped onto this computer, it takes the nearest free spot...
+          { at: 3400, glide: { sel: '.dev[data-id="mia"] .tile' }, dur: 500 },
+          { at: 4000, down: true },
+          { at: 4100, glide: { sel: '.dev[data-id="me"] .tile' }, dur: 900, arc: 30 },
+          { at: 4900, shot: '放到别的设备上' },
+          { at: 5200, up: true },
+          // ...pushed against the left edge, it stays inside...
+          { at: 5600, glide: { sel: '.dev[data-id="mia"] .tile' }, dur: 500 },
+          { at: 6200, down: true },
+          { at: 6300, glide: [190, 300], dur: 800 },
+          { at: 7200, up: true },
+          { at: 7500, glide: [760, 640], dur: 500 },
+          { at: 8200, shot: '贴着边缘放' },
+          // ...and back where it was.
+          { at: 8500, glide: { sel: '.dev[data-id="mia"] .tile' }, dur: 500 },
+          { at: 9100, down: true },
+          { at: 9200, glide: [442, 266], dur: 900 },
+          { at: 10200, up: true },
+          // This computer cannot go into the relays' tray: it stops above
+          // it, and the tray says why. Then back up.
+          { at: 10500, glide: { sel: '.dev[data-id="me"] .tile' }, dur: 500 },
+          { at: 11100, down: true },
+          { at: 11200, glide: [682, 662], dur: 900 },
+          { at: 12200, shot: '设备拖不进托盘' },
+          { at: 12400, up: true },
+          { at: 12800, glide: { sel: '.dev[data-id="me"] .tile' }, dur: 400 },
+          { at: 13300, down: true },
+          { at: 13400, glide: [682, 496], dur: 800 },
+          { at: 14300, up: true },
+          { at: 14500, glide: { sel: '.rchip[data-id="hk"] .orb' }, dur: 800 },
+          { at: 15400, down: true },
+          { at: 15500, glide: [682, 280], dur: 1200, arc: 40 },
+          { at: 16300, shot: '拖动中转站' },
+          { at: 16800, up: true },
+          { at: 17100, glide: [760, 470], dur: 500 },
+          { at: 18600, shot: '接通', clean: true },
+          { at: 19200, glide: { sel: '.relay[data-id="relay"] .orb' }, dur: 600 },
+          { at: 20000, down: true },
+          { at: 20100, glide: [682, 360], dur: 800 },
+          { at: 21100, up: true },
+          { at: 21700, down: true },
+          { at: 21800, glide: [700, 690], dur: 1000 },
+          { at: 22700, shot: '拖回托盘' },
+          { at: 22900, up: true },
+          { at: 23300, glide: [930, 600], dur: 500 },
+          { at: 24200, shot: '移除后可以撤销' },
+          { at: 24400, glide: { sel: '.toast button' }, dur: 700 },
+          { at: 25200, down: true },
+          { at: 25280, up: true },
+          { at: 25600, glide: [930, 600], dur: 500 },
+          { at: 26800, glide: { sel: '.rchip[data-id="tokyo"] .orb' }, dur: 800 },
+          { at: 27700, down: true },
+          { at: 27780, up: true },
+          { at: 28200, glide: [1000, 470], dur: 600 },
+          { at: 30200, shot: '换成东京' },
+        ],
+      };
+      window.__ready = true;
+    </script>
+  </body>
+</html>

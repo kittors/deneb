@@ -1,0 +1,31 @@
+{
+  "accounts": [
+    {
+      "email": "kittors@deneb.test",
+      "displayName": "kittors",
+      "initial": "K",
+      "name": "kittors",
+      "code": "<six digits>"
+    },
+    {
+      "email": "jie@deneb.test",
+      "displayName": "阿杰",
+      "initial": "杰",
+      "name": "jie",
+      "code": "<six digits>"
+    }
+  ],
+  "relays": [
+    {
+      "id": "hk",
+      "name": "香港",
+      "source": "server",
+      "ownerEmail": "kittors@deneb.test",
+      "hostName": "derp.example.com",
+      "ipv4": "198.51.100.4",
+      "derpPort": 33443,
+      "stunPort": 3478
+    }
+  ],
+  "network": {}
+}

@@ -1,0 +1,609 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>3 · 同时在几个局域网 · Deneb</title>
+    <link rel="stylesheet" href="v3/v3.css" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script src="shared/motion.js"></script>
+    <script src="shared/demo.js"></script>
+    <script src="v3/glyphs.js"></script>
+    <script src="v3/links.js"></script>
+    <script src="v3/app.js"></script>
+    <script>
+      // Scene 3 (DESIGN.md §9): this computer is in two LANs at once. Each
+      // LAN is a soft grey area that wraps its devices, with this computer in
+      // between, linked to all of them. Everything can be moved: a device
+      // within its LAN (the area grows or shrinks around it), a whole area
+      // with its devices, this computer. My own devices can go to another
+      // LAN or out of one (§6.4); someone else's device can be moved but
+      // not taken out of its LAN. Hovering a LAN in the sidebar brings its
+      // area forward; its switch pauses it; an invitation adds a third.
+      const P = App.PEOPLE;
+      const AREAS = {
+        team: { name: '工作室', people: ['me', 'lin', 'jie'], devs: ['db', 'ci', 'jdesk'], side: 'left' },
+        weekend: { name: '周末联机', people: ['me', 'mia', 'jie'], devs: ['mia', 'jnas', 'game'], side: 'right' },
+        board: { name: '桌游夜', people: ['leo', 'lin', 'me'], devs: ['leomac', 'boardsrv', 'linphone'], side: 'bottom', hidden: true },
+      };
+      const DEVS = {
+        mac: { type: 'laptop', owner: 'me', name: '这台电脑' },
+        db: { type: 'database', owner: 'lin', name: 'dev-db' },
+        ci: { type: 'server', owner: 'lin', name: 'CI 构建机' },
+        jdesk: { type: 'desktop', owner: 'jie', name: '阿杰的台式机' },
+        mia: { type: 'laptop', owner: 'mia', name: 'Mia 的 MacBook' },
+        jnas: { type: 'nas', owner: 'jie', name: '阿杰的 NAS' },
+        game: { type: 'console', owner: 'me', name: '我的游戏主机' },
+        leomac: { type: 'laptop', owner: 'leo', name: 'Leo 的 MacBook' },
+        boardsrv: { type: 'mini', owner: 'leo', name: '桌游服务器' },
+        linphone: { type: 'phone', owner: 'lin', name: '小林的手机' },
+      };
+
+      const app = new App({
+        title: '全部局域网',
+        sub: '',
+        side: [
+          { group: '局域网' },
+          { id: 'all', icon: 'people', label: '全部', on: true },
+          { id: 'team', dots: AREAS.team.people, label: '工作室', sw: true },
+          { id: 'weekend', dots: AREAS.weekend.people, label: '周末联机', sw: true },
+          { id: 'new', icon: 'plus', label: '新建局域网' },
+          { gap: true },
+          { group: '设备' },
+          { id: 'mine', icon: 'home', label: '我的设备', count: 4 },
+          { id: 'shared', icon: 'inbox', label: '共享给我', count: 2 },
+        ],
+        controls: [{ label: '收到邀请', onClick: (b) => invite(b) }],
+      });
+      const $ = (s, r = document) => r.querySelector(s);
+      const { R, ov, inside, grow } = App;
+      const areaOf = (id) => Object.keys(AREAS).find((k) => AREAS[k].devs.includes(id)) || null;
+      const shown = () => Object.keys(AREAS).filter((k) => !AREAS[k].hidden);
+      const whose = (id) => P[DEVS[id].owner].name;
+      const CX = 474;
+
+      // ---- The designed starting picture --------------------------------------------------
+      // Two LANs side by side with this computer between them. Each side
+      // stacks its devices in a soft arc facing this computer, so no link
+      // crosses another device or name. After that, things stay where the
+      // user puts them.
+      function startPos() {
+        const GAP = 116, ARC = 46, cy = 324;
+        const pos = { mac: { x: CX, y: cy } };
+        for (const id of ['team', 'weekend']) {
+          const a = AREAS[id], n = a.devs.length, left = a.side === 'left', half = (n - 1) / 2;
+          a.devs.forEach((d, i) => {
+            const o = i - half;
+            const k = half ? Math.abs(o) / half : 0;
+            pos[d] = { x: left ? 150 + ARC * k : 798 - ARC * k, y: cy + o * GAP };
+          });
+        }
+        AREAS.board.devs.forEach((d, i) => (pos[d] = { x: CX + (i - 1) * 132, y: 532 }));
+        return pos;
+      }
+      const START = startPos();
+      // A device's place is remembered per LAN: moved to another LAN, it
+      // starts fresh there.
+      const keyOf = (id) => (id === 'mac' ? 'mac' : `${areaOf(id) || 'out'}-${id}`);
+      app.posKey = keyOf;
+
+      // ---- Areas: they wrap their devices ------------------------------------------------------
+      for (const id in AREAS) {
+        const a = AREAS[id];
+        a.el = App.h(`<div class="area" data-id="${id}"><div class="area-title"><span class="dots">${a.people.map((k) => App.dot(P[k].c)).join('')}</span>${a.name}</div><div class="paused">已暂停</div></div>`);
+        app.canvas.insertBefore(a.el, app.layer.canvas);
+        if (a.hidden) a.el.style.display = 'none';
+      }
+      // An area is its devices' footprints plus room for its title, at least
+      // as wide as the designed one.
+      function fit(aid) {
+        const ids = AREAS[aid].devs.filter((id) => app.nodes[id]);
+        if (!ids.length) return null;
+        let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+        for (const id of ids)
+          for (const r of app.foot(id)) {
+            x0 = Math.min(x0, r.x);
+            y0 = Math.min(y0, r.y);
+            x1 = Math.max(x1, r.x + r.w);
+            y1 = Math.max(y1, r.y + r.h);
+          }
+        const r = R(x0 - 26, y0 - 44, x1 - x0 + 52, y1 - y0 + 62);
+        if (r.w < 296) (r.x -= (296 - r.w) / 2), (r.w = 296);
+        return r;
+      }
+      const RS = {};
+      function setRect(aid, r, jump) {
+        AREAS[aid].rect = r;
+        if (!RS[aid]) RS[aid] = { x: new D.Spring(r.x), y: new D.Spring(r.y), w: new D.Spring(r.w), h: new D.Spring(r.h) };
+        for (const k of ['x', 'y', 'w', 'h']) jump ? RS[aid][k].jump(r[k]) : RS[aid][k].to(r[k], D.Smooth);
+      }
+      let areaHeld = null;
+      // Each frame: areas follow their devices (but hold still while
+      // something is in the hand), and the page shows the springs.
+      D.onFrame(() => {
+        if (!app.held && !areaHeld)
+          for (const aid of shown()) {
+            // A device on its way back home (refused elsewhere): the area
+            // holds still until it lands, neither chasing nor shrinking.
+            if (AREAS[aid].devs.some((id) => app.nodes[id] && app.nodes[id].returning)) continue;
+            const f = fit(aid), r = AREAS[aid].rect;
+            if (f && (!r || Math.abs(f.x - r.x) + Math.abs(f.y - r.y) + Math.abs(f.w - r.w) + Math.abs(f.h - r.h) > 0.5)) setRect(aid, f, !r);
+          }
+        for (const aid in RS) {
+          const s = RS[aid], st = AREAS[aid].el.style;
+          st.left = s.x.value + 'px';
+          st.top = s.y.value + 'px';
+          st.width = s.w.value + 'px';
+          st.height = s.h.value + 'px';
+        }
+      });
+      // Where a node may land: never inside another LAN's area; this
+      // computer, in none of them.
+      // A device in a LAN lands inside its area (§6.2).
+      app.spotRules = (id) => {
+        const rects = shown().filter((k) => AREAS[k].rect && (id === 'mac' || !AREAS[k].devs.includes(id))).map((k) => grow(AREAS[k].rect, 14));
+        const own = areaOf(id) && AREAS[areaOf(id)].rect;
+        if (own) rects.push(R(-4000, -4000, own.x + 4000, 9000), R(own.x + own.w, -4000, 4000, 9000), R(-4000, -4000, 9000, own.y + 4000), R(-4000, own.y + own.h, 9000, 4000));
+        return rects;
+      };
+
+      // ---- Devices and links ----------------------------------------------------------------
+      // Links bow away from the nearest axis (sin 4θ), so the fan out of this
+      // computer stays even; app.js bends them further around anything in
+      // the way.
+      const bendFn = (a, b) => 0.07 * Math.sin(4 * Math.atan2(b.y - a.y, b.x - a.x));
+      let focus = null;
+      const alphaFor = (id) => (focus && areaOf(id) !== focus ? 0.35 : 1);
+      const LK = {}; // device id -> { solid, dash }
+      let seq = 0;
+      function addLink(id, state) {
+        const l = app.link('k' + ++seq, 'mac', id, { state, bend: bendFn(app.pt('mac'), app.pt(id)) });
+        l.bendFn = bendFn;
+        l.alpha = l.alphaTo = alphaFor(id);
+        return l;
+      }
+      const subFor = (id) => {
+        if (id === 'mac') return `在 ${shown().length} 个局域网里`;
+        const a = AREAS[areaOf(id)];
+        if (a && a.paused) return '已暂停';
+        if (id === 'db') return clock();
+        return '直接连上';
+      };
+      // dev-db's line ticks once a second: a LAN that keeps running.
+      const T0 = D.now(), BASE = 2 * 3600 + 14 * 60 + 8;
+      const clock = () => {
+        const s = BASE + Math.floor((D.now() - T0) / 1000);
+        return `已连接 ${Math.floor(s / 3600)}:${String(Math.floor(s / 60) % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+      };
+      D.onFrame(() => {
+        const n = app.nodes.db;
+        if (!n || (AREAS[areaOf('db')] || {}).paused) return;
+        const sm = $('.name small', n.el), t = clock();
+        if (sm.textContent !== t) sm.textContent = t;
+      });
+
+      function mount(id, at) {
+        const n = app.device(id, { ...DEVS[id], ...at, sub: subFor(id), cls: id === 'mac' ? 'up' : '', keep: false });
+        const r = app.recall(keyOf(id));
+        if (r) app.move(id, r.x, r.y);
+        return n;
+      }
+      mount('mac', START.mac);
+      for (const id of [...AREAS.team.devs, ...AREAS.weekend.devs]) {
+        mount(id, START[id]);
+        LK[id] = { solid: addLink(id, 'on'), dash: null };
+      }
+
+      // The link follows the LAN's state: light when it runs, still dots
+      // when it is paused. Pausing pulls the light back into this computer;
+      // resuming draws it out again.
+      function syncLink(id) {
+        const k = LK[id];
+        const a = AREAS[areaOf(id)];
+        if (!k || !a) return;
+        const want = a.paused ? 'dash' : 'on';
+        if (want === 'dash' && !k.dash) {
+          k.dash = addLink(id, 'dash');
+          k.dash.alpha = 0;
+          if (k.solid) {
+            const s = k.solid;
+            k.solid = null;
+            app.layer.retract(s, 'a', 420, { glow: true }).then(() => app.unlink(s.id));
+          }
+        } else if (want === 'on' && !k.solid) {
+          k.solid = addLink(id, 'grow');
+          app.layer.grow(k.solid, 460, 'a');
+          if (k.dash) {
+            const d = k.dash;
+            k.dash = null;
+            d.alphaTo = 0;
+            D.after(320, () => app.unlink(d.id));
+          }
+        }
+      }
+      function syncDev(id) {
+        const a = AREAS[areaOf(id)];
+        app.nodes[id].el.classList.toggle('paused-dev', !!(a && a.paused));
+        app.setSub(id, subFor(id));
+        syncLink(id);
+      }
+
+      // ---- The header line ----------------------------------------------------------------------
+      function summary() {
+        const ids = shown();
+        const paused = ids.filter((k) => AREAS[k].paused).map((k) => AREAS[k].name);
+        const n = 1 + ids.reduce((s, k) => s + AREAS[k].devs.length, 0);
+        if (paused.length) app.setTitle('全部局域网', `${paused.join('、')}已暂停，其他照常`, 'off');
+        else app.setTitle('全部局域网', `${ids.length} 个局域网，${n} 台设备都连上了`, 'ok');
+        app.setSub('mac', subFor('mac'));
+      }
+      summary();
+
+      // ---- Focus: hover a LAN in the sidebar ------------------------------------------------------
+      function setFocus(id) {
+        focus = id;
+        for (const k in AREAS) {
+          const dim = !!focus && k !== focus;
+          AREAS[k].el.classList.toggle('dim', dim);
+          for (const d of AREAS[k].devs) if (d !== app.held && app.nodes[d]) app.nodes[d].el.classList.toggle('dim', dim);
+        }
+        for (const id in LK) for (const l of [LK[id].solid, LK[id].dash]) if (l) l.alphaTo = alphaFor(id);
+      }
+      // Focus is read from real pointer moves (the row under the pointer),
+      // not from enter and leave events: headless Chrome at 2x sends stray
+      // leaves with no move at all, and the areas would blink. Off the rows
+      // it waits a moment before everything comes back, so crossing the gap
+      // between two rows switches focus directly.
+      const focusRows = new Map();
+      let unfocus = null;
+      const hoverable = (row, id) => focusRows.set(row, id);
+      addEventListener(
+        'pointermove',
+        (e) => {
+          if (app.held || areaHeld) return;
+          const row = e.target instanceof Element ? e.target.closest('.nav') : null;
+          if (row && focusRows.has(row)) {
+            if (unfocus) unfocus.cancel(), (unfocus = null);
+            const id = focusRows.get(row);
+            if (focus !== id) setFocus(id);
+          } else if (focus != null && !unfocus)
+            unfocus = D.after(90, () => {
+              unfocus = null;
+              setFocus(null);
+            });
+        },
+        true
+      );
+      hoverable(app.nav('all'), null);
+      for (const id of ['team', 'weekend']) hoverable(app.nav(id), id);
+
+      // ---- Pause: a LAN's switch ----------------------------------------------------------------
+      function setPaused(id, paused) {
+        const a = AREAS[id];
+        if (!!a.paused === paused) return;
+        a.paused = paused;
+        a.el.classList.toggle('is-paused', paused);
+        $('.sw', app.nav(id)).classList.toggle('on', !paused);
+        for (const d of a.devs) if (app.nodes[d]) syncDev(d);
+        summary();
+      }
+      const switchOf = (id) => {
+        $('.sw', app.nav(id)).addEventListener('click', (e) => {
+          e.stopPropagation();
+          setPaused(id, !AREAS[id].paused);
+        });
+      };
+      switchOf('team');
+      switchOf('weekend');
+
+      // ---- Where a held device can go (DESIGN.md §6.4) ---------------------------------------------
+      const navRect = (id) => (app.nav(id) ? app.rectOf(app.nav(id)) : null);
+      const areaAt = (p) => shown().find((k) => AREAS[k].rect && inside(p, AREAS[k].rect)) || null;
+      const rowAt = (p) => shown().find((k) => inside(p, navRect(k) || R(0, 0, 0, 0))) || null;
+      app.onNodeTarget = (n, p) => {
+        // Someone else's device never leaves its area (it stops at the
+        // edge, see below): wherever the hand goes, it is just a new place.
+        if (n.id === 'mac' || n.owner !== 'me') return null;
+        const from = areaOf(n.id);
+        const row = rowAt(p);
+        const lan = row || areaAt(p);
+        if (lan === from) return row ? { kind: 'back' } : null; // its own LAN: just a new place
+        if (lan) return { kind: 'lan', lan, row: !!row, el: row ? app.nav(row) : AREAS[lan].el, shrink: !!row };
+        if (p.x < 0) return { kind: 'back' }; // over the sidebar, but on no LAN
+        return { kind: 'out' };
+      };
+      // Someone else's device cannot be taken out of its LAN: dragged
+      // toward the edge of its area, it stops there, name and all inside,
+      // and a note on that edge says why. No shake, no toast: it simply
+      // cannot go further.
+      const inner = (n) => {
+        const r = AREAS[areaOf(n.id)] && AREAS[areaOf(n.id)].rect;
+        return r && { x0: r.x + 50, x1: r.x + r.w - 50, y0: r.y + 74, y1: r.y + r.h - 92 };
+      };
+      app.onNodeBounds = (n) => (n.id === 'mac' || n.owner === 'me' ? null : inner(n));
+      const note = App.h(`<div class="area-note"></div>`);
+      app.canvas.appendChild(note);
+      app.onNodeDragging = (n, p) => {
+        const b = n.id !== 'mac' && n.owner !== 'me' && inner(n);
+        const want = { x: p.x - n.grab.x, y: p.y - n.grab.y };
+        const pushed = b && (want.x < b.x0 - 8 || want.x > b.x1 + 8 || want.y < b.y0 - 8 || want.y > b.y1 + 8);
+        if (pushed) {
+          const r = AREAS[areaOf(n.id)].rect;
+          note.textContent = App.space(`这是${whose(n.id)}的设备，只有${whose(n.id)}能移出`);
+          const w = note.offsetWidth;
+          note.style.left = D.clamp(n.x, r.x + w / 2 + 12, r.x + r.w - w / 2 - 12) + 'px';
+          note.style.top = r.y + r.h + 'px';
+        }
+        note.classList.toggle('show', !!pushed);
+      };
+      app.onNodeEnd = () => note.classList.remove('show');
+      app.onNodeDrop = (n, t) => {
+        if (t.kind === 'back') return app.settle(n, n.home, D.Smooth);
+        if (t.kind === 'lan') {
+          const back = { lan: areaOf(n.id), at: n.home };
+          moveTo(n.id, t.lan, t.row ? null : app.pt(n.id));
+          app.toast(`已把${DEVS[n.id].name}挪到${AREAS[t.lan].name}`, { x: CX, bottom: 28, undo: () => moveTo(n.id, back.lan, back.at) });
+          return;
+        }
+        if (t.kind === 'out') return takeOut(n.id);
+        return false;
+      };
+      // My device into another LAN: where it was let go in that area (or,
+      // from the sidebar, the free spot nearest the area's bottom middle).
+      function moveTo(id, lan, at) {
+        const from = areaOf(id);
+        if (from) AREAS[from].devs.splice(AREAS[from].devs.indexOf(id), 1);
+        AREAS[lan].devs.push(id);
+        const r = AREAS[lan].rect;
+        const want = at || { x: r.x + r.w / 2, y: r.y + r.h - 70 };
+        const spot = app.freeSpot(id, want);
+        app.focusId = id;
+        app.settle(app.nodes[id], spot, D.Snappy, () => app.remember(keyOf(id), spot));
+        syncDev(id);
+        summary();
+      }
+      // Dropped on blank canvas: out of its LAN, with undo.
+      function takeOut(id) {
+        const from = areaOf(id);
+        const n = app.nodes[id];
+        const home = n.home || { x: n.x, y: n.y };
+        AREAS[from].devs.splice(AREAS[from].devs.indexOf(id), 1);
+        const k = LK[id];
+        delete LK[id];
+        if (k.dash) {
+          k.dash.alphaTo = 0;
+          D.after(300, () => app.unlink(k.dash.id));
+        }
+        if (k.solid) app.layer.retract(k.solid, 'a', 380, { glow: true }).then(() => app.unlink(k.solid.id));
+        n.el.classList.remove('dragging');
+        n.el.animate([{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(0.6)' }], { duration: 260, easing: 'ease-in', fill: 'forwards' });
+        D.after(270, () => n.el.remove());
+        app.dropNode(id);
+        summary();
+        app.toast(`已把${DEVS[id].name}移出${AREAS[from].name}`, { x: CX, bottom: 28, undo: () => putBack(id, from, home) });
+      }
+      function putBack(id, lan, at) {
+        AREAS[lan].devs.push(id);
+        const n = mount(id, at);
+        n.el.animate([{ transform: 'scale(0.6)', opacity: 0 }, { transform: 'scale(1.06)', opacity: 1, offset: 0.6 }, { transform: 'none', opacity: 1 }], { duration: 460, easing: 'cubic-bezier(0.3, 1.2, 0.5, 1)' });
+        LK[id] = { solid: null, dash: null };
+        syncDev(id);
+        summary();
+      }
+
+      // ---- Moving a whole area ----------------------------------------------------------------------
+      // A free place for a rectangle near r: inside the view and clear of
+      // the given obstacles.
+      function freeRect(r, obs) {
+        const B = app.bounds();
+        const ok = (q) => q.x >= B.x0 && q.y >= B.y0 && q.x + q.w <= B.x1 && q.y + q.h <= B.y1 && !obs.some((b) => ov(q, b));
+        if (ok(r)) return r;
+        for (let d = 8; d < 720; d += 8) {
+          const n = Math.max(8, Math.round((2 * Math.PI * d) / 12));
+          for (let i = 0; i < n; i++) {
+            const a = (i / n) * Math.PI * 2 + Math.PI / 2;
+            const q = R(r.x + Math.cos(a) * d, r.y + Math.sin(a) * d, r.w, r.h);
+            if (ok(q)) return q;
+          }
+        }
+        return r;
+      }
+      // Other areas (20px apart), nodes that are not its own (16px), and
+      // floating cards.
+      const obstaclesFor = (aid) => {
+        const obs = [...app.blockers()];
+        for (const k of shown()) if (k !== aid && AREAS[k].rect) obs.push(grow(AREAS[k].rect, 20));
+        for (const id in app.nodes) if (!AREAS[aid].devs.includes(id)) obs.push(...app.foot(id, null, 16));
+        return obs;
+      };
+      function areaDrag(aid) {
+        const a = AREAS[aid];
+        let p0, home, homes;
+        const shiftBy = (dx, dy) => {
+          setRect(aid, R(home.x + dx, home.y + dy, home.w, home.h), true);
+          for (const h of homes) if (app.nodes[h.id]) app.move(h.id, h.x + dx, h.y + dy);
+        };
+        app.drag(a.el, {
+          start: (q0) => {
+            areaHeld = aid;
+            p0 = q0;
+            home = { ...a.rect };
+            homes = a.devs.filter((id) => app.nodes[id]).map((id) => ({ id, x: app.nodes[id].x, y: app.nodes[id].y }));
+            a.el.classList.add('lifted');
+          },
+          move: (p) => {
+            // The whole area stays in view.
+            const B = app.bounds();
+            shiftBy(D.clamp(p.x - p0.x, B.x0 - home.x, B.x1 - home.x - home.w), D.clamp(p.y - p0.y, B.y0 - home.y, B.y1 - home.y - home.h));
+          },
+          end: (p, cancel) => {
+            a.el.classList.remove('lifted');
+            const cur = { ...a.rect };
+            // Let go on another area or on this computer: the nearest free
+            // place instead. Escape: back where it was.
+            const to = cancel ? home : freeRect(cur, obstaclesFor(aid));
+            const s = new D.Spring2(cur.x - home.x, cur.y - home.y, cancel ? D.Smooth : D.Snappy).to(to.x - home.x, to.y - home.y);
+            const t0 = D.now();
+            const off = D.onFrame((now) => {
+              const v = s.value;
+              shiftBy(v.x, v.y);
+              if (now - t0 > 520) {
+                off();
+                shiftBy(to.x - home.x, to.y - home.y);
+                areaHeld = null;
+                for (const h of homes) if (app.nodes[h.id]) app.remember(keyOf(h.id), app.pt(h.id));
+              }
+            });
+          },
+        });
+      }
+      for (const id of ['team', 'weekend']) areaDrag(id);
+
+      // ---- An invitation, and joining a third LAN -------------------------------------------------
+      let card = null, inviteBtn = null;
+      function invite(btn) {
+        if (card || !AREAS.board.hidden) return;
+        inviteBtn = btn;
+        card = App.h(`
+          <div class="invite">
+            <div class="who">${App.ball('leo')}<div><b>Leo 邀请你加入「桌游夜」</b><span class="s">3 个人 · 3 台设备</span></div></div>
+            <div class="acts"><button class="btn ghost">以后再说</button><button class="btn primary">加入</button></div>
+          </div>`);
+        $('.main', app.win).appendChild(card);
+        card.animate([{ opacity: 0, transform: 'translateY(-8px) scale(0.97)' }, { opacity: 1, transform: 'none' }], { duration: 300, easing: 'cubic-bezier(0.3, 1.3, 0.5, 1)' });
+        $('.btn.ghost', card).onclick = () => closeInvite();
+        $('.btn.primary', card).onclick = () => join();
+      }
+      function closeInvite() {
+        const c = card;
+        card = null;
+        if (!c) return;
+        c.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(-6px) scale(0.97)' }], { duration: 200, easing: 'ease-in', fill: 'forwards' });
+        D.after(200, () => c.remove());
+      }
+      function join() {
+        closeInvite();
+        if (inviteBtn) (inviteBtn.disabled = true), (inviteBtn.style.opacity = 0.45);
+        const a = AREAS.board;
+        // The sidebar gets its row, which lights up once and fades.
+        const row = App.h(`<div class="nav flash" data-id="board"><span class="dots">${a.people.map((k) => App.dot(P[k].c)).join('')}</span><span class="nav-label">${a.name}</span><button class="sw sm on" aria-label="${a.name}"></button></div>`);
+        app.nav('weekend').after(row);
+        row.style.overflow = 'hidden';
+        row.animate([{ height: '0px', opacity: 0 }, { height: '36px', opacity: 1 }], { duration: 340, easing: 'cubic-bezier(0.3, 1.1, 0.5, 1)' });
+        D.after(340, () => (row.style.overflow = ''));
+        D.after(1400, () => row.classList.remove('flash'));
+        hoverable(row, 'board');
+        switchOf('board');
+        // The new LAN's place is under the others. Everything already on
+        // the canvas makes room together (a spring up), as far as it needs
+        // to and can; if that is not enough, the new area takes the nearest
+        // free place instead.
+        const want = R(268, 458, 412, 166);
+        const rects = [];
+        for (const k of shown()) if (AREAS[k].rect) rects.push(AREAS[k].rect);
+        for (const id in app.nodes) rects.push(...app.foot(id));
+        const B = app.bounds();
+        const top = Math.min(...rects.map((r) => r.y)), bottom = Math.max(...rects.map((r) => r.y + r.h));
+        const dy = Math.max(0, Math.min(bottom + 20 - want.y, top - B.y0));
+        if (dy > 0) for (const id in app.nodes) app.settle(app.nodes[id], { x: app.nodes[id].x, y: app.nodes[id].y - dy }, D.Smooth);
+        const after = rects.map((r) => grow(R(r.x, r.y - dy, r.w, r.h), 18));
+        const at = freeRect(want, after);
+        a.hidden = false;
+        setRect('board', at, true);
+        a.el.style.display = '';
+        a.el.animate([{ opacity: 0, transform: 'translateY(28px)' }, { opacity: 1, transform: 'none' }], { duration: 460, easing: 'cubic-bezier(0.2, 0.9, 0.3, 1)', fill: 'backwards', delay: 120 });
+        a.devs.forEach((id, i) =>
+          D.after(380 + i * 70, () => {
+            const p = { x: START[id].x + at.x - want.x, y: START[id].y + at.y - want.y };
+            const n = mount(id, p);
+            if (!app.recall(keyOf(id))) {
+              const q = app.freeSpot(id, p);
+              app.move(id, q.x, q.y);
+            }
+            n.el.animate([{ transform: 'scale(0.4)', opacity: 0 }, { transform: 'scale(1.08)', opacity: 1, offset: 0.6 }, { transform: 'none', opacity: 1 }], { duration: 520, easing: 'cubic-bezier(0.3, 1.2, 0.5, 1)' });
+            if (focus && focus !== 'board') n.el.classList.add('dim');
+            LK[id] = { solid: addLink(id, 'grow'), dash: null };
+            app.layer.grow(LK[id].solid, 480, 'a');
+          })
+        );
+        areaDrag('board');
+        D.after(380 + a.devs.length * 70 + 400, summary);
+        app.setSub('mac', subFor('mac'));
+      }
+
+      window.RECORDING = {
+        title: '03-同时在几个局域网',
+        duration: 37000,
+        actions: [
+          { at: 1300, shot: '两个局域网', clean: true },
+          // A whole LAN moves with its devices; its links follow.
+          { at: 1500, glide: { sel: '.area[data-id="weekend"]', x: 236, y: 26 }, dur: 700 },
+          { at: 2300, down: true },
+          { at: 2400, glide: { sel: '.area[data-id="weekend"]', x: 236, y: 106 }, dur: 700 },
+          { at: 3000, shot: '整块局域网一起挪' },
+          { at: 3300, up: true },
+          { at: 3700, glide: { sel: '.area[data-id="weekend"]', x: 236, y: 26 }, dur: 500 },
+          { at: 4300, down: true },
+          { at: 4400, glide: { sel: '.area[data-id="weekend"]', x: 236, y: -54 }, dur: 700 },
+          { at: 5300, up: true },
+          // Someone else's device can be moved within its LAN, not out of it.
+          { at: 5700, glide: { sel: '.dev[data-id="jdesk"] .tile' }, dur: 700 },
+          { at: 6500, down: true },
+          { at: 6600, glide: [912, 406], dur: 1000, arc: 30 },
+          { at: 7650, shot: '别人的设备不能移出' },
+          { at: 7900, up: true },
+          { at: 8200, glide: [1150, 716], dur: 500 },
+          // This computer against the top edge: it stays in view, name too.
+          { at: 9100, glide: { sel: '.dev[data-id="mac"] .tile' }, dur: 600 },
+          { at: 9900, down: true },
+          { at: 10000, glide: [706, 40], dur: 800 },
+          { at: 11000, up: true },
+          { at: 11300, glide: [1150, 716], dur: 500 },
+          { at: 12000, shot: '贴着边缘放' },
+          { at: 12300, glide: { sel: '.dev[data-id="mac"] .tile' }, dur: 600 },
+          { at: 13100, down: true },
+          { at: 13200, glide: [706, 400], dur: 900 },
+          { at: 14200, up: true },
+          { at: 14500, glide: { sel: '.nav[data-id="team"] .nav-label' }, dur: 700 },
+          { at: 15900, shot: '聚焦工作室' },
+          { at: 16200, glide: { sel: '.nav[data-id="weekend"] .nav-label' }, dur: 500 },
+          { at: 17500, glide: { sel: '.nav[data-id="weekend"] .sw' }, dur: 400 },
+          { at: 18200, down: true },
+          { at: 18280, up: true },
+          { at: 18500, glide: [1150, 716], dur: 700 },
+          { at: 19800, shot: '暂停周末联机' },
+          { at: 20200, glide: { sel: '.dev[data-id="game"] .tile' }, dur: 800 },
+          { at: 21300, down: true },
+          { at: 21400, glide: [507, 576], dur: 1300, arc: 40 },
+          { at: 22400, shot: '把游戏主机挪到工作室' },
+          { at: 22900, up: true },
+          { at: 23300, glide: [1150, 716], dur: 600 },
+          { at: 24300, shot: '挪过去以后' },
+          { at: 24700, glide: { sel: '.toast button' }, dur: 700 },
+          { at: 25600, down: true },
+          { at: 25680, up: true },
+          { at: 25900, glide: [1150, 716], dur: 500 },
+          { at: 27000, shot: '撤销后回到原处' },
+          { at: 27300, glide: { sel: '.nav[data-id="weekend"] .sw' }, dur: 900 },
+          { at: 28500, down: true },
+          { at: 28580, up: true },
+          { at: 28800, glide: [1150, 716], dur: 600 },
+          { at: 30000, shot: '恢复周末联机' },
+          { at: 30300, glide: { sel: '.demo-bar .bar-btn' }, dur: 800 },
+          { at: 31400, down: true },
+          { at: 31480, up: true },
+          { at: 31700, glide: [706, 190], dur: 700 },
+          { at: 32500, shot: '收到邀请' },
+          { at: 32700, glide: { sel: '.invite .btn.primary' }, dur: 600 },
+          { at: 33600, down: true },
+          { at: 33680, up: true },
+          { at: 34000, glide: [1150, 722], dur: 600 },
+          { at: 36200, shot: '加入桌游夜', clean: true },
+        ],
+      };
+      window.__ready = true;
+    </script>
+  </body>
+</html>

@@ -1,0 +1,5 @@
+# Built binaries (build.sh) and the real seeds: they carry the test
+# accounts' verification codes.
+/bin/
+/seed.*.json
+!/seed.example.json

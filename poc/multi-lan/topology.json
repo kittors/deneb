@@ -1,0 +1,85 @@
+{
+  "addressBlock": "10.86.0.0/16",
+  "relay": {
+    "host": "derp.example.com",
+    "ip": "198.51.100.4",
+    "port": 33443,
+    "stunPort": 3478
+  },
+  "lans": [
+    {
+      "id": "studio",
+      "name": "工作室"
+    },
+    {
+      "id": "weekend",
+      "name": "周末联机"
+    }
+  ],
+  "devices": [
+    {
+      "name": "mac",
+      "owner": "me",
+      "listenPort": 41701,
+      "lans": {
+        "studio": [
+          "ping",
+          "tcp/80",
+          "tcp/7000",
+          "tcp/9000",
+          "tcp/8080"
+        ],
+        "weekend": [
+          "ping",
+          "tcp/7000",
+          "tcp/9000"
+        ]
+      }
+    },
+    {
+      "name": "box",
+      "owner": "lin",
+      "listenPort": 41700,
+      "endpoints": [
+        "103.42.31.155:41700"
+      ],
+      "lans": {
+        "studio": [
+          "ping",
+          "tcp/80",
+          "tcp/7000",
+          "tcp/9000"
+        ]
+      }
+    },
+    {
+      "name": "box",
+      "owner": "jie",
+      "listenPort": 41702,
+      "lans": {
+        "weekend": [
+          "ping",
+          "tcp/80",
+          "tcp/7000",
+          "tcp/9000"
+        ]
+      }
+    },
+    {
+      "name": "nas",
+      "owner": "jie",
+      "listenPort": 41703,
+      "endpoints": [
+        "198.51.100.4:41703"
+      ],
+      "lans": {
+        "weekend": [
+          "ping",
+          "tcp/80",
+          "tcp/7000",
+          "tcp/9000"
+        ]
+      }
+    }
+  ]
+}

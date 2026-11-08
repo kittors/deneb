@@ -1,0 +1,13 @@
+/build/
+/.mygo/
+mygo_windows_*.syso
+/deneb
+/deneb.test
+*.test
+/poc/multi-lan/bin/
+# The desktop client's build and `mygo dev` output, now that it lives in cmd/deneb.
+/cmd/deneb/build/
+/cmd/deneb/.mygo/
+# The frames before the prototype was split, for the demo's frame-by-frame
+# check (design/plan/m1/client.md): 17 MB of PNGs, kept out of commits.
+/design/plan/m1/client-frames-baseline/

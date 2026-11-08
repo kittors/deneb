@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>1 · 先直接连，连不上就经中转 · Deneb</title>
+    <link rel="stylesheet" href="v3/v3.css" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script src="shared/motion.js"></script>
+    <script src="shared/demo.js"></script>
+    <script src="v3/glyphs.js"></script>
+    <script src="v3/links.js"></script>
+    <script src="v3/app.js"></script>
+    <script>
+      // Scene 1 (DESIGN.md §9): my computer at home reaches my machine at
+      // the office. Straight there when it can; through a relay when the
+      // office firewall says no; and a change of network never cuts it off.
+      let strict = new URLSearchParams(location.search).get('mode') === 'strict';
+      let path = 'trying'; // trying | direct | relay
+      let netBtn;
+      const app = new App({
+        title: '我的设备',
+        sub: '2 台设备',
+        action: '添加设备',
+        side: [
+          { group: '局域网' },
+          { id: 'weekend', dots: ['me', 'mia', 'jie'], label: '周末联机' },
+          { id: 'team', dots: ['me', '#22C55E'], label: '工作室' },
+          { id: 'new', icon: 'plus', label: '新建局域网' },
+          { gap: true },
+          { group: '设备' },
+          { id: 'mine', icon: 'home', label: '我的设备', count: 2, on: true },
+          { id: 'shared', icon: 'inbox', label: '共享给我', count: 2 },
+        ],
+        controls: [
+          { seg: ['公司网络：普通', '有防火墙'], value: strict ? 1 : 0, onChange: (k) => ((strict = k === 1), start()) },
+          { label: '网络变了', onClick: () => switchNet() },
+        ],
+      });
+      netBtn = app.o.controls[1];
+      // The two machines keep left of where the card opens: the canvas
+      // never moves for the card (DESIGN.md §6.3), so the card must not
+      // land on the machine it is about.
+      const P = { home: { x: 140, y: 250 }, studio: { x: 520, y: 250 } };
+      // Status chips sit halfway between the two machines, whichever way
+      // the link goes, so the eye finds them in one place. Both machines can
+      // be moved, so "halfway" is measured each time.
+      const midway = () => {
+        const a = app.pt('home'), b = app.pt('studio');
+        return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      };
+      app.device('home', { type: 'laptop', owner: 'me', name: '这台电脑', sub: '家里', ...P.home });
+      app.device('studio', { type: 'mini', owner: 'me', name: '工作室主机', sub: '公司', ...P.studio });
+
+      let relayNode = null;
+      const showRelay = () => {
+        if (relayNode) return;
+        // Below the middle of the two machines (or where it was moved to
+        // before), in a free spot.
+        const m = midway();
+        relayNode = app.relay('hk', { name: '香港', sub: '中转站', x: m.x, y: m.y + 160, labelSide: 'below' });
+        const q = app.freeSpot('hk', app.pt('hk'));
+        app.move('hk', q.x, q.y);
+        relayNode.el.animate([{ transform: 'scale(0.2)', opacity: 0 }, { transform: 'scale(1.08)', opacity: 1, offset: 0.6 }, { transform: 'scale(1)' }], { duration: 520, easing: 'cubic-bezier(0.3, 1.2, 0.5, 1)' });
+      };
+      const hideRelay = () => {
+        if (!relayNode) return;
+        const el = relayNode.el;
+        app.dropNode('hk');
+        relayNode = null;
+        el.animate([{ transform: 'scale(1)', opacity: 1 }, { transform: 'scale(0.4)', opacity: 0 }], { duration: 320, easing: 'ease-in', fill: 'forwards' });
+        D.after(320, () => el.remove());
+      };
+      const status = () => {
+        const sub = path === 'direct' ? '公司 · 直接连上' : path === 'relay' ? '公司 · 经香港中转' : '公司 · 正在连接…';
+        app.setSub('studio', sub);
+        app.setTitle('我的设备', path === 'trying' ? '正在连接工作室主机…' : '2 台设备都连上了', path === 'trying' ? 'warn' : 'ok');
+        if (app.sheetEl.style.display !== 'none') openCard();
+        netBtn.el.textContent = path === 'relay' && !strict ? '网络恢复' : '网络变了';
+        netBtn.el.disabled = path === 'trying' || strict;
+        netBtn.el.style.opacity = netBtn.el.disabled ? 0.45 : 1;
+      };
+
+      // ---- One run of the story ----------------------------------------------------
+      let script = null;
+      function start() {
+        if (script) script.cancel();
+        script = new D.Script();
+        // A chip already on screen stays and changes its words, rather
+        // than vanishing while a new one fades in at the same spot.
+        const old = Object.values(app.links).find((l) => l.pill);
+        const keep = old ? old.pill : null;
+        if (old) {
+          if (old.pillHandle) old.pillHandle.cancel();
+          old.pill = null;
+        }
+        for (const id of Object.keys(app.links)) app.unlink(id);
+        hideRelay();
+        app.closeSheet();
+        path = 'trying';
+        status();
+        const dash = app.link('main', 'home', 'studio', { state: 'dash', trying: true, bend: 0 });
+        if (keep) dash.pill = keep;
+        app.pill(dash, '正在连接…');
+        if (!strict) {
+          script.at(1500, async () => {
+            await app.layer.grow(dash, 480, 'both');
+            path = 'direct';
+            app.pill(dash, '直接连上 · 很快', { tone: 'ok', hideAfter: 2400 });
+            status();
+          });
+        } else {
+          script.at(2100, () => app.pill(dash, '直接连不上，改走中转'));
+          script.at(2800, () => showRelay());
+          script.at(3200, async () => {
+            dash.alphaTo = 0;
+            app.hidePill(dash);
+            const r = app.link('relay', 'home', 'studio', { via: 'hk', bend: 0.06 });
+            await app.layer.grow(r, 560, 'both');
+            app.unlink('main');
+            path = 'relay';
+            app.pill(r, '经香港中转 · 慢一点', { hideAfter: 2600, at: midway });
+            status();
+          });
+        }
+      }
+
+      // The network changes under a working direct link (or comes back):
+      // the other path is ready before the old one goes, so nothing stops.
+      async function switchNet() {
+        if (path === 'direct') {
+          const d = app.links.main;
+          d.flow = false;
+          app.pill(d, '网络变了，改走中转');
+          showRelay();
+          await new Promise((r) => D.after(320, r));
+          const r = app.link('relay', 'home', 'studio', { via: 'hk', bend: 0.06 });
+          await app.layer.grow(r, 520, 'both');
+          app.hidePill(d);
+          d.alphaTo = 0;
+          D.after(300, () => app.unlink('main'));
+          path = 'relay';
+          app.pill(r, '经香港中转 · 慢一点', { hideAfter: 2400, at: midway });
+          status();
+        } else if (path === 'relay' && !strict) {
+          const r = app.links.relay;
+          const d = app.link('main', 'home', 'studio', { bend: 0 });
+          app.pill(d, '又能直接连上了');
+          await app.layer.grow(d, 480, 'both');
+          r.flow = false;
+          D.after(500, () => {
+            r.alphaTo = 0;
+            hideRelay();
+            D.after(320, () => app.unlink('relay'));
+          });
+          path = 'direct';
+          app.pill(d, '直接连上 · 很快', { tone: 'ok', hideAfter: 2400 });
+          status();
+        }
+      }
+
+      // ---- The card: how it is connected, in one sentence -------------------------------
+      function openCard() {
+        const st =
+          path === 'direct'
+            ? { c: '#22C55E', icon: G.ui('bolt', 16), t: '直接连上', s: '很快' }
+            : path === 'relay'
+              ? { relay: true, icon: G.device('relay', 16), t: '经香港中转', s: '慢一点，但能正常用' }
+              : { c: '#A1A1AA', icon: G.ui('replay', 16), t: '正在连接…', s: '马上就好' };
+        const more =
+          path === 'direct'
+            ? '两台设备直接通信，不经过别人<br />延迟 8 毫秒 · 地址 100.64.0.7'
+            : path === 'relay'
+              ? '公司的防火墙不让直接连，所以借香港的服务器转一下<br />内容全程加密，中转站看不到 · 延迟 46 毫秒<br />一旦能直接连，会自动切回去'
+              : '正在找一条最快的路';
+        app.select('studio');
+        app.sheet(
+          app.sheetHead('studio', st) +
+            `<div class="label">你可以用</div><div class="rows">` +
+            `<div class="row">${G.ui('screen', 18)}<span>远程桌面</span><button class="open-btn">打开</button></div>` +
+            `<div class="row">${G.ui('terminal', 18)}<span>命令行</span><button class="open-btn">打开</button></div></div>` +
+            `<button class="more">更多${G.ui('chevron', 14)}</button><div class="detail"><p>${more}</p></div>`,
+          'studio'
+        );
+      }
+      app.onDeviceClick = (id) => id === 'studio' && openCard();
+      start();
+
+      window.RECORDING = {
+        title: '01-直接连或经中转',
+        duration: 30500,
+        actions: [
+          { at: 2600, shot: '直接连上', clean: true },
+          // Either machine can be moved; the link follows like a rope and
+          // its chip goes with it...
+          { at: 2900, glide: { sel: '.dev[data-id="studio"] .tile' }, dur: 700 },
+          { at: 3800, down: true },
+          { at: 3900, glide: { sel: '.dev[data-id="studio"] .tile', x: 150, y: -50 }, dur: 700 },
+          { at: 4450, shot: '软绳跟着走' },
+          { at: 4900, up: true },
+          // ...dropped onto the other one, it takes the nearest free spot...
+          { at: 5300, glide: { sel: '.dev[data-id="studio"] .tile' }, dur: 500 },
+          { at: 5900, down: true },
+          { at: 6000, glide: { sel: '.dev[data-id="home"] .tile' }, dur: 900, arc: 30 },
+          { at: 6800, shot: '放到另一台上' },
+          { at: 7200, up: true },
+          // ...pushed past the window's edge, it stays inside...
+          { at: 7600, glide: { sel: '.dev[data-id="studio"] .tile' }, dur: 500 },
+          { at: 8200, down: true },
+          { at: 8300, glide: [1176, 330], dur: 800 },
+          { at: 9300, up: true },
+          { at: 9600, glide: [700, 640], dur: 500 },
+          { at: 10300, shot: '贴着边缘放' },
+          // ...and back to where it was.
+          { at: 10600, glide: { sel: '.dev[data-id="studio"] .tile' }, dur: 600 },
+          { at: 11300, down: true },
+          { at: 11400, glide: [752, 328], dur: 900 },
+          { at: 12400, up: true },
+          { at: 13300, glide: { sel: '.dev[data-id="studio"] .tile' }, dur: 800 },
+          { at: 14200, down: true },
+          { at: 14280, up: true },
+          { at: 14800, glide: { sel: '.sheet .more' }, dur: 600 },
+          { at: 15500, down: true },
+          { at: 15580, up: true },
+          { at: 15800, glide: [1040, 600], dur: 500 },
+          { at: 16500, shot: '设备卡片' },
+          { at: 17000, glide: { sel: '.sheet .sheet-close' }, dur: 700 },
+          { at: 17800, down: true },
+          { at: 17880, up: true },
+          { at: 18400, glide: { sel: '.demo-bar .bar-btn' }, dur: 800 },
+          { at: 19300, down: true },
+          { at: 19380, up: true },
+          { at: 19700, glide: [700, 640], dur: 500 },
+          { at: 21000, shot: '网络变了改走中转' },
+          { at: 21800, glide: { sel: '.demo-bar .bar-btn' }, dur: 600 },
+          { at: 22600, down: true },
+          { at: 22680, up: true },
+          { at: 23000, glide: [700, 640], dur: 500 },
+          { at: 24000, shot: '网络恢复' },
+          { at: 24600, glide: { sel: '.demo-bar .seg button[data-k="1"]' }, dur: 700 },
+          { at: 25400, down: true },
+          { at: 25480, up: true },
+          { at: 25800, glide: [700, 640], dur: 500 },
+          { at: 27000, shot: '直接连不上' },
+          { at: 29400, shot: '经中转连上' },
+        ],
+      };
+      window.__ready = true;
+    </script>
+  </body>
+</html>

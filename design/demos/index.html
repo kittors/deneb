@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Deneb · 组网交互 demo</title>
+    <link rel="stylesheet" href="v3/v3.css" />
+    <style>
+      /* The home of the demos (DESIGN.md §3): white cards on the pale well,
+         a two-tone title, pill buttons. Nothing moves but what you touch. */
+      html,
+      body {
+        background: var(--well);
+      }
+      .home {
+        max-width: 1120px;
+        margin: 0 auto;
+        padding: 56px 32px 72px;
+      }
+      .top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .top .brand {
+        margin: 0;
+      }
+      .top .icon-btn {
+        background: var(--bg);
+        box-shadow: var(--shadow-sm);
+      }
+      h1 {
+        margin: 48px 0 0;
+        font-size: 36px;
+        line-height: 1.2;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+      }
+      h1 span {
+        display: block;
+        color: var(--ink-3);
+      }
+      .lede {
+        max-width: 620px;
+        margin: 18px 0 0;
+        font-size: 15px;
+        line-height: 1.7;
+        color: var(--ink-2);
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 20px;
+        margin-top: 40px;
+      }
+      .card {
+        display: block;
+        padding: 8px 8px 18px;
+        border-radius: 22px;
+        background: var(--bg);
+        box-shadow: var(--shadow-sm), 0 0 0 1px var(--line);
+        color: inherit;
+        text-decoration: none;
+        transition: transform 0.4s cubic-bezier(0.3, 1.35, 0.5, 1), box-shadow 0.3s ease-out;
+      }
+      .card:hover {
+        transform: translateY(-3px);
+        box-shadow: var(--shadow-md), 0 0 0 1px var(--line);
+      }
+      .card:active {
+        transform: scale(0.985);
+      }
+      .shot {
+        display: block;
+        width: 100%;
+        aspect-ratio: 1180 / 740;
+        border-radius: 14px;
+        background: var(--well);
+        object-fit: cover;
+      }
+      .meta {
+        padding: 14px 10px 0;
+      }
+      .meta .no {
+        display: inline-flex;
+        align-items: center;
+        height: 22px;
+        padding: 0 9px;
+        border-radius: 999px;
+        background: var(--well);
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--ink-2);
+      }
+      .meta b {
+        display: block;
+        margin-top: 10px;
+        font-size: 15px;
+        font-weight: 600;
+      }
+      .meta small {
+        display: block;
+        margin-top: 6px;
+        font-size: 13px;
+        line-height: 1.6;
+        color: var(--ink-2);
+      }
+      .how {
+        display: flex;
+        gap: 14px;
+        margin-top: 28px;
+        padding: 18px 20px;
+        border-radius: 20px;
+        background: var(--bg);
+        box-shadow: var(--shadow-sm), 0 0 0 1px var(--line);
+        font-size: 13px;
+        line-height: 1.7;
+        color: var(--ink-2);
+      }
+      .how b {
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .how svg {
+        flex: none;
+        margin-top: 3px;
+        color: var(--primary);
+      }
+      @media (max-width: 860px) {
+        .grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
+      @media (max-width: 560px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="home">
+      <div class="top"><div class="brand" id="brand"></div><button class="icon-btn" id="theme" title="深浅色"></button></div>
+      <h1>组网交互 demo<span>设备、人和局域网，拖一拖就组合好</span></h1>
+      <p class="lede">给普通人用的组网：不填表单，不出现专业词。每个场景都能直接拖、点、悬停，看一个完整的小故事。</p>
+      <div class="grid" id="grid"></div>
+      <div class="how" id="how"></div>
+    </div>
+    <script src="shared/motion.js"></script>
+    <script src="shared/demo.js"></script>
+    <script src="v3/glyphs.js"></script>
+    <script src="v3/app.js"></script>
+    <script>
+      const $ = (s) => document.querySelector(s);
+      $('#brand').innerHTML = `${G.star(20)}<span>Deneb</span>`;
+      const BLURB = [
+        '一个局域网里的人和设备：设备按主人上色，连线里流着光。每个节点都能拖，线像软绳一样跟着走。',
+        '两台电脑先试着直接连上；公司防火墙不让，就借香港的服务器转一下。网络变了也不会断。',
+        'Mia 和阿杰互相连不上。从托盘拖一个中转站放到他们中间，就连上了；拖回去就是移除，能撤销。',
+        '这台电脑同时在两个局域网里。悬停看一个，暂停一个另一个照常；整块局域网能拖着走，自己的设备拖到另一块就挪过去了。',
+        '管理员在网页后台把设备拖到成员身上（或把人拖到设备上），它马上出现在对方菜单栏的 Deneb 里；点开成员能收回。',
+        '把自己的设备拖进来、拖出去；关掉一个服务，或者不让某个人用。别人的设备能挪位置，但只有主人能移出。',
+      ];
+      const thumb = (i) => `thumbs/0${i}${D.theme.get() === 'dark' ? '-dark' : ''}.jpg`;
+      $('#grid').innerHTML = App.SCENES.map(
+        (s, i) =>
+          `<a class="card" href="${s.file}"><img class="shot" data-i="${i}" src="${thumb(i)}" alt="" /><div class="meta"><span class="no">${i ? '场景 ' + i : '小样'}</span><b>${s.title}</b><small>${BLURB[i]}</small></div></a>`
+      ).join('');
+      $('#how').innerHTML = `${G.ui('bolt', 16)}<span><b>怎么看</b>　窗口下面的小控制条不属于产品：可以切换场景、模拟外面发生的事（比如“收到邀请”“Leo 加入”）、重播和切换深浅色。设计规范在 design/DESIGN.md，每种效果都能用 MyGo 原生 UI 画出来。</span>`;
+      // Scene links keep the theme you are looking at.
+      for (const a of document.querySelectorAll('.card')) a.addEventListener('click', () => (a.href = a.getAttribute('href').split('?')[0] + `?theme=${D.theme.get()}`));
+      const tb = $('#theme');
+      const paint = () => {
+        tb.innerHTML = G.ui(D.theme.get() === 'dark' ? 'sun' : 'moon', 16);
+        for (const img of document.querySelectorAll('.shot')) img.src = thumb(+img.dataset.i);
+      };
+      tb.onclick = () => {
+        D.theme.toggle();
+        paint();
+      };
+      paint();
+      window.__ready = true;
+    </script>
+  </body>
+</html>

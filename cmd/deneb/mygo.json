@@ -1,0 +1,9 @@
+{
+  "name": "Deneb",
+  "identifier": "dev.deneb.app",
+  "version": "0.1.0",
+  "out": "build",
+  "urlSchemes": [
+    "deneb"
+  ]
+}

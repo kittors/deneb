@@ -1,0 +1,2624 @@
+diff -ruN -x .mygo -x build -x *peek_test.go cmd/deneb/canvas.go /tmp/deneb-m2/cmd/deneb/canvas.go
+--- cmd/deneb/canvas.go	2026-11-08 09:24:49
++++ cmd/deneb/canvas.go	2026-11-08 10:54:00
+@@ -3,6 +3,7 @@
+ import (
+ 	"math"
+ 	"slices"
++	"strconv"
+ 	"time"
+ 
+ 	"github.com/egoist/mygo/ui"
+@@ -322,6 +323,10 @@
+ 		a.emptyCanvas(c, p)
+ 		return
+ 	}
++	if l := a.snap.LAN(a.lan); l.Waiting {
++		a.waitingCanvas(c, p, l)
++		return
++	}
+ 	a.place()
+ 	a.sweep(c, now)
+ 	box := ui.Box(c).Grow(1).Clip()
+@@ -506,7 +511,12 @@
+ 	}
+ 	d.cut = col.AnimateTo("cut", cut, ui.Animation{Duration: 320 * time.Millisecond})
+ 	if col.Clicked() {
+-		a.selected, a.more = d.id, false
++		if d.pending && !d.mine {
++			// Waiting for me: a click lets it in (DESIGN §6.7).
++			a.approve(c, d, true)
++		} else {
++			a.selected, a.more = d.id, false
++		}
+ 	}
+ 	col.Cursor(ui.CursorGrab)
+ 	if d.dragging {
+@@ -540,6 +550,13 @@
+ 	case col.Hovered():
+ 		pose = ui.Pose{Y: -2}
+ 	}
++	if !d.approved.IsZero() && c.Now().Sub(d.approved) < 90*time.Millisecond {
++		// Let in: it dips, and springs up full (DESIGN §6.7).
++		pose, tileAnim = ui.Pose{Scale: 0.9}, ui.Animation{Duration: 90 * time.Millisecond}
++		c.After(90*time.Millisecond - c.Now().Sub(d.approved))
++	} else if !d.approved.IsZero() && c.Now().Sub(d.approved) < 700*time.Millisecond {
++		tileAnim = ui.Bouncy
++	}
+ 	col.Children(func() {
+ 		if !d.popped.IsZero() && c.Now().Sub(d.popped) < 700*time.Millisecond && !pop {
+ 			// It springs up as it pops in (DESIGN §6.1: joining lands Bouncy).
+@@ -551,8 +568,22 @@
+ 			gone = 1
+ 		}
+ 		off := col.AnimateTo("offline", gone, ui.Animation{Duration: 300 * time.Millisecond})
+-		tile := deviceTileOff(c, p, d.kind, a.people[d.owner].color, tileSize, a.selected == d.id, off)
++		waits := float32(0)
++		if d.pending {
++			waits = 1
++		}
++		wait := col.AnimateTo("pending", waits, ui.Animation{Duration: 220 * time.Millisecond})
++		owner := a.people[d.owner].color
++		tile := ui.Box(c).Size(tileSize, tileSize)
+ 		tile.AnimatePose(pose, tileAnim)
++		tile.Children(func() {
++			solid := deviceTileOff(c, p, d.kind, owner, tileSize, a.selected == d.id, off)
++			if wait > 0 {
++				solid.Opacity(1 - wait)
++				pendingTile(c, p, d.kind, owner, tileSize).Absolute().Left(0).Top(0).Opacity(wait).PassThrough()
++			}
++			a.tileBadges(c, p, d, col.Hovered())
++		})
+ 		name := ui.Column(c).AlignItems(ui.Center).Gap(1)
+ 		if first || landing || armed || pop || going {
+ 			name.AnimatePose(ui.Pose{Fade: 1}, ui.Animation{Duration: 120 * time.Millisecond})
+@@ -561,9 +592,22 @@
+ 		}
+ 		name.Children(func() {
+ 			// A long name ends in "…" within the device's footprint, so that
+-			// it never runs under the next device's.
+-			ui.Text(c, d.name).FontSize(13).FontWeight(500).SingleLine().MaxWidth(nameWidth)
+-			ui.Text(c, a.status(d)).FontSize(12).TextColor(p.ink2).SingleLine().MaxWidth(nameWidth)
++			// it never runs under the next device's. A second of its name
++			// shows a small grey 2 after it (DESIGN §6.8).
++			if d.twin > 1 {
++				ui.Row(c).AlignItems(ui.Baseline).Gap(3).MaxWidth(nameWidth).Children(func() {
++					ui.Text(c, d.name).FontSize(13).FontWeight(500).SingleLine().Shrink(1)
++					ui.Text(c, strconv.Itoa(d.twin)).FontSize(11).FontWeight(500).TextColor(p.ink3).FontFeatures("tnum")
++				})
++			} else {
++				ui.Text(c, d.name).FontSize(13).FontWeight(500).SingleLine().MaxWidth(nameWidth)
++			}
++			st := ui.Text(c, a.status(d)).FontSize(12).TextColor(p.ink2).SingleLine().MaxWidth(nameWidth)
++			if !d.using.IsZero() && linked(d.path) {
++				// The count goes up every second, its digits of one width.
++				st.FontFeatures("tnum")
++				c.After(time.Second - a.now().Sub(d.using)%time.Second)
++			}
+ 		})
+ 	})
+ }
+@@ -601,7 +645,11 @@
+ 		if off > 0 {
+ 			glyph = white.Alpha(1 - 0.45*off)
+ 		}
+-		ui.Icon(c, deviceGlyphs[kind]).Size(size/2, size/2).TextColor(glyph)
++		// Told to be another kind, the new shape fades in over the old one
++		// as it fades out (DESIGN §6.9).
++		g := ui.Box(c.Key("glyph-" + kind)).Absolute().Left(0).Top(0).Right(0).Bottom(0).Center().PassThrough()
++		g.Transition(ui.ElementTransition{Duration: 200 * time.Millisecond, Enter: &ui.Motion{}, Exit: &ui.Motion{}})
++		g.Children(func() { ui.Icon(c, deviceGlyphs[kind]).Size(size/2, size/2).TextColor(glyph) })
+ 	})
+ 	return t
+ }
+@@ -745,7 +793,7 @@
+ // on its way off the canvas, or into the tray, takes the relay along.
+ func (a *app) relayLinked() bool {
+ 	for _, d := range a.devices {
+-		if d.path == "relay" && d.gone.IsZero() && a.landing != d && !d.unplaced {
++		if d.path == "relay" && d.gone.IsZero() && a.landing != d && !d.unplaced && !d.pending {
+ 			return true
+ 		}
+ 	}
+@@ -820,4 +868,62 @@
+ 		return cur
+ 	}
+ 	return best
++}
++
++// pendingTile is a device that waits to be let into the LAN: its tile's
++// shape in a dashed line of its owner's color, its glyph faint, nothing
++// filled (DESIGN §6.7).
++func pendingTile(c *ui.Context, p *palette, kind string, owner ui.Color, size float32) ui.Element {
++	radius := size * 0.3
++	t := ui.Box(c).Size(size, size).Center()
++	t.Draw(func(pt *ui.Painter, r ui.Rect) {
++		var path ui.Path
++		roundRect(&path, r.X+0.75, r.Y+0.75, r.W-1.5, r.H-1.5, radius)
++		// Filled with the canvas first, so that it covers the end of a
++		// track as a tile does: one drawn back in as it waits again.
++		pt.FillPath(&path, p.bg)
++		pt.FillPath(&path, owner.Alpha(0.06))
++		path.Dash(0, 5, 4)
++		pt.StrokePath(&path, 1.5, owner.Alpha(0.75))
++	})
++	t.Children(func() {
++		ui.Icon(c, deviceGlyphs[kind]).Size(size/2, size/2).TextColor(owner.Alpha(0.55))
++	})
++	return t
++}
++
++// roundRect adds a rectangle with round corners to path.
++func roundRect(path *ui.Path, x, y, w, h, r float32) {
++	const k = 0.5523 // a cubic's reach to draw a quarter circle
++	path.MoveTo(x+r, y).LineTo(x+w-r, y).
++		CubeTo(x+w-r+r*k, y, x+w, y+r-r*k, x+w, y+r).LineTo(x+w, y+h-r).
++		CubeTo(x+w, y+h-r+r*k, x+w-r+r*k, y+h, x+w-r, y+h).LineTo(x+r, y+h).
++		CubeTo(x+r-r*k, y+h, x, y+h-r+r*k, x, y+h-r).LineTo(x, y+r).
++		CubeTo(x, y+r-r*k, x+r-r*k, y, x+r, y).Close()
++}
++
++// tileBadges are the small round buttons at a tile's top right: the
++// amber dot of a login of mine that asks to be renewed, which renews it,
++// and the "×" of a device that waits, shown as the pointer is on it, which
++// turns it away, or takes mine back (DESIGN §6.7, §6.8).
++func (a *app) tileBadges(c *ui.Context, p *palette, d *device, hovered bool) {
++	if d.mine && d.login.Due(a.now()) && !d.pending {
++		dot := ui.ButtonBase(c.Key("renew")).Absolute().Right(-3).Top(-3).Size(14, 14).Radius(999).
++			Background(ui.Hex("#F59E0B")).Border(2, p.bg).FocusRing(false)
++		dot.Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: &ui.Motion{Scale: 0.4}, Exit: &ui.Motion{Scale: 0.4}})
++		dot.AnimatePose(pressPose(dot, 0.85), ui.Snappy)
++		if dot.Clicked() {
++			a.renew(c, d)
++		}
++	}
++	if d.pending && hovered {
++		x := ui.ButtonBase(c.Key("turn-away")).Absolute().Right(-7).Top(-7).Size(20, 20).Radius(999).Center().
++			Background(p.bg).Border(1, p.line).Shadow(0, 2, 6, 0, ui.RGBA(9, 9, 11, 0.12)).FocusRing(false)
++		x.Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: &ui.Motion{Scale: 0.6}, Exit: &ui.Motion{Scale: 0.6}})
++		x.AnimatePose(pressPose(x, 0.88), ui.Snappy)
++		x.Children(func() { ui.Icon(c, uiGlyphs["close"]).Size(12, 12).TextColor(p.ink2) })
++		if x.Clicked() {
++			a.approve(c, d, false)
++		}
++	}
+ }
+diff -ruN -x .mygo -x build -x *peek_test.go cmd/deneb/links.go /tmp/deneb-m2/cmd/deneb/links.go
+--- cmd/deneb/links.go	2026-11-07 23:26:25
++++ cmd/deneb/links.go	2026-11-08 10:10:04
+@@ -222,7 +222,7 @@
+ 	}
+ 	for _, d := range a.devices {
+ 		g, ok := grow[d.id]
+-		if d == me || !ok || g <= 0 || d.unplaced {
++		if d == me || !ok || g <= 0 || d.unplaced || d.pending && d.leaving.IsZero() {
+ 			continue
+ 		}
+ 		if old := d.oldGeo; old != nil {
+diff -ruN -x .mygo -x build -x *peek_test.go cmd/deneb/m2_test.go /tmp/deneb-m2/cmd/deneb/m2_test.go
+--- cmd/deneb/m2_test.go	1970-01-01 07:30:00
++++ cmd/deneb/m2_test.go	2026-11-08 11:03:16
+@@ -0,0 +1,355 @@
++package main
++
++import (
++	"fmt"
++	"image/jpeg"
++	"image/png"
++	"os"
++	"path/filepath"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/egoist/mygo/ui"
++	"github.com/kittors/deneb/client"
++)
++
++// TestM2Frames records M2's new states in the demo, at 60 frames a second
++// of the view's clock, both themes, when DENEB_M2 names a folder (DESIGN
++// §6.7–§6.9, §11): each scene in its own folder, and a still at twice the
++// size where it ends.
++func TestM2Frames(t *testing.T) {
++	root := os.Getenv("DENEB_M2")
++	if root == "" {
++		t.Skip("set DENEB_M2 to a folder to record M2's demo")
++	}
++	type rig struct {
++		a    *app
++		d    *client.Demo
++		tt   *ui.Tester
++		rec  func(ms int)
++		at   func(id string) ui.Point
++		move func(to ui.Point, ms int)
++		shot func(state string) // a still of this moment, at twice the size
++	}
++	click := func(r *rig, text string) {
++		t.Helper()
++		if err := r.tt.Click(text); err != nil {
++			t.Fatalf("click %q: %v; the window shows %q", text, err, r.tt.Texts())
++		}
++	}
++	scenes := []struct {
++		name string
++		play func(r *rig)
++	}{
++		// 阿杰's new device waits; a click lets it in; undo; the "×" turns it away.
++		{"approve-device", func(r *rig) {
++			r.rec(300)
++			r.d.Simulate("pending-device")
++			r.rec(900)
++			r.move(r.at("jpi"), 300)
++			r.rec(500)
++			r.shot("等你同意")
++			p := r.at("jpi")
++			r.tt.ClickAt(p.X, p.Y)
++			r.rec(1400)
++			r.shot("同意了")
++			click(r, "撤销")
++			r.rec(1200)
++			r.move(r.at("jpi"), 200)
++			r.rec(400)
++			if b, ok := r.tt.Find("撤销"); ok {
++				_ = b
++			}
++			p = r.at("jpi")
++			r.tt.ClickAt(p.X+27, p.Y-27)
++			r.rec(1200)
++		}},
++		// 小林 waits in the ball stack; a click lets him in.
++		{"approve-member", func(r *rig) {
++			r.rec(300)
++			r.d.Simulate("pending-member")
++			r.rec(900)
++			b, ok := r.tt.Find("林")
++			if !ok {
++				t.Fatal("no 林")
++			}
++			r.move(ui.Point{X: b.X + b.W/2, Y: b.Y + b.H/2}, 300)
++			r.rec(300)
++			r.shot("等你同意")
++			r.tt.ClickAt(b.X+b.W/2, b.Y+b.H/2)
++			r.rec(1400)
++			r.shot("同意了")
++		}},
++		// The LAN's card, from its name; a switch.
++		{"lan-card", func(r *rig) {
++			r.rec(300)
++			b, _ := r.tt.Find("周末联机")
++			for _, l := range r.tt.Texts() {
++				_ = l
++			}
++			title := ui.Point{X: sidebarWidth + 60, Y: 36}
++			r.move(title, 300)
++			r.tt.ClickAt(title.X, title.Y)
++			_ = b
++			r.rec(900)
++			r.shot("局域网卡片")
++			sw, _ := r.tt.Find("新设备要我同意")
++			r.move(ui.Point{X: 1180 - 20 - 16 - 12 - 19, Y: sw.Y + sw.H/2}, 300)
++			r.tt.ClickAt(1180-20-16-12-19, sw.Y+sw.H/2)
++			r.rec(900)
++		}},
++		// 我的游戏主机's login runs out soon: the amber dot renews it.
++		{"renew", func(r *rig) {
++			r.rec(300)
++			r.d.Simulate("login-due")
++			r.rec(900)
++			r.shot("需要重新登录")
++			p := r.at("game")
++			r.move(ui.Point{X: p.X + 30, Y: p.Y - 30}, 400)
++			r.rec(300)
++			r.tt.ClickAt(p.X+30, p.Y-30)
++			r.rec(1400)
++		}},
++		// 阿杰的台式机 is offline: its card says since when, and tells me as it
++		// comes online.
++		{"offline", func(r *rig) {
++			r.rec(300)
++			r.d.Simulate("offline")
++			r.rec(700)
++			p := r.at("jdesk")
++			r.move(p, 300)
++			r.tt.ClickAt(p.X, p.Y)
++			r.rec(800)
++			r.shot("不在线的原因")
++			click(r, "上线时告诉我")
++			r.rec(900)
++			r.d.Simulate("offline")
++			r.rec(1600)
++			r.shot("上线了")
++		}},
++		// Nothing reaches Mia's MacBook: "加一个中转站" sends it through 香港.
++		{"unreachable", func(r *rig) {
++			r.rec(300)
++			r.d.Simulate("unreachable")
++			r.rec(800)
++			p := r.at("mia")
++			r.move(p, 300)
++			r.tt.ClickAt(p.X, p.Y)
++			r.rec(800)
++			r.shot("连不上的原因")
++			click(r, "加一个中转站")
++			r.rec(1800)
++			r.shot("经中转连上")
++		}},
++		// 阿杰的 NAS's login ran out: "提醒阿杰" copies a word to send him.
++		{"expired", func(r *rig) {
++			r.rec(300)
++			r.d.Simulate("others-expired")
++			r.rec(800)
++			p := r.at("jnas")
++			r.move(p, 300)
++			r.tt.ClickAt(p.X, p.Y)
++			r.rec(800)
++			r.shot("别人的登录过期")
++			click(r, "提醒阿杰")
++			r.rec(1200)
++		}},
++		// 我的游戏主机 gets a new name, then a new kind, in its card.
++		{"rename-kind", func(r *rig) {
++			r.rec(300)
++			p := r.at("game")
++			r.move(p, 300)
++			r.tt.ClickAt(p.X, p.Y)
++			r.rec(800)
++			// The name in the card, not the one under the tile.
++			name := ui.Point{X: r.a.origin.X + r.a.cardAt.X + 16 + 40 + 12 + 30, Y: r.a.origin.Y + r.a.cardAt.Y + 16 + 9}
++			r.move(name, 300)
++			r.tt.ClickAt(name.X, name.Y)
++			r.rec(400)
++			r.tt.Key(0, ui.KeyBackspace)
++			r.tt.Type("客厅的游戏机")
++			r.rec(400)
++			r.shot("就地改名")
++			r.tt.Key(0, ui.KeyEnter)
++			r.rec(800)
++			// The tile at the card's top left shows the kinds.
++			tile := ui.Point{X: r.a.origin.X + r.a.cardAt.X + 16 + 20, Y: r.a.origin.Y + r.a.cardAt.Y + 16 + 20}
++			r.move(tile, 300)
++			r.tt.ClickAt(tile.X, tile.Y)
++			r.rec(700)
++			r.shot("选种类")
++			if k, ok := r.tt.Find("台式机"); ok {
++				r.move(ui.Point{X: k.X + k.W/2, Y: k.Y + k.H/2}, 300)
++			}
++			click(r, "台式机")
++			r.rec(1000)
++		}},
++		// Mia's new MacBook, named as her old one: a small 2.
++		{"twin", func(r *rig) {
++			r.rec(300)
++			r.d.Simulate("twin")
++			r.rec(900)
++			p := r.at("mia2")
++			r.move(p, 300)
++			r.tt.ClickAt(p.X, p.Y)
++			r.rec(1000)
++			r.shot("同名设备")
++		}},
++		// Clash takes Deneb's connections: the header's pill, its card.
++		{"notice", func(r *rig) {
++			r.rec(300)
++			r.d.Simulate("notice")
++			r.rec(800)
++			r.shot("提示胶囊")
++			click(r, "Clash 可能挡住连接")
++			r.rec(900)
++			r.shot("提示卡片")
++			click(r, "复制规则")
++			r.rec(900)
++			click(r, "知道了")
++			r.rec(900)
++		}},
++		// Leo invites me by name: the card, put off to the sidebar, back,
++		// and joined.
++		{"invitation", func(r *rig) {
++			r.rec(300)
++			r.d.Simulate("invitation")
++			r.rec(900)
++			r.shot("邀请卡片")
++			click(r, "以后再说")
++			r.rec(900)
++			r.shot("以后再说")
++			click(r, "Leo 邀请你 · 桌游夜")
++			r.rec(800)
++			click(r, "加入")
++			r.rec(1800)
++		}},
++		// Leo's ball, dragged onto 工作室's row, invites him there.
++		{"invite-drag", func(r *rig) {
++			r.rec(300)
++			from, _ := r.tt.Find("L")
++			to, _ := r.tt.Find("工作室")
++			f := ui.Point{X: from.X + from.W/2, Y: from.Y + from.H/2}
++			g := ui.Point{X: to.X + 30, Y: to.Y + to.H/2}
++			r.move(f, 300)
++			r.tt.Press(f.X, f.Y)
++			for i := 1; i <= 50; i++ {
++				k := float32(i) / 50
++				r.tt.Move(f.X+(g.X-f.X)*k, f.Y+(g.Y-f.Y)*k)
++				r.rec(17)
++			}
++			r.rec(400)
++			r.shot("拖到局域网上")
++			r.tt.Release(g.X, g.Y)
++			r.rec(900)
++			click(r, "工作室")
++			r.rec(1000)
++			r.shot("等他接受")
++		}},
++		// I wait for Leo to let me into 读书会: its row says so, its canvas
++		// holds only him.
++		{"waiting", func(r *rig) {
++			r.rec(300)
++			r.d.Simulate("waiting")
++			r.rec(900)
++			click(r, "读书会")
++			r.rec(1200)
++			r.shot("等拥有者同意")
++		}},
++		// An old 我的游戏主机, gone for 40 days: "旧的那台", and taken out.
++		{"stale", func(r *rig) {
++			r.rec(300)
++			r.d.Simulate("stale")
++			r.rec(900)
++			p := r.at("game0")
++			r.move(p, 300)
++			r.tt.ClickAt(p.X, p.Y)
++			r.rec(900)
++			r.shot("旧的那台")
++			click(r, "移出")
++			r.rec(1500)
++		}},
++		// This computer uses dev-db's database: its count goes up.
++		{"using", func(r *rig) {
++			click(r, "工作室")
++			r.rec(600)
++			r.d.Simulate("using")
++			r.rec(3200)
++			r.shot("已连接计时")
++		}},
++	}
++	for _, dark := range []bool{false, true} {
++		theme := map[bool]string{false: "light", true: "dark"}[dark]
++		for _, sc := range scenes {
++			dir := filepath.Join(root, theme+"-"+sc.name)
++			if err := os.MkdirAll(dir, 0o755); err != nil {
++				t.Fatal(err)
++			}
++			a, d := newDemoApp()
++			d.Manual()
++			a.copyText = func(string) {}
++			var woken atomic.Bool
++			a.setWake(func() { woken.Store(true) })
++			tt := ui.NewTester(a.view, 1180, 740)
++			tt.SetDark(dark)
++			// The demo opens with this computer's card; the scenes start from
++			// the canvas alone, the card gone before the first frame.
++			a.selected = ""
++			tt.Frame()
++			tt.Advance(1200 * time.Millisecond)
++			n := 0
++			r := &rig{a: a, d: d, tt: tt}
++			pointer := ui.Point{X: 700, Y: 600}
++			r.rec = func(ms int) {
++				for end := n + ms*60/1000; n < end; n++ {
++					if woken.Swap(false) {
++						tt.Frame()
++					}
++					tt.Advance(time.Second / 60)
++					f, err := os.Create(filepath.Join(dir, fmt.Sprintf("%04d.jpg", n)))
++					if err != nil {
++						t.Fatal(err)
++					}
++					jpeg.Encode(f, tt.Image(), &jpeg.Options{Quality: 88})
++					f.Close()
++				}
++			}
++			r.at = func(id string) ui.Point {
++				dv := a.device(id)
++				if dv == nil {
++					t.Fatalf("%s: %s is not on the canvas", sc.name, id)
++				}
++				p := dv.at()
++				return ui.Point{X: sidebarWidth + p.X, Y: headerHeight + p.Y}
++			}
++			r.shot = func(state string) {
++				tt.SetScale(2)
++				tt.Frame()
++				if f, err := os.Create(filepath.Join(root, theme+"-"+sc.name+"_"+state+".png")); err == nil {
++					png.Encode(f, tt.Image())
++					f.Close()
++				}
++				tt.SetScale(1)
++				tt.Frame()
++			}
++			r.move = func(to ui.Point, ms int) {
++				from := pointer
++				steps := max(1, ms*60/1000)
++				for i := 1; i <= steps; i++ {
++					k := float32(i) / float32(steps)
++					tt.Move(from.X+(to.X-from.X)*k, from.Y+(to.Y-from.Y)*k)
++					r.rec(17)
++				}
++				pointer = to
++			}
++			sc.play(r)
++			tt.SetScale(2)
++			tt.Frame()
++			if f, err := os.Create(filepath.Join(root, theme+"-"+sc.name+".png")); err == nil {
++				png.Encode(f, tt.Image())
++				f.Close()
++			}
++		}
++	}
++}
+diff -ruN -x .mygo -x build -x *peek_test.go cmd/deneb/main.go /tmp/deneb-m2/cmd/deneb/main.go
+--- cmd/deneb/main.go	2026-11-08 00:32:42
++++ cmd/deneb/main.go	2026-11-08 10:42:42
+@@ -73,6 +73,19 @@
+ 			ui.Key3: func(c *ui.Context, a *app) { a.openLink(c, client.DemoInvite) },
+ 			ui.Key4: func(*ui.Context, *app) { d.Simulate("connect") },
+ 			ui.Key5: func(*ui.Context, *app) { d.Simulate("offline") },
++			// M2's states (DESIGN §6.7–§6.8), each played on the sample.
++			ui.Key6: func(*ui.Context, *app) { d.Simulate("pending-device") },
++			ui.Key7: func(*ui.Context, *app) { d.Simulate("pending-member") },
++			ui.Key8: func(*ui.Context, *app) { d.Simulate("login-due") },
++			ui.Key9: func(*ui.Context, *app) { d.Simulate("unreachable") },
++			ui.Key0: func(*ui.Context, *app) { d.Simulate("invitation") },
++			ui.KeyE: func(*ui.Context, *app) { d.Simulate("others-expired") },
++			ui.KeyX: func(*ui.Context, *app) { d.Simulate("login-expired") },
++			ui.KeyT: func(*ui.Context, *app) { d.Simulate("twin") },
++			ui.KeyO: func(*ui.Context, *app) { d.Simulate("stale") },
++			ui.KeyN: func(*ui.Context, *app) { d.Simulate("notice") },
++			ui.KeyU: func(*ui.Context, *app) { d.Simulate("using") },
++			ui.KeyW: func(*ui.Context, *app) { d.Simulate("waiting") },
+ 		}, nil
+ 	}
+ 	if start := os.Getenv("DENEB_FAKE"); start != "" {
+diff -ruN -x .mygo -x build -x *peek_test.go cmd/deneb/model.go /tmp/deneb-m2/cmd/deneb/model.go
+--- cmd/deneb/model.go	2026-11-08 09:24:49
++++ cmd/deneb/model.go	2026-11-08 10:48:50
+@@ -46,6 +46,14 @@
+ 	services  []service       // what it opens in this LAN
+ 	addr      string
+ 	fqdn      string
++
++	// M2 (DESIGN §6.7–§6.8).
++	pending  bool        // it waits for the owner to let it into this LAN
++	login    model.Login // when its login runs out: mine only, another's only whether it has
++	lastSeen time.Time   // when the server last heard from it, while offline
++	using    time.Time   // since when this computer uses one of its services
++	twin     int         // 2, 3…: the second, third device of its name on the canvas
++	stale    bool        // mine, of a name another of mine has, and gone for 30 days
+ }
+ 
+ // device is a tile on the canvas: its facts, and how the view shows it.
+@@ -87,6 +95,10 @@
+ 	// oldGeo is the shape of the link it had before it went from direct to
+ 	// the relay, or back: it fades as the new one grows out.
+ 	oldGeo *linkGeo
++	// waited: it was waiting to be let in as the canvas was last brought to
++	// the snapshot; approved is when it was let in, to spring up full.
++	waited   bool
++	approved time.Time
+ }
+ 
+ // at is where the device rests: its base moved by the user.
+@@ -132,6 +144,9 @@
+ 	undo  func()
+ 	until time.Time
+ 	top   bool // shown at the top, so as not to cover the device it is about
++	// commit sends what the toast holds back, once it goes without undo
++	// (hold).
++	commit func(c *ui.Context)
+ }
+ 
+ // pending is an op the view sent that the store has not confirmed yet. It
+@@ -142,6 +157,7 @@
+ 	done bool   // the store answered
+ 	ver  uint64 // the version it took effect in
+ 	err  error
++	held bool // shown, but not sent until its toast goes (hold)
+ }
+ 
+ // app is the client's view: the LAN on the canvas, as the store's snapshot
+@@ -206,7 +222,28 @@
+ 	// unreconciled: the snapshot changed since the canvas was last brought
+ 	// to it.
+ 	unreconciled bool
++	// clock is the view's clock as the frame being built has it (now).
++	clock time.Time
+ 
++	renaming *renaming       // a name edited in place (DESIGN §6.9)
++	picking  bool            // the card's row of kinds is open
++	watching map[string]bool // devices to tell of as they come online (DESIGN §6.8)
++	// seenInvitations are the invites by name whose card has shown once:
++	// one put off stays in the sidebar, rather than show again by itself.
++	seenInvitations map[string]bool
++	noticesDone     map[string]bool // notices put away with "知道了", by code
++
++	// A person's ball dragged from the header onto a LAN's row in the
++	// sidebar invites them there (DESIGN §6.7).
++	person     *personDrag
++	personOver model.LANID              // the row it would be let go on
++	ballOffs   map[string]*ui.Point     // each ball's drag offset
++	ballHome   map[string]ui.Point      // where each ball rests, in the window
++	stackWas   map[string]int           // how each person was in the stack, last frame
++	stackIn    map[string]time.Time     // when each was let in, to spring up full
++	remedyWas  map[string]string        // the card's last remedy for each device, kept while it folds shut
++	rows       map[model.LANID]*ui.Rect // where the sidebar's LAN rows are
++
+ 	naming *naming // a new LAN being named in the sidebar
+ 	// wantLAN is a LAN made or joined here that the snapshot does not have
+ 	// yet: the canvas goes to it once it has.
+@@ -266,8 +303,21 @@
+ 
+ // status is a device's second line: how it is connected, in a few words.
+ func (a *app) status(d *device) string {
+-	if a.cutOff(d) {
++	switch {
++	case d.pending && d.mine:
++		return "等" + spaced(a.ownerName()) + "同意"
++	case d.pending:
++		return "等你同意"
++	case a.cutOff(d):
+ 		return "用不了这台电脑"
++	case d.login.Expired:
++		return "登录过期了"
++	case d.mine && d.login.Due(a.now()):
++		return "需要重新登录"
++	case d.stale:
++		return "旧的那台 · 很久没上线"
++	case !d.using.IsZero() && linked(d.path):
++		return "已连接 " + clock(a.now().Sub(d.using))
+ 	}
+ 	switch d.path {
+ 	case "self":
+@@ -305,4 +355,11 @@
+ 		return " " + name + " "
+ 	}
+ 	return name
++}
++
++// personDrag is a person's ball in the hand: whose, and where the pointer
++// is, in the window.
++type personDrag struct {
++	id string
++	at ui.Point
+ }
+diff -ruN -x .mygo -x build -x *peek_test.go cmd/deneb/panels.go /tmp/deneb-m2/cmd/deneb/panels.go
+--- cmd/deneb/panels.go	2026-11-08 09:57:15
++++ cmd/deneb/panels.go	2026-11-08 10:49:16
+@@ -2,7 +2,9 @@
+ 
+ import (
+ 	"fmt"
++	"math"
+ 	"slices"
++	"strconv"
+ 	"strings"
+ 	"time"
+ 	"unicode/utf8"
+@@ -17,6 +19,11 @@
+ // given, is its button. It shows above the tray, or at the top of the
+ // canvas when it would cover the device it is about there (§6.3).
+ func (a *app) notify(c *ui.Context, d *device, text string, undo func()) {
++	if t := a.toast; t != nil && t.commit != nil {
++		// A new toast takes the place of one that held something back,
++		// which goes now.
++		t.commit(c)
++	}
+ 	a.toasts++
+ 	n := &notice{id: a.toasts, text: text, dev: d, undo: undo, until: c.Now().Add(4 * time.Second)}
+ 	if d != nil && slices.Contains(a.devices, d) && a.landing != d {
+@@ -352,6 +359,9 @@
+ func (a *app) toastView(c *ui.Context, p *palette, w, h float32, now time.Time) {
+ 	tn := a.toast
+ 	if tn != nil && !now.Before(tn.until) {
++		if tn.commit != nil {
++			tn.commit(c)
++		}
+ 		a.toast, tn = nil, nil
+ 	}
+ 	right := float32(0)
+@@ -467,6 +477,14 @@
+ // its corner as it opens and shrinks back into it as it closes; choosing
+ // another device fades its words across while its height follows.
+ func (a *app) card(c *ui.Context, p *palette) {
++	if a.selected == lanCard {
++		a.lanCard(c, p)
++		return
++	}
++	if a.selected == noticeCard {
++		a.noticeCard(c, p)
++		return
++	}
+ 	d := a.device(a.selected)
+ 	if d == nil || a.landing == d || !d.gone.IsZero() {
+ 		a.selected = ""
+@@ -490,20 +508,64 @@
+ 		body := ui.Column(c.Key("body-" + d.id)).Padding(16)
+ 		body.Transition(ui.ElementTransition{Duration: 180 * time.Millisecond, Enter: &ui.Motion{}})
+ 		body.Children(func() {
++			// My devices take a new name and kind in place (DESIGN §6.9):
++			// a click on the name edits it, one on the tile shows the kinds.
++			named := mine && d.id != a.self
+ 			ui.Row(c).Gap(12).AlignItems(ui.Start).Children(func() {
+-				deviceTile(c, p, d.kind, a.tileColor(d), 40, false)
++				if mine {
++					kind := ui.ButtonBase(c.Key("kind")).Radius(12).FocusRing(false).Cursor(ui.CursorPointer)
++					kind.AnimatePose(pressPose(kind, 0.94), ui.Snappy)
++					kind.Children(func() { deviceTile(c, p, d.kind, a.tileColor(d), 40, false) })
++					if kind.Clicked() {
++						a.picking = !a.picking
++					}
++				} else {
++					deviceTile(c, p, d.kind, a.tileColor(d), 40, false)
++				}
+ 				ui.Column(c).Gap(2).Grow(1).Children(func() {
+-					ui.Text(c, d.name).FontSize(15).FontWeight(600).SingleLine().MaxWidth(cardNameWidth)
++					if r := a.renaming; r != nil && r.id == d.id {
++						a.nameField(c, p, r, 15, func(name string) {
++							a.send(c, model.Op{Kind: model.OpDeviceRename, Device: model.DeviceID(d.id), Name: name})
++						})
++					} else if named {
++						name := ui.ButtonBase(c.Key("name")).FocusRing(false).Cursor(ui.CursorText).AlignSelf(ui.Start)
++						name.Children(func() {
++							ui.Text(c, d.name).FontSize(15).FontWeight(600).SingleLine().MaxWidth(cardNameWidth)
++						})
++						if name.Clicked() {
++							a.renaming = &renaming{id: d.id, name: d.name}
++						}
++					} else {
++						ui.Text(c, d.name).FontSize(15).FontWeight(600).SingleLine().MaxWidth(cardNameWidth)
++					}
+ 					who := "我的设备"
+ 					if !mine {
+-						who = owner.name + "的设备"
++						who = strings.TrimLeft(spaced(owner.name), " ") + "的设备"
+ 					}
+ 					ui.Text(c, who).FontSize(12).TextColor(p.ink2)
++					if a.sameName(d) {
++						// Two of one name on the canvas: a word on which, and a
++						// way to tell them apart (DESIGN §6.8).
++						ui.Row(c).Gap(4).Children(func() {
++							ui.Text(c, "和另一台同名").FontSize(12).TextColor(p.ink3)
++							if named && a.renaming == nil {
++								ui.Text(c, "·").FontSize(12).TextColor(p.ink3)
++								fix := ui.ButtonBase(c.Key("rename")).FocusRing(false).Cursor(ui.CursorPointer)
++								fix.Children(func() { ui.Text(c, "改个名字").FontSize(12).TextColor(p.primary) })
++								if fix.Clicked() {
++									a.renaming = &renaming{id: d.id, name: d.name}
++								}
++							}
++						})
++					}
+ 				})
+ 				if iconButton(c, p, "close", "关闭").Background(p.well).Clicked() {
+-					a.selected, a.more = "", false
++					a.selected, a.more, a.picking, a.renaming = "", false, false, nil
+ 				}
+ 			})
++			if mine {
++				a.kinds(c, p, d)
++			}
+ 			// How it is connected, in one sentence.
+ 			ui.Row(c).Gap(10).Padding(12).Radius(14).Background(p.well).Margin(14, 0, 0, 0).Children(func() {
+ 				icon, title, sub, col := a.howConnected(d, owner, p)
+@@ -517,9 +579,44 @@
+ 						ui.Icon(c, uiGlyphs[icon]).Size(16, 16).TextColor(white)
+ 					}
+ 				})
+-				ui.Column(c).Gap(2).Children(func() {
+-					ui.Text(c, title).FontSize(13).FontWeight(500)
+-					ui.Text(c, sub).FontSize(12).TextColor(p.ink2)
++				// New words fade in as the state changes, as another device's
++				// do; what can be done about it folds in and out under them,
++				// the card's height following.
++				ui.Column(c.Key("how")).Grow(1).Children(func() {
++					words := ui.Column(c.Key("how-" + title)).Gap(2)
++					words.Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{}})
++					words.Children(func() {
++						ui.Text(c, title).FontSize(13).FontWeight(500)
++						ui.Text(c, sub).FontSize(12).TextColor(p.ink2)
++					})
++					// What can be done about it, in a click (DESIGN §6.8). It
++					// folds in and out, its height drawn out frame by frame;
++					// folding shut, it keeps its last words.
++					label, do := a.remedy(d, owner)
++					if a.remedyWas == nil {
++						a.remedyWas = map[string]string{}
++					}
++					if label != "" {
++						a.remedyWas[d.id] = label
++					}
++					holder := ui.Column(c.Key("remedy-holder")).Clip()
++					shown := float32(0)
++					if label != "" {
++						shown = 1
++					}
++					k := holder.AnimateTo("shown", shown, ui.Animation{Duration: 180 * time.Millisecond})
++					holder.Height((8 + 28) * k)
++					if was := a.remedyWas[d.id]; k > 0 && was != "" {
++						holder.Children(func() {
++							b := ui.ButtonBase(c.Key("remedy")).Height(28).Padding(0, 12).Radius(999).Background(p.bg).FocusRing(false).
++								Shadow(0, 1, 2, 0, ui.RGBA(9, 9, 11, 0.06)).AlignSelf(ui.Start).Margin(8, 0, 0, 0).Opacity(k)
++							b.AnimatePose(pressPose(b, 0.94), ui.Snappy)
++							b.Children(func() { ui.Text(c, was).FontSize(12).FontWeight(500).SingleLine() })
++							if b.Clicked() && label != "" {
++								do(c)
++							}
++						})
++					}
+ 				})
+ 			})
+ 			label := "你可以用"
+@@ -642,6 +739,22 @@
+ // icon and color of its badge, and two lines.
+ func (a *app) howConnected(d *device, owner *person, p *palette) (icon, title, sub string, col ui.Color) {
+ 	grey := ui.Hex("#a1a1aa")
++	switch {
++	case d.pending && d.mine:
++		return "bolt", "等" + spaced(a.ownerName()) + "同意", strings.TrimLeft(spaced(a.ownerName()), " ") + "同意以后，它才连得进来", grey
++	case d.login.Expired && d.mine:
++		return "bolt", "登录过期了", "续上就能连", grey
++	case d.login.Expired:
++		return "bolt", "登录过期了", "要等" + spaced(owner.name) + "在那台设备上续上", grey
++	case d.mine && d.login.Due(a.now()):
++		return "bolt", "需要重新登录", "还有 " + strconv.Itoa(max(1, int(math.Ceil(d.login.Expires.Sub(a.now()).Hours()/24)))) + " 天到期", grey
++	case d.stale:
++		return "bolt", "旧的那台", ago(a.now().Sub(d.lastSeen)) + "上线过，后来就没了", grey
++	case d.path == "offline" && !d.lastSeen.IsZero():
++		return "bolt", "不在线", "上次在线：" + ago(a.now().Sub(d.lastSeen)), grey
++	case d.path == "unreachable":
++		return "bolt", "连不上", "两边的路由器都不让直连", grey
++	}
+ 	switch d.path {
+ 	case "self":
+ 		return "home", "这就是你正在用的电脑", "别人能用你开放的服务", owner.color
+@@ -702,4 +815,382 @@
+ 			Shadow(0, 1, 2, 0, ui.RGBA(0, 0, 0, 0.2)).Shadow(0, 2, 6, 0, ui.RGBA(0, 0, 0, 0.08))
+ 	})
+ 	return v != on
++}
++
++// approve lets a device that waits into the LAN, or turns it away; one of
++// mine that waits is taken back instead (DESIGN §6.7). It shows at once and
++// goes to the server as its toast goes, so that undo needs no server.
++func (a *app) approve(c *ui.Context, d *device, yes bool) {
++	if !d.pending {
++		return
++	}
++	op := model.Op{Kind: model.OpDeviceReject, LAN: a.lan, Device: model.DeviceID(d.id)}
++	text := "已拒绝" + short(d.name)
++	switch {
++	case d.mine:
++		op.Kind, text = model.OpLANRemoveDevice, "已撤回"+short(d.name)
++	case yes:
++		op.Kind, text = model.OpDeviceApprove, "已同意"+short(d.name)+"加进来"
++	}
++	a.hold(c, op, d, text)
++}
++
++// renew renews the login of one of my devices (DESIGN §6.8).
++func (a *app) renew(c *ui.Context, d *device) {
++	a.send(c, model.Op{Kind: model.OpDeviceRenew, Device: model.DeviceID(d.id)})
++	a.notify(c, d, "已续上", nil)
++}
++
++// renaming is a name being edited in place: a device's, or the LAN's
++// (DESIGN §6.9).
++type renaming struct {
++	id       string // the device's, or the LAN's
++	name     string
++	focused  bool // the field had the focus, so losing it keeps the name
++	selected bool // the old name was selected, as the field came
++}
++
++// nameField edits r's name in place, the old name selected: Enter, or a
++// click elsewhere, keeps it; Escape puts the old one back.
++func (a *app) nameField(c *ui.Context, p *palette, r *renaming, size float32, done func(name string)) {
++	f := ui.TextInputBase(c.Key("rename-"+r.id), &r.name).FontSize(size).FontWeight(600).Grow(1).AutoFocus()
++	if !r.selected {
++		f.SetTextSelection(0, utf8.RuneCountInString(r.name))
++		r.selected = true
++	}
++	if f.Focused() {
++		r.focused = true
++	}
++	if f.Shortcut(0, ui.KeyEscape) {
++		a.renaming = nil
++		return
++	}
++	if f.Submitted() || r.focused && !f.Focused() {
++		a.renaming = nil
++		if name := strings.TrimSpace(r.name); name != "" {
++			done(name)
++		}
++	}
++}
++
++// deviceKinds are the kinds a device of mine can be told to be, in the
++// order the card shows them (DESIGN §6.9).
++var deviceKinds = []struct{ kind, glyph, name string }{
++	{"laptop", "laptop", "笔记本"}, {"desktop", "desktop", "台式机"}, {"server", "server", "服务器"},
++	{"nas", "nas", "NAS"}, {"phone", "phone", "手机"}, {"console", "console", "游戏主机"}, {"other", "mini", "其他"},
++}
++
++// kinds is the card's row of kinds: the one d is, ringed in blue; a click
++// on another makes d that. It folds open under the name and folds shut,
++// its height drawn out frame by frame, so that what is under it moves with
++// it rather than jumping.
++func (a *app) kinds(c *ui.Context, p *palette, d *device) {
++	holder := ui.Column(c.Key("kinds-holder")).Clip()
++	open := float32(0)
++	if a.picking {
++		open = 1
++	}
++	k := holder.AnimateTo("open", open, ui.Animation{Duration: 220 * time.Millisecond})
++	holder.Height((12 + 34) * k)
++	if k <= 0 {
++		return
++	}
++	// Made inside the holder, to be its child: what is made outside is
++	// another child of the card.
++	holder.Children(func() {
++		row := ui.Row(c.Key("kinds")).Gap(6).Margin(12, 0, 0, 0).Opacity(k)
++		a.kindRow(c, p, d, row)
++	})
++}
++
++func (a *app) kindRow(c *ui.Context, p *palette, d *device, row ui.Element) {
++	row.Children(func() {
++		for _, k := range deviceKinds {
++			b := ui.ButtonBase(c.Key("kind-"+k.kind)).Size(34, 34).Radius(10).Center().Background(p.well).FocusRing(false).
++				Cursor(ui.CursorPointer).Tooltip(k.name).Label(k.name)
++			if k.glyph == d.kind {
++				b.Border(1.5, p.primary)
++			} else if b.Hovered() {
++				b.Background(p.well2)
++			}
++			b.AnimatePose(pressPose(b, 0.92), ui.Snappy)
++			b.Children(func() { ui.Icon(c, deviceGlyphs[k.glyph]).Size(18, 18).TextColor(p.ink2) })
++			if b.Clicked() {
++				a.picking = false
++				if k.glyph != d.kind {
++					a.send(c, model.Op{Kind: model.OpDeviceSetKind, Device: model.DeviceID(d.id), DevKind: k.kind})
++				}
++			}
++		}
++	})
++}
++
++// sameName reports whether another device on the canvas has d's name.
++func (a *app) sameName(d *device) bool {
++	if d.id == a.self {
++		return false
++	}
++	for _, o := range a.devices {
++		if o != d && o.id != a.self && o.name == d.name && o.gone.IsZero() {
++			return true
++		}
++	}
++	return false
++}
++
++// remedy is what the card's device's state lets me do about it, in a click:
++// the button's words, and what it does (DESIGN §6.8). None: "".
++func (a *app) remedy(d *device, owner *person) (string, func(c *ui.Context)) {
++	who := strings.TrimLeft(spaced(owner.name), " ")
++	tell := func(text, ask string) func(c *ui.Context) {
++		return func(c *ui.Context) {
++			if a.copyText != nil {
++				a.copyText(text)
++			}
++			a.notify(c, nil, "已复制，发给"+who+"就行", nil)
++		}
++	}
++	switch {
++	case d.pending && d.mine:
++		return "不加了", func(c *ui.Context) { a.approve(c, d, false) }
++	case d.login.Expired && d.mine, d.mine && d.login.Due(a.now()):
++		return "续上", func(c *ui.Context) { a.renew(c, d) }
++	case d.login.Expired:
++		return "提醒" + who, tell("你的"+d.name+"在 Deneb 里登录过期了，打开 Deneb 点一下续上就好", "")
++	case d.stale && d.removable():
++		return "移出", func(c *ui.Context) { a.takeOut(c, d, true, false) }
++	case d.path == "offline":
++		if a.watching[d.id] {
++			return "上线时会告诉你", func(*ui.Context) { delete(a.watching, d.id) }
++		}
++		return "上线时告诉我", func(*ui.Context) {
++			if a.watching == nil {
++				a.watching = map[string]bool{}
++			}
++			a.watching[d.id] = true
++		}
++	case d.path == "refused":
++		return "问问" + who, tell("能让我用一下你的"+d.name+"吗？在 Deneb 里点一下就行", "")
++	case d.path == "unreachable":
++		return "加一个中转站", func(c *ui.Context) { a.send(c, model.Op{Kind: model.OpLANAddRelay, LAN: a.lan}) }
++	}
++	return "", nil
++}
++
++// ago is how long ago, in a few words: "3 小时前", "昨天", "40 天前".
++func ago(d time.Duration) string {
++	switch {
++	case d < time.Minute:
++		return "刚刚"
++	case d < time.Hour:
++		return strconv.Itoa(int(d.Minutes())) + " 分钟前"
++	case d < 24*time.Hour:
++		return strconv.Itoa(int(d.Hours())) + " 小时前"
++	case d < 48*time.Hour:
++		return "昨天"
++	}
++	return strconv.Itoa(int(d.Hours()/24)) + " 天前"
++}
++
++// lanCard is what a.selected is while the LAN's card shows.
++const lanCard = "\x00lan"
++
++// lanCard describes the LAN on the canvas: its name, its owner, its members
++// and, for the owner, the two switches of who waits to be let in (DESIGN
++// §6.7). It takes the device card's place, in the same way.
++func (a *app) lanCard(c *ui.Context, p *palette) {
++	l := a.snap.LAN(a.lan)
++	if l == nil {
++		a.selected = ""
++		return
++	}
++	mine := l.Owner == a.snap.Me
++	card := ui.Column(c.Key("card")).Width(cardWidth).Radius(20).Background(p.bg).Clip().
++		Shadow(0, 10, 28, 0, p.shadow).Shadow(0, 2, 6, 0, ui.RGBA(9, 9, 11, 0.05)).TransformOrigin(1, 0)
++	if p.dark {
++		card.Border(1, p.line)
++	}
++	if b := card.Bounds(); b.W > 0 {
++		a.cardAt = ui.Rect{X: b.X - a.origin.X, Y: b.Y - a.origin.Y, W: b.W, H: b.H}
++	}
++	card.Transition(ui.ElementTransition{Duration: 200 * time.Millisecond, Size: true,
++		Enter: &ui.Motion{Scale: 0.96, Y: -8}, Exit: &ui.Motion{Scale: 0.97, Y: -6}})
++	card.Children(func() {
++		body := ui.Column(c.Key("body-lan-" + string(l.ID))).Padding(16)
++		body.Transition(ui.ElementTransition{Duration: 180 * time.Millisecond, Enter: &ui.Motion{}})
++		body.Children(func() {
++			ui.Row(c).Gap(12).AlignItems(ui.Start).Children(func() {
++				// The LAN's mark: its first members' balls, as its row in the
++				// sidebar shows them.
++				ui.Box(c).Size(40, 40).Radius(12).Background(p.well).Center().Children(func() {
++					ui.Row(c).Children(func() {
++						for i, id := range l.Members[:min(3, len(l.Members))] {
++							b := ball(c, a.people[string(id)], 16, false).Shadow(0, 0, 0, 1.5, p.well)
++							if i > 0 {
++								b.Margin(0, 0, 0, -5)
++							}
++						}
++					})
++				})
++				ui.Column(c).Gap(2).Grow(1).Children(func() {
++					if r := a.renaming; r != nil && r.id == string(l.ID) {
++						a.nameField(c, p, r, 15, func(name string) {
++							a.send(c, model.Op{Kind: model.OpLANRename, LAN: l.ID, Name: name})
++						})
++					} else if mine {
++						name := ui.ButtonBase(c.Key("lan-name")).FocusRing(false).Cursor(ui.CursorText).AlignSelf(ui.Start)
++						name.Children(func() {
++							ui.Text(c, l.Name).FontSize(15).FontWeight(600).SingleLine().MaxWidth(cardNameWidth)
++						})
++						if name.Clicked() {
++							a.renaming = &renaming{id: string(l.ID), name: l.Name}
++						}
++					} else {
++						ui.Text(c, l.Name).FontSize(15).FontWeight(600).SingleLine().MaxWidth(cardNameWidth)
++					}
++					owner := "我"
++					if !mine {
++						owner = a.people[string(l.Owner)].name
++					}
++					ui.Text(c, "拥有者 · "+owner).FontSize(12).TextColor(p.ink2)
++				})
++				if iconButton(c, p, "close", "关闭").Background(p.well).Clicked() {
++					a.selected, a.renaming = "", nil
++				}
++			})
++			ui.Text(c, "成员").FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(18, 4, 8, 4)
++			ui.Row(c).Gap(8).Wrap().Children(func() {
++				for _, id := range l.Members {
++					ui.Row(c.Key("member-"+string(id))).Height(34).Padding(0, 12, 0, 4).Gap(8).Radius(999).Background(p.well).Children(func() {
++						ball(c, a.people[string(id)], 26, false)
++						ui.Text(c, a.people[string(id)].name).FontSize(13).FontWeight(500)
++					})
++				}
++			})
++			if !mine {
++				return
++			}
++			ui.Text(c, "新来的").FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(18, 4, 8, 4)
++			ui.Column(c).Radius(14).Background(p.well).Padding(0, 12).Dividers(1, p.line).Children(func() {
++				for _, sw := range []struct {
++					key, label string
++					on         bool
++					kind       model.OpKind
++				}{
++					{"approve-devices", "新设备要我同意", l.ApproveDevices, model.OpLANSetApproveDevices},
++					{"approve-members", "新成员要我同意", l.ApproveMembers, model.OpLANSetApproveMembers},
++				} {
++					ui.Row(c.Key(sw.key)).Height(44).Gap(10).Children(func() {
++						ui.Text(c, sw.label).FontSize(13).FontWeight(500).Grow(1)
++						if toggle(c, p, sw.on) {
++							a.send(c, model.Op{Kind: sw.kind, LAN: l.ID, On: !sw.on})
++						}
++					})
++				}
++			})
++			ui.Text(c, "打开后，新来的要你点一下才进来").FontSize(12).TextColor(p.ink3).Padding(8, 4, 0, 4)
++		})
++	})
++}
++
++// dashedBall is someone who waits: to be let in by me, or to answer my
++// invite. Their ball's shape in a dashed line of their color, their
++// initial faint (DESIGN §6.7).
++func dashedBall(c *ui.Context, p *palette, who *person, size float32) ui.Element {
++	b := ui.Box(c).Size(size, size).Center()
++	b.Draw(func(pt *ui.Painter, r ui.Rect) {
++		var path ui.Path
++		path.Circle(r.X+r.W/2, r.Y+r.H/2, r.W/2-0.75)
++		pt.FillPath(&path, p.bg)
++		pt.FillPath(&path, who.color.Alpha(0.08))
++		path.Dash(0, 3, 2.5)
++		pt.StrokePath(&path, 1.5, who.color.Alpha(0.8))
++	})
++	b.Children(func() {
++		ui.Text(c, who.ch).FontSize(size * 0.42).FontWeight(600).TextColor(who.color.Alpha(0.75))
++	})
++	return b
++}
++
++// How someone is in a LAN's stack of balls.
++const (
++	member      = iota
++	waitsForMe  // waits for me, the owner, to let them in
++	invitedByMe // invited by name, and not answered yet
++)
++
++// stackBall is someone's ball in the header's stack, one that stays as they
++// go from waiting to in (DESIGN §6.7): a member's is solid, and can be
++// dragged onto a LAN's row to invite them there; one who waits shows
++// dashed, a click lets them in, and on the pointer a small "×" turns them
++// away, or takes my invite back. Let in, the dashed line fills to the ball.
++func (a *app) stackBall(c *ui.Context, p *palette, l *model.LAN, id string, how int, overlap bool, invited model.Invited) {
++	who := a.people[id]
++	el := ui.Box(c.Key("stack-"+id)).Size(30, 30)
++	if overlap {
++		el.Margin(0, 0, 0, -6)
++	}
++	el.Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: &ui.Motion{Scale: 0.5}, Exit: &ui.Motion{Scale: 0.5}})
++	waits := float32(0)
++	if how != member {
++		waits = 1
++	}
++	k := el.AnimateTo("waits", waits, ui.Animation{Duration: 220 * time.Millisecond})
++	if a.stackWas == nil {
++		a.stackWas, a.stackIn = map[string]int{}, map[string]time.Time{}
++	}
++	if was, ok := a.stackWas[id]; ok && was == waitsForMe && how == member {
++		a.stackIn[id] = c.Now()
++	}
++	a.stackWas[id] = how
++	pose, anim := ui.Pose{}, ui.Snappy
++	switch since := c.Now().Sub(a.stackIn[id]); {
++	case since < 90*time.Millisecond:
++		// Let in: it dips, and springs up full.
++		pose, anim = ui.Pose{Scale: 0.88}, ui.Animation{Duration: 90 * time.Millisecond}
++		c.After(90*time.Millisecond - since)
++	case since < 700*time.Millisecond:
++		anim = ui.Bouncy
++	case how != member && el.Pressed():
++		pose = ui.Pose{Scale: 0.92}
++	case how != member && el.Hovered():
++		pose = ui.Pose{Y: -2}
++	}
++	el.AnimatePose(pose, anim)
++	hovered := el.Hovered()
++	el.Children(func() {
++		solid := ball(c, who, 30, false).Shadow(0, 0, 0, 2, p.bg)
++		if k > 0 {
++			solid.Opacity(1 - k)
++			dashedBall(c, p, who, 30).Absolute().Left(0).Top(0).Opacity(k).PassThrough()
++		}
++		if how != member && hovered {
++			x := ui.ButtonBase(c.Key("away")).Absolute().Right(-6).Top(-6).Size(16, 16).Radius(999).Center().
++				Background(p.bg).Border(1, p.line).Shadow(0, 2, 6, 0, ui.RGBA(9, 9, 11, 0.12)).FocusRing(false)
++			x.Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: &ui.Motion{Scale: 0.6}, Exit: &ui.Motion{Scale: 0.6}})
++			x.Children(func() { ui.Icon(c, uiGlyphs["close"]).Size(10, 10).TextColor(p.ink2) })
++			if x.Clicked() {
++				switch how {
++				case waitsForMe:
++					a.holdFor(c, model.Op{Kind: model.OpMemberReject, LAN: l.ID, Person: model.PersonID(id)}, "已拒绝"+spaced(who.name))
++				case invitedByMe:
++					a.send(c, model.Op{Kind: model.OpInviteRevoke, LAN: l.ID, Person: model.PersonID(id), Invite: invited.Invite})
++					a.notify(c, nil, "已收回给"+spaced(who.name)+"的邀请", nil)
++				}
++			}
++		}
++	})
++	switch how {
++	case member:
++		if id != a.me {
++			a.personHandle(c, el, id)
++		}
++	case waitsForMe:
++		el.Cursor(ui.CursorPointer).Tooltip(strings.TrimLeft(spaced(who.name), " ") + "想加入，点一下同意")
++		if el.Clicked() {
++			a.holdFor(c, model.Op{Kind: model.OpMemberApprove, LAN: l.ID, Person: model.PersonID(id)}, "已同意"+spaced(who.name)+"加入")
++		}
++	case invitedByMe:
++		el.Tooltip("已邀请" + spaced(who.name) + "，等他接受")
++	}
+ }
+diff -ruN -x .mygo -x build -x *peek_test.go cmd/deneb/sync.go /tmp/deneb-m2/cmd/deneb/sync.go
+--- cmd/deneb/sync.go	2026-11-08 00:17:17
++++ cmd/deneb/sync.go	2026-11-08 10:18:37
+@@ -4,6 +4,7 @@
+ 	"context"
+ 	"encoding/json"
+ 	"errors"
++	"fmt"
+ 	"log"
+ 	"math"
+ 	"os"
+@@ -31,6 +32,9 @@
+ // prototype changed its state there and then, and the demo's frames are the
+ // same as the prototype's.
+ func (a *app) sync(c *ui.Context) {
++	if c != nil {
++		a.clock = c.Now()
++	}
+ 	base := a.store.Snapshot()
+ 	if base != a.base || a.gen != a.synced {
+ 		a.pend = slices.DeleteFunc(a.pend, func(p *pending) bool {
+@@ -79,6 +83,17 @@
+ 	for _, d := range a.tray {
+ 		a.facts(d, l)
+ 	}
++	a.twins()
++	// An invite sent to me by name shows its card as it comes, once.
++	for _, inv := range s.Invitations {
++		if a.seenInvitations == nil {
++			a.seenInvitations = map[string]bool{}
++		}
++		if !a.seenInvitations[inv.ID] && a.invite == nil && s.Loaded {
++			a.seenInvitations[inv.ID] = true
++			a.showInvitation(inv)
++		}
++	}
+ 	// Whoever the view shows has a ball, the owner of a device that stayed
+ 	// after its owner left too: grey, without an initial.
+ 	for _, id := range members {
+@@ -142,6 +157,8 @@
+ 		d.name = "这台电脑"
+ 	}
+ 	d.online, d.refusesMe, d.addr, d.fqdn = m.Online, m.RefusesMe, m.Addr, m.FQDN
++	d.login, d.lastSeen, d.using = m.Login, m.LastSeen, s.Using[m.ID]
++	d.pending = l != nil && l.HasPending(m.ID)
+ 	refused := make(map[string]bool, len(m.Refused))
+ 	for who, on := range m.Refused {
+ 		if on {
+@@ -149,7 +166,7 @@
+ 		}
+ 	}
+ 	d.refused = refused
+-	in := l != nil && l.Has(m.ID)
++	in := l != nil && (l.Has(m.ID) || l.HasPending(m.ID))
+ 	if in || d.path == "" {
+ 		p := s.Path(m.ID)
+ 		d.path, d.relayID, d.rtt = string(p.Kind), p.Relay, p.RTT
+@@ -180,6 +197,8 @@
+ 		return kind
+ 	case "tablet":
+ 		return "phone"
++	case "other":
++		return "mini"
+ 	}
+ 	return "desktop"
+ }
+@@ -226,6 +245,10 @@
+ 	a.devices, a.tray = nil, nil
+ 	a.trayOff, a.slots = map[string]*ui.Point{}, map[string]ui.Point{}
+ 	a.beams, a.geos = map[string]*beamRun{}, map[string]*linkGeo{}
++	if t := a.toast; t != nil && t.commit != nil {
++		// What a toast held back goes as the canvas changes.
++		a.post(t.commit)
++	}
+ 	a.landing, a.held, a.toast = nil, nil, nil
+ 	a.relay = &relayStop{sub: "中转站"}
+ 	if at, ok := a.places.get(a.lan, relayKey); ok {
+@@ -234,7 +257,7 @@
+ 		a.relay.unplaced = true
+ 	}
+ 	if l != nil {
+-		for _, id := range l.Devices {
++		for _, id := range onCanvas(l) {
+ 			d := &device{facts: facts{id: string(id)}}
+ 			if at, ok := a.places.get(a.lan, d.id); ok {
+ 				d.base, d.rest = at, at
+@@ -253,7 +276,7 @@
+ 	}
+ 	a.refresh()
+ 	for _, d := range a.devices {
+-		d.lastPath = d.path
++		d.lastPath, d.waited = d.path, d.pending
+ 	}
+ 	// A relay there as the LAN shows is there: it does not pop in.
+ 	a.relay.shown = a.relayLinked()
+@@ -324,7 +347,7 @@
+ 		return
+ 	}
+ 	in := map[string]bool{}
+-	for _, id := range l.Devices {
++	for _, id := range onCanvas(l) {
+ 		in[string(id)] = true
+ 	}
+ 	tray := map[string]bool{}
+@@ -378,7 +401,7 @@
+ 			a.tray = slices.DeleteFunc(slices.Clone(a.tray), func(x *device) bool { return x == d })
+ 		}
+ 	}
+-	for _, id := range l.Devices {
++	for _, id := range onCanvas(l) {
+ 		if !shown[string(id)] {
+ 			a.appear(c, string(id))
+ 		}
+@@ -393,12 +416,31 @@
+ 		}
+ 	}
+ 	for _, d := range a.devices {
++		switch {
++		case d.waited && !d.pending && d.gone.IsZero():
++			// Let in: it springs up full, and its track grows out from this
++			// computer as a joining device's does (DESIGN §6.7).
++			d.approved, d.joined, d.leaving = c.Now(), c.Now(), time.Time{}
++			delete(a.beams, d.id)
++			c.AnimationFrame()
++		case !d.waited && d.pending && d.gone.IsZero() && !d.joined.IsZero():
++			// Back to waiting, its letting in undone: its track draws back.
++			d.approved, d.leaving = time.Time{}, c.Now()
++			c.AnimationFrame()
++		}
++		d.waited = d.pending
++		if a.watching[d.id] && d.lastPath == "offline" && d.path != "offline" && d.path != "" {
++			// Asked to be told: it came online (DESIGN §6.8).
++			delete(a.watching, d.id)
++			a.notify(c, d, short(d.name)+"上线了", nil)
++		}
+ 		if d.lastPath == "" {
+ 			d.lastPath = d.path
+ 		} else if d.path != d.lastPath {
+ 			a.repath(c, d)
+ 		}
+-	}
++	} // Those that came onto the canvas just now are numbered too.
++	a.twins()
+ }
+ 
+ // turnBack sends a device on its way into the tray back to where it rested.
+@@ -565,7 +607,14 @@
+ 	p := &pending{op: op}
+ 	a.pend = append(a.pend, p)
+ 	a.gen++
+-	run(a, c, func(ctx context.Context) (model.Result, error) { return a.store.Do(ctx, op) },
++	a.commit(c, p)
++	a.sync(nil)
++}
++
++// commit hands a pending op to the store.
++func (a *app) commit(c *ui.Context, p *pending) {
++	p.held = false
++	run(a, c, func(ctx context.Context) (model.Result, error) { return a.store.Do(ctx, p.op) },
+ 		func(c *ui.Context, r model.Result, err error) {
+ 			p.done, p.ver, p.err = true, r.Version, err
+ 			a.gen++
+@@ -573,9 +622,31 @@
+ 				a.problem(c, err)
+ 			}
+ 		})
++}
++
++// hold shows op at once, with a toast that offers undo, and sends it only
++// as the toast goes: for what the server cannot take back, as letting a
++// device in or turning it away (DESIGN §6.7). Undo drops it unsent.
++func (a *app) hold(c *ui.Context, op model.Op, d *device, text string) {
++	p := &pending{op: op, held: true}
++	a.pend = append(a.pend, p)
++	a.gen++
+ 	a.sync(nil)
++	a.notify(c, d, text, func() {
++		a.pend = slices.DeleteFunc(a.pend, func(x *pending) bool { return x == p })
++		a.gen++
++	})
++	a.toast.commit = func(c *ui.Context) {
++		if p.held {
++			a.commit(c, p)
++		}
++	}
+ }
+ 
++// holdFor is hold for an op about no device on the canvas, as letting a
++// person in.
++func (a *app) holdFor(c *ui.Context, op model.Op, text string) { a.hold(c, op, nil, text) }
++
+ // run does work off the main thread and hands its result to done on it; a
+ // store that answers at once (the demo's) is asked in place, so that what it
+ // answers shows in the same frame.
+@@ -722,4 +793,61 @@
+ 		return ""
+ 	}
+ 	return filepath.Join(dir, "layout.json")
++}
++
++// onCanvas are the devices a LAN's canvas shows: those in it, and those that
++// wait for its owner to let them in (DESIGN §6.7), in the order they came.
++func onCanvas(l *model.LAN) []model.DeviceID {
++	if len(l.Pending) == 0 {
++		return l.Devices
++	}
++	return append(slices.Clone(l.Devices), l.Pending...)
++}
++
++// twins numbers the devices on the canvas named as one before them, 2, 3…,
++// and marks an old one of mine among them, gone for 30 days (DESIGN §6.8).
++func (a *app) twins() {
++	seen := map[string]int{}
++	mine := map[string]int{}
++	for _, d := range a.devices {
++		if d.id == a.self {
++			continue
++		}
++		seen[d.name]++
++		d.twin = 0
++		if n := seen[d.name]; n > 1 {
++			d.twin = n
++		}
++		if d.mine {
++			mine[d.name]++
++		}
++	}
++	for _, d := range a.devices {
++		d.stale = d.mine && mine[d.name] > 1 && !d.online && !d.lastSeen.IsZero() && a.now().Sub(d.lastSeen) > 30*24*time.Hour
++	}
++}
++
++// now is the view's clock as the frame being built has it: what the timers
++// and the login's dates are counted against.
++func (a *app) now() time.Time {
++	if a.clock.IsZero() {
++		return time.Now()
++	}
++	return a.clock
++}
++
++// ownerName is the name of the owner of the LAN on the canvas.
++func (a *app) ownerName() string {
++	if l := a.snap.LAN(a.lan); l != nil {
++		if p := a.people[string(l.Owner)]; p != nil {
++			return p.name
++		}
++	}
++	return ""
++}
++
++// clock is a count of hours, minutes and seconds: "2:14:08".
++func clock(d time.Duration) string {
++	d = max(d, 0).Truncate(time.Second)
++	return fmt.Sprintf("%d:%02d:%02d", int(d.Hours()), int(d.Minutes())%60, int(d.Seconds())%60)
+ }
+diff -ruN -x .mygo -x build -x *peek_test.go cmd/deneb/view.go /tmp/deneb-m2/cmd/deneb/view.go
+--- cmd/deneb/view.go	2026-11-08 09:24:49
++++ cmd/deneb/view.go	2026-11-08 10:56:03
+@@ -2,6 +2,8 @@
+ 
+ import (
+ 	"fmt"
++	"slices"
++	"strings"
+ 	"time"
+ 
+ 	"github.com/egoist/mygo/ui"
+@@ -41,6 +43,7 @@
+ 			a.canvas(c, p)
+ 			a.inviteLayer(c, p)
+ 		})
++		a.personChip(c, p)
+ 	})
+ }
+ 
+@@ -97,10 +100,33 @@
+ 			}
+ 		}
+ 		for _, l := range a.snap.LANs {
+-			if navRow(c, p, "lan-"+string(l.ID), l.Name, l.ID == a.lan, dots(l.Members), "", a.flash(c, l.ID)) {
++			count := ""
++			if l.Waiting {
++				count = "等同意"
++			}
++			// Something waits for me there: a small blue dot at the row's end,
++			// until I let it in or turn it away (DESIGN §6.7).
++			waits := l.Owner == a.snap.Me && len(l.Pending)+len(l.PendingMembers) > 0
++			at := a.rowAt(l.ID)
++			if navRowAt(c, p, "lan-"+string(l.ID), l.Name, l.ID == a.lan, dots(l.Members), count, a.flash(c, l.ID), waits, a.personOver == l.ID, at) {
+ 				a.show(c, l.ID, false)
+ 			}
+ 		}
++		// Invites sent to me by name that I put off: a grey row each, which
++		// shows the invite again (DESIGN §6.7).
++		for _, inv := range a.snap.Invitations {
++			if a.invite != nil && a.invite.invitation == inv.ID {
++				continue
++			}
++			who := a.people[string(inv.Inviter.ID)]
++			if who == nil {
++				who = &person{id: string(inv.Inviter.ID), name: inv.Inviter.Name, ch: inv.Inviter.Initial, color: ownerColors[inv.Inviter.Color%model.NumColors]}
++			}
++			label := strings.TrimLeft(spaced(short(who.name)), " ") + "邀请你 · " + short(inv.LANName)
++			if navRow(c, p, "invitation-"+inv.ID, label, false, func() { ball(c, who, 16, false) }, "", 0) {
++				a.showInvitation(inv)
++			}
++		}
+ 		a.newLANRow(c, p)
+ 		ui.Box(c).Height(16)
+ 		group(c, p, "设备")
+@@ -131,7 +157,24 @@
+ // that just came in opens out and lights up, flash (1 to 0) of the way. It
+ // reports whether it was clicked.
+ func navRow(c *ui.Context, p *palette, key, label string, on bool, lead func(), count string, flash float32) bool {
++	return navRowDot(c, p, key, label, on, lead, count, flash, false)
++}
++
++// navRowDot is navRow with a small blue dot at its end, as dot asks.
++func navRowDot(c *ui.Context, p *palette, key, label string, on bool, lead func(), count string, flash float32, dot bool) bool {
++	return navRowAt(c, p, key, label, on, lead, count, flash, dot, false, nil)
++}
++
++// navRowAt is navRowDot that rings blue while what the hand holds can be
++// let go on it (ring), and tells where it is in the window (at).
++func navRowAt(c *ui.Context, p *palette, key, label string, on bool, lead func(), count string, flash float32, dot, ring bool, at *ui.Rect) bool {
+ 	row := ui.ButtonBase(c.Key(key)).Height(36).Padding(0, 10).Gap(10).Radius(10).FocusRing(false)
++	if at != nil {
++		*at = row.Bounds()
++	}
++	if ring {
++		row.Border(1.5, p.primary)
++	}
+ 	if flash > 0 {
+ 		row.Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: &ui.Motion{Collapse: true}})
+ 	}
+@@ -155,6 +198,10 @@
+ 		if count != "" {
+ 			ui.Text(c, count).FontSize(12).TextColor(p.ink3)
+ 		}
++		if dot {
++			ui.Box(c.Key("dot")).Size(7, 7).Radius(999).Background(p.primary).
++				Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: &ui.Motion{Scale: 0.3}, Exit: &ui.Motion{Scale: 0.3}})
++		}
+ 	})
+ 	return row.Clicked()
+ }
+@@ -187,7 +234,18 @@
+ 	name := l.Name
+ 	ui.Row(c).Height(headerHeight).Padding(22, 24, 0, 28).AlignItems(ui.Start).Gap(16).DragWindow().Children(func() {
+ 		ui.Column(c).Gap(4).Children(func() {
+-			ui.Text(c, name).FontSize(20).FontWeight(600).SingleLine().MaxWidth(lanNameWidth)
++			// A click on the LAN's name shows its card (DESIGN §6.7).
++			title := ui.ButtonBase(c.Key("lan-title")).FocusRing(false).Cursor(ui.CursorPointer).AlignSelf(ui.Start)
++			title.Children(func() {
++				ui.Text(c, name).FontSize(20).FontWeight(600).SingleLine().MaxWidth(lanNameWidth)
++			})
++			if title.Clicked() {
++				if a.selected == lanCard {
++					a.selected, a.renaming = "", nil
++				} else {
++					a.selected, a.more, a.picking, a.renaming = lanCard, false, false, nil
++				}
++			}
+ 			ui.Row(c).Gap(6).Children(func() {
+ 				dot, line := a.summary(p)
+ 				ui.Box(c).Size(7, 7).Radius(999).Background(dot).Shadow(0, 0, 0, 3, dot.Alpha(0.18))
+@@ -195,15 +253,30 @@
+ 			})
+ 		})
+ 		ui.Spacer(c)
++		a.noticePill(c, p)
+ 		ui.Row(c).Gap(14).Children(func() {
+ 			ui.Row(c).Children(func() {
+-				for i, id := range a.members {
+-					b := ball(c, a.people[id], 30, false).Shadow(0, 0, 0, 2, p.bg)
+-					if i > 0 {
+-						b.Margin(0, 0, 0, -6)
+-					}
++				// Everyone in the stack keeps one ball: a member's solid, one
++				// who waits for me, or for my invite's answer, dashed (DESIGN
++				// §6.7). Letting someone in fills theirs where it is.
++				i := 0
++				for _, id := range a.members {
++					a.stackBall(c, p, l, id, member, i > 0, model.Invited{})
++					i++
+ 				}
++				for _, id := range l.PendingMembers {
++					a.stackBall(c, p, l, string(id), waitsForMe, i > 0, model.Invited{})
++					i++
++				}
++				for _, v := range l.Invited {
++					a.stackBall(c, p, l, string(v.Person), invitedByMe, i > 0, v)
++					i++
++				}
+ 			})
++			if l.Waiting {
++				// Not in yet: there is no one to invite into it.
++				return
++			}
+ 			btn := ui.ButtonBase(c.Key("invite")).Height(34).Padding(0, 14).Gap(6).Radius(999).Background(p.primary).FocusRing(false).
+ 				Shadow(0, 1, 2, 0, p.primary.Alpha(0.3)).InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.18))
+ 			if btn.Hovered() {
+@@ -252,7 +325,7 @@
+ func (a *app) summary(p *palette) (ui.Color, string) {
+ 	n, up, waiting := 0, 0, 0
+ 	for _, d := range a.devices {
+-		if !d.gone.IsZero() {
++		if !d.gone.IsZero() || d.pending {
+ 			continue
+ 		}
+ 		n++
+@@ -268,6 +341,9 @@
+ 	switch {
+ 	case !a.snap.Engine:
+ 		return p.ink3, "连不上这台电脑上的 Deneb，正在重试…"
++	case l != nil && l.Waiting:
++		// I am not in yet: nothing here is mine to count (DESIGN §6.7).
++		return p.ink3, "等" + spaced(a.ownerName()) + "同意你加入"
+ 	case l != nil && a.self != "" && !l.Has(model.DeviceID(a.self)):
+ 		// Made on another of my devices: this computer waits in the tray,
+ 		// and nothing here connects until it is in.
+@@ -278,4 +354,115 @@
+ 		return p.ink3, fmt.Sprintf("%d 个人，%d 台设备，正在连接…", people, n)
+ 	}
+ 	return p.ink3, fmt.Sprintf("%d 个人，%d 台设备，%d 台连上了", people, n, up)
++}
++
++// rowAt is where the sidebar's row of a LAN was in the last frame, in the
++// window: what a person dragged is let go on.
++func (a *app) rowAt(id model.LANID) *ui.Rect {
++	if a.rows == nil {
++		a.rows = map[model.LANID]*ui.Rect{}
++	}
++	r, ok := a.rows[id]
++	if !ok {
++		r = &ui.Rect{}
++		a.rows[id] = r
++	}
++	return r
++}
++
++// personHandle lets a member's ball in the header be dragged onto a LAN's
++// row in the sidebar, which invites them there (DESIGN §6.4, §6.7). While
++// it is dragged, a chip of their ball and name follows the hand in its
++// place (personChip); let go anywhere else, the ball springs back.
++func (a *app) personHandle(c *ui.Context, b ui.Element, id string) {
++	if a.ballOffs == nil {
++		a.ballOffs = map[string]*ui.Point{}
++	}
++	off, ok := a.ballOffs[id]
++	if !ok {
++		off = &ui.Point{}
++		a.ballOffs[id] = off
++	}
++	b.Draggable(off, ui.DraggableOptions{Animation: ui.Snappy})
++	b.Cursor(ui.CursorGrab)
++	if a.ballHome == nil {
++		a.ballHome = map[string]ui.Point{}
++	}
++	if !b.Dragging() && *off == (ui.Point{}) {
++		// Where it rests: its bounds move with the drag, its home does not.
++		if r := b.Bounds(); r.W > 0 {
++			a.ballHome[id] = ui.Point{X: r.X + r.W/2, Y: r.Y + r.H/2}
++		}
++	}
++	if b.Dragging() {
++		b.Cursor(ui.CursorGrabbing).Opacity(0)
++		home, d := a.ballHome[id], b.DragOffset()
++		at := ui.Point{X: home.X + d.X, Y: home.Y + d.Y}
++		a.person = &personDrag{id: id, at: at}
++		a.personOver = ""
++		for lan, row := range a.rows {
++			if at.X >= row.X && at.X <= row.X+row.W && at.Y >= row.Y && at.Y <= row.Y+row.H {
++				a.personOver = lan
++			}
++		}
++		return
++	}
++	if _, _, ended := b.DragEnded(); ended {
++		if lan := a.personOver; lan != "" {
++			a.inviteTo(c, lan, model.PersonID(id))
++		}
++		*off = ui.Point{}
++		a.person, a.personOver = nil, ""
++	}
++}
++
++// personChip is the chip that follows the hand as it drags a person: their
++// ball and name, above everything; over a row it can be let go on, it
++// shrinks around the pointer, so that the row shows (DESIGN §6.1).
++func (a *app) personChip(c *ui.Context, p *palette) {
++	holder := ui.Box(c.Key("person-chip-layer")).Absolute().Left(0).Top(0).Right(0).Bottom(0).PassThrough()
++	holder.Children(func() {
++		d := a.person
++		if d == nil {
++			return
++		}
++		who := a.people[d.id]
++		chip := ui.Row(c.Key("person-chip-"+d.id)).Absolute().Left(d.at.X-17).Top(d.at.Y-17).Height(34).Padding(0, 12, 0, 4).Gap(8).
++			Radius(999).Background(p.bg).Shadow(0, 8, 20, 0, ui.RGBA(9, 9, 11, 0.16)).Shadow(0, 1, 2, 0, ui.RGBA(9, 9, 11, 0.08)).
++			TransformOrigin(0.1, 0.5).PassThrough()
++		pose, name := ui.Pose{Scale: 1.04}, float32(1)
++		if a.personOver != "" {
++			// Over the row: only the ball, smaller, so the row's name shows.
++			pose, name = ui.Pose{Scale: 0.8}, 0
++		}
++		chip.AnimatePose(pose, ui.Snappy)
++		k := chip.AnimateTo("name", name, ui.Animation{Duration: 120 * time.Millisecond})
++		if k < 1 {
++			chip.Padding(0, 4+8*k, 0, 4).Background(p.bg.Alpha(k))
++		}
++		chip.Children(func() {
++			ball(c, who, 26, false)
++			if k > 0.02 {
++				ui.Text(c, who.name).FontSize(13).FontWeight(500).Opacity(k)
++			}
++		})
++	})
++}
++
++// inviteTo invites a person into a LAN by name (DESIGN §6.7): they wait for
++// their answer in its ball stack; undo takes the invite back.
++func (a *app) inviteTo(c *ui.Context, lan model.LANID, who model.PersonID) {
++	l := a.snap.LAN(lan)
++	if l == nil {
++		return
++	}
++	name := strings.TrimLeft(spaced(a.people[string(who)].name), " ")
++	if slices.Contains(l.Members, who) {
++		a.notify(c, nil, name+"已经在「"+short(l.Name)+"」里了", nil)
++		return
++	}
++	a.send(c, model.Op{Kind: model.OpLANInvite, LAN: lan, Person: who})
++	a.notify(c, nil, "已邀请"+spaced(a.people[string(who)].name)+"加入「"+short(l.Name)+"」", func() {
++		a.send(c, model.Op{Kind: model.OpInviteRevoke, LAN: lan, Person: who})
++	})
+ }
+diff -ruN -x .mygo -x build -x *peek_test.go cmd/deneb/view_test.go /tmp/deneb-m2/cmd/deneb/view_test.go
+--- cmd/deneb/view_test.go	2026-11-08 09:24:49
++++ cmd/deneb/view_test.go	2026-11-08 10:42:01
+@@ -62,12 +62,25 @@
+ // runs of the same code), so that much is let through; anything that moves,
+ // recolors or resizes what is drawn changes hundreds of pixels by more.
+ // changedOnPurpose are the frames a fix after the split changed, against
+-// the baseline taken before it: the toast that comes in or goes out over
+-// the tray rose up through it, and goes over it now (found in the self-check
+-// of the M1 recordings, design/plan/m1/client.md). The others stay as they
+-// were.
+-var changedOnPurpose = map[string]bool{"tray-landing": true, "undo-returning": true, "tray-joining": true}
++// the baseline taken before it; the others stay as they were.
++//   - The toast that comes in or goes out over the tray rose up through it,
++//     and goes over it now (the self-check of the M1 recordings,
++//     design/plan/m1/client.md).
++//   - Another's card said "Mia的设备", and says "Mia 的设备" now, a Latin
++//     name set apart as everywhere else (M2's self-check): the frames with
++//     Mia's card open differ there, and only there.
++var changedOnPurpose = map[string]bool{}
+ 
++func init() {
++	for _, theme := range []string{"light", "dark"} {
++		for _, shot := range []string{"16_tray-landing", "18_undo-returning", "23_tray-joining",
++			"07_card-opening", "08_card-open", "09_dragging", "11_drop-made-room", "13_refuse-rests",
++			"17_tray-landed", "19_undo-back", "21_band-rests-above", "22_tray-dragging", "24_tray-joined", "25_toast-gone"} {
++			changedOnPurpose[theme+"_"+shot+".png"] = true
++		}
++	}
++}
++
+ func TestFrames(t *testing.T) {
+ 	dir := os.Getenv("DENEB_FRAMES")
+ 	if dir == "" {
+@@ -96,7 +109,7 @@
+ 			if err := png.Encode(f, img); err != nil {
+ 				t.Fatal(err)
+ 			}
+-			if baseline != "" && !changedOnPurpose[name] {
++			if baseline != "" && !changedOnPurpose[file] {
+ 				if px, most := differ(t, filepath.Join(baseline, file), img); px > 64 || most > 1 {
+ 					t.Errorf("%s: %d pixels differ from the baseline's, by up to %d of 255", file, px, most)
+ 				}
+diff -ruN -x .mygo -x build -x *peek_test.go cmd/deneb/views.go /tmp/deneb-m2/cmd/deneb/views.go
+--- cmd/deneb/views.go	2026-11-08 09:24:49
++++ cmd/deneb/views.go	2026-11-08 10:18:37
+@@ -181,6 +181,9 @@
+ // inviteCard is scene 3's card: someone asks me into a LAN.
+ type inviteCard struct {
+ 	inv *model.Invite
++	// invitation is the id of an invite sent to me by name, rather than by
++	// a link (DESIGN §6.7): joining takes that.
++	invitation string
+ }
+ 
+ // inviteSpring is how the card comes in: as the design demo's, a little
+@@ -252,7 +255,7 @@
+ 					a.invite = nil
+ 				}
+ 				if primaryButton(c, p, "join", "加入", 34, 14, 13).Clicked() {
+-					a.join(c, inv)
++					a.join(c, card)
+ 				}
+ 			})
+ 		})
+@@ -262,10 +265,15 @@
+ // join accepts the invite: the card goes at once, as in the design demo,
+ // and the LAN comes onto the canvas, this computer in it, once the store
+ // has it there.
+-func (a *app) join(c *ui.Context, inv *model.Invite) {
++func (a *app) join(c *ui.Context, card *inviteCard) {
++	inv := card.inv
+ 	a.invite = nil
++	op := model.Op{Kind: model.OpInviteAccept, Invite: inv.Link, Invitation: card.invitation}
++	if card.invitation != "" {
++		op.Invite = ""
++	}
+ 	run(a, c, func(ctx context.Context) (model.Result, error) {
+-		return a.store.Do(ctx, model.Op{Kind: model.OpInviteAccept, Invite: inv.Link})
++		return a.store.Do(ctx, op)
+ 	}, func(c *ui.Context, r model.Result, err error) {
+ 		if err != nil {
+ 			a.problem(c, err)
+@@ -286,4 +294,117 @@
+ 		return e.Message
+ 	}
+ 	return "没办成，等一下再试试"
++}
++
++// showInvitation shows the card of an invite sent to me by name.
++func (a *app) showInvitation(inv model.Invitation) {
++	a.invite = &inviteCard{inv: &model.Invite{LAN: inv.LAN, LANName: inv.LANName, Inviter: inv.Inviter}, invitation: inv.ID}
++	a.selected, a.more = "", false
++}
++
++// waitingCanvas is the canvas of a LAN whose owner has not let me in yet:
++// only the owner, and a word on what I wait for (DESIGN §6.7).
++func (a *app) waitingCanvas(c *ui.Context, p *palette, l *model.LAN) {
++	owner := a.people[string(l.Owner)]
++	ui.Column(c).Grow(1).AlignItems(ui.Center).Justify(ui.Center).Gap(14).Children(func() {
++		ball(c, owner, 44, false)
++		ui.Text(c, "等"+spaced(owner.name)+"同意你加入「"+short(l.Name)+"」").FontSize(15).FontWeight(500).TextColor(p.ink2)
++	})
++}
++
++// notice is the first of the engine's notices not put away, or nil.
++func (a *app) notice() *model.Notice {
++	for i := range a.snap.Notices {
++		if !a.noticesDone[a.snap.Notices[i].Code] {
++			return &a.snap.Notices[i]
++		}
++	}
++	return nil
++}
++
++// noticePill tells of what the engine found, as another program taking
++// Deneb's connections, in a small pill in the header, clear of the canvas:
++// a click shows its card, with the rule to add to that program (DESIGN
++// §6.8). Deneb never changes the other program itself.
++func (a *app) noticePill(c *ui.Context, p *palette) {
++	n := a.notice()
++	holder := ui.Row(c.Key("notice-holder")).AlignSelf(ui.Center)
++	holder.Children(func() {
++		if n == nil {
++			return
++		}
++		pill := ui.ButtonBase(c.Key("notice-"+n.Code)).Height(30).Padding(0, 12, 0, 10).Gap(8).Radius(999).
++			Background(ui.Hex("#F59E0B").Alpha(0.1)).FocusRing(false).Cursor(ui.CursorPointer)
++		if pill.Hovered() {
++			pill.Background(ui.Hex("#F59E0B").Alpha(0.16))
++		}
++		pill.Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: &ui.Motion{Scale: 0.9}, Exit: &ui.Motion{Scale: 0.9}})
++		pill.AnimatePose(pressPose(pill, 0.96), ui.Snappy)
++		pill.Children(func() {
++			ui.Box(c).Size(7, 7).Radius(999).Background(ui.Hex("#F59E0B"))
++			ui.Text(c, n.Short).FontSize(12).FontWeight(500).TextColor(p.ink2).SingleLine()
++		})
++		if pill.Clicked() {
++			if a.selected == noticeCard {
++				a.selected = ""
++			} else {
++				a.selected, a.more, a.picking, a.renaming = noticeCard, false, false, nil
++			}
++		}
++	})
++}
++
++// noticeCard is what a.selected is while the notice's card shows.
++const noticeCard = "\x00notice"
++
++// noticeCard says what the engine found in full, the rule to add to the
++// other program with a button to copy it, and "知道了", which puts it away
++// for good. It takes the device card's place, in the same way.
++func (a *app) noticeCard(c *ui.Context, p *palette) {
++	n := a.notice()
++	if n == nil {
++		a.selected = ""
++		return
++	}
++	card := ui.Column(c.Key("card")).Width(cardWidth).Radius(20).Background(p.bg).Clip().
++		Shadow(0, 10, 28, 0, p.shadow).Shadow(0, 2, 6, 0, ui.RGBA(9, 9, 11, 0.05)).TransformOrigin(1, 0)
++	if p.dark {
++		card.Border(1, p.line)
++	}
++	if b := card.Bounds(); b.W > 0 {
++		a.cardAt = ui.Rect{X: b.X - a.origin.X, Y: b.Y - a.origin.Y, W: b.W, H: b.H}
++	}
++	card.Transition(ui.ElementTransition{Duration: 200 * time.Millisecond, Size: true,
++		Enter: &ui.Motion{Scale: 0.96, Y: -8}, Exit: &ui.Motion{Scale: 0.97, Y: -6}})
++	card.Children(func() {
++		body := ui.Column(c.Key("body-notice-" + n.Code)).Padding(16).Gap(10)
++		body.Transition(ui.ElementTransition{Duration: 180 * time.Millisecond, Enter: &ui.Motion{}})
++		body.Children(func() {
++			ui.Row(c).Gap(10).AlignItems(ui.Start).Children(func() {
++				ui.Text(c, n.Message).FontSize(15).FontWeight(600).Grow(1).Shrink(1)
++				if iconButton(c, p, "close", "关闭").Background(p.well).Clicked() {
++					a.selected = ""
++				}
++			})
++			if n.Rule != "" {
++				ui.Text(c, "在它的规则里加上这一条，局域网里的连接就不经过它：").FontSize(12).TextColor(p.ink2)
++				ui.Text(c, n.Rule).FontSize(12).FontWeight(500).FontFeatures("tnum").Padding(9, 12).Radius(12).Background(p.well).SingleLine()
++			}
++			ui.Row(c).Gap(8).Margin(4, 0, 0, 0).Children(func() {
++				ui.Spacer(c)
++				if ghostButton(c, p, "notice-ok", "知道了").Clicked() {
++					if a.noticesDone == nil {
++						a.noticesDone = map[string]bool{}
++					}
++					a.noticesDone[n.Code], a.selected = true, ""
++				}
++				if n.Rule != "" && primaryButton(c, p, "copy-rule", "复制规则", 34, 14, 13).Clicked() {
++					if a.copyText != nil {
++						a.copyText(n.Rule)
++					}
++					a.notify(c, nil, "已复制，去那个软件里加上就行", nil)
++				}
++			})
++		})
++	})
+ }
+diff -ruN -x .mygo -x build -x *peek_test.go client/demo.go /tmp/deneb-m2/client/demo.go
+--- client/demo.go	2026-11-07 23:19:09
++++ client/demo.go	2026-11-08 10:42:42
+@@ -83,6 +83,9 @@
+ 	n := d.update(func(s *model.Snapshot) *model.Snapshot {
+ 		switch op.Kind {
+ 		case model.OpLANInvite:
++			if op.Person != "" {
++				return s.With(op)
++			}
+ 			res.Link = "https://deneb.example/i/demo-" + string(op.LAN)
+ 			return s
+ 		case model.OpLANCreate:
+@@ -91,12 +94,48 @@
+ 			return n
+ 		case model.OpInviteAccept:
+ 			res.LAN = demoInviteLAN
+-			if s.LAN(demoInviteLAN) != nil {
+-				return s
++			n := s.With(op)
++			if n.LAN(demoInviteLAN) != nil {
++				return n
+ 			}
+-			return withInvitedLAN(s)
++			return withInvitedLAN(n)
+ 		case model.OpInviteDecline:
+-			return s
++			return s.With(op)
++		case model.OpDeviceRenew:
++			// Renewed for the demo's 180 days, asked again two weeks before.
++			d := s.Devices[op.Device]
++			if d == nil || !d.Login.Due(time.Now()) {
++				return s
++			}
++			n := *s
++			n.Devices = maps(s.Devices)
++			nd := *d
++			nd.Login = model.Login{Expires: time.Now().Add(180 * 24 * time.Hour), RenewFrom: time.Now().Add(166 * 24 * time.Hour)}
++			n.Devices[op.Device] = &nd
++			if nd.Online {
++				n.Paths = maps(s.Paths)
++				n.Paths[op.Device] = model.Path{Kind: model.PathDirect, RTT: 4 * time.Millisecond, Since: time.Now()}
++			}
++			return &n
++		case model.OpLANAddRelay:
++			// The LAN's devices that nothing reaches go through 香港.
++			l := s.LAN(op.LAN)
++			if l == nil {
++				return s
++			}
++			n := *s
++			n.Paths = maps(s.Paths)
++			changed := false
++			for _, id := range l.Devices {
++				if s.Paths[id].Kind == model.PathUnreachable {
++					n.Paths[id] = model.Path{Kind: model.PathRelay, Relay: "hk", RTT: 52 * time.Millisecond, Since: time.Now()}
++					changed = true
++				}
++			}
++			if !changed {
++				return s
++			}
++			return &n
+ 		}
+ 		return s.With(op)
+ 	})
+@@ -131,6 +170,23 @@
+ //   - "connect": 阿杰的台式机 is connected to anew: 正在连接… for 2.4 s,
+ //     then direct ("connected"), unless the demo is Manual.
+ //   - "offline": 阿杰的台式机 goes offline, or comes back.
++//
++// And M2's (DESIGN §6.7–§6.8), each played on the sample as it is:
++//
++//   - "pending-device": 阿杰 adds his new 阿杰的树莓派 to 周末联机, which waits
++//     for me to let it in.
++//   - "pending-member": 小林 comes into 周末联机 on Mia's invite, and waits.
++//   - "login-due": 我的游戏主机's login runs out in 12 days.
++//   - "login-expired": 工作室主机's login ran out.
++//   - "others-expired": 阿杰的 NAS's login ran out.
++//   - "unreachable": nothing reaches Mia's MacBook, not even through a relay.
++//   - "twin": Mia adds her new MacBook, named as her old one.
++//   - "stale": my old 我的游戏主机, gone for 40 days, is in 周末联机 too.
++//   - "notice": Clash takes Deneb's connections.
++//   - "invitation": Leo invites me into 桌游夜 by name.
++//   - "using": this computer has used dev-db's database for 2:14:08.
++//   - "waiting": I asked into Leo's 读书会 on a member's invite, and wait
++//     for Leo.
+ func (d *Demo) Simulate(event string) {
+ 	now := time.Now()
+ 	d.update(func(s *model.Snapshot) *model.Snapshot {
+@@ -166,17 +222,125 @@
+ 			n.Devices = maps(s.Devices)
+ 			n.Devices["jdesk"] = &dev
+ 			if dev.Online {
++				dev.LastSeen = time.Time{}
+ 				n.Paths["jdesk"] = model.Path{Kind: model.PathDirect, RTT: 11 * time.Millisecond, Since: now}
+ 			} else {
++				dev.LastSeen = now.Add(-3 * time.Hour)
+ 				n.Paths["jdesk"] = model.Path{Kind: model.PathOffline, Since: now}
+ 			}
+ 		default:
+-			return s
++			return m2Event(s, event, now)
+ 		}
+ 		return &n
+ 	})
+ }
+ 
++// m2Event plays one of M2's outside events on s (see Simulate), or returns s.
++func m2Event(s *model.Snapshot, event string, now time.Time) *model.Snapshot {
++	n := *s
++	n.Devices = maps(s.Devices)
++	n.Paths = maps(s.Paths)
++	n.LANs = slices.Clone(s.LANs)
++	if s.LAN("weekend") == nil {
++		return s // left in the demo's window: the events play on 周末联机
++	}
++	weekend := func() *model.LAN {
++		i := slices.IndexFunc(n.LANs, func(l *model.LAN) bool { return l.ID == "weekend" })
++		l := *n.LANs[i]
++		l.Services = maps(l.Services)
++		n.LANs[i] = &l
++		return &l
++	}
++	device := func(id model.DeviceID) *model.Device {
++		d := *n.Devices[id]
++		n.Devices[id] = &d
++		return &d
++	}
++	switch event {
++	case "pending-device":
++		if _, ok := s.Devices["jpi"]; ok {
++			return s
++		}
++		n.Devices["jpi"] = &model.Device{ID: "jpi", Owner: "jie", Name: "阿杰的树莓派", Kind: "mini", OS: "linux",
++			Addr: "10.67.0.20", FQDN: "pi.jie.deneb.internal", Online: true, Refused: map[model.PersonID]bool{}}
++		n.Paths["jpi"] = model.Path{Kind: model.PathDirect, RTT: 12 * time.Millisecond}
++		l := weekend()
++		l.ApproveDevices = true
++		l.Pending = append(slices.Clone(l.Pending), "jpi")
++		l.Services["jpi"] = []model.Service{{Key: "tcp/22", Kind: "shell", Name: "命令行", Proto: "tcp", Port: 22, Ports: "22", On: true}}
++	case "pending-member":
++		l := weekend()
++		if slices.Contains(l.Members, "lin") || slices.Contains(l.PendingMembers, "lin") {
++			return s
++		}
++		l.ApproveMembers = true
++		l.PendingMembers = append(slices.Clone(l.PendingMembers), "lin")
++	case "login-due":
++		device("game").Login = model.Login{Expires: now.Add(12 * 24 * time.Hour), RenewFrom: now.Add(-2 * 24 * time.Hour)}
++	case "login-expired":
++		d := device("studio")
++		d.Login, d.Online = model.Login{Expires: now.Add(-24 * time.Hour), RenewFrom: now.Add(-15 * 24 * time.Hour), Expired: true}, false
++		n.Paths["studio"] = model.Path{Kind: model.PathOffline, Since: now}
++	case "others-expired":
++		d := device("jnas")
++		d.Login, d.Online = model.Login{Expired: true}, false
++		n.Paths["jnas"] = model.Path{Kind: model.PathOffline, Since: now}
++	case "unreachable":
++		n.Paths["mia"] = model.Path{Kind: model.PathUnreachable, Since: now}
++	case "twin":
++		if _, ok := s.Devices["mia2"]; ok {
++			return s
++		}
++		twin := *s.Devices["mia"]
++		twin.ID, twin.Addr, twin.FQDN = "mia2", "10.67.0.21", "macbook-2.mia.deneb.internal"
++		n.Devices["mia2"] = &twin
++		n.Paths["mia2"] = model.Path{Kind: model.PathDirect, RTT: 10 * time.Millisecond}
++		l := weekend()
++		l.Devices = append(slices.Clone(l.Devices), "mia2")
++		l.Services["mia2"] = []model.Service{{Key: "tcp/3389", Kind: "screen", Name: "远程桌面", Proto: "tcp", Port: 3389, Ports: "3389", On: true}}
++	case "stale":
++		if _, ok := s.Devices["game0"]; ok {
++			return s
++		}
++		old := *s.Devices["game"]
++		old.ID, old.Online, old.LastSeen = "game0", false, now.Add(-40*24*time.Hour)
++		old.Addr, old.FQDN = "10.67.0.22", "console-2.kittors.deneb.internal"
++		n.Devices["game0"] = &old
++		n.Paths["game0"] = model.Path{Kind: model.PathOffline}
++		n.Mine = append(slices.Clone(s.Mine), "game0")
++		l := weekend()
++		l.Devices = append(slices.Clone(l.Devices), "game0")
++		l.Services["game0"] = slices.Clone(old.Catalog)
++	case "notice":
++		if len(s.Notices) > 0 {
++			return s
++		}
++		n.Notices = []model.Notice{{Code: "tun-capture", Short: "Clash 可能挡住连接", Message: "Clash 正在接管网络，局域网里的设备可能连不上",
++			Rule: "IP-CIDR,10.67.0.0/16,DIRECT"}}
++	case "invitation":
++		if len(s.Invitations) > 0 || s.LAN(demoInviteLAN) != nil {
++			return s
++		}
++		n.Invitations = []model.Invitation{{ID: "inv-boardgame", LAN: demoInviteLAN, LANName: "桌游夜",
++			Inviter: *s.People["leo"], Expires: now.Add(7 * 24 * time.Hour)}}
++	case "waiting":
++		if s.LAN("books") != nil {
++			return s
++		}
++		n.LANs = append(n.LANs, &model.LAN{ID: "books", Name: "读书会", Owner: "leo", Members: []model.PersonID{"leo"},
++			Waiting: true, Services: map[model.DeviceID][]model.Service{}})
++	case "using":
++		n.Using = maps(s.Using)
++		if _, ok := n.Using["lindb"]; ok {
++			return s
++		}
++		n.Using["lindb"] = now.Add(-(2*time.Hour + 14*time.Minute + 8*time.Second))
++	default:
++		return s
++	}
++	return &n
++}
++
+ func maps[K comparable, V any](m map[K]V) map[K]V {
+ 	n := make(map[K]V, len(m))
+ 	for k, v := range m {
+@@ -235,6 +399,9 @@
+ 			"jnas":  {files(true), screen(false), web(true)},
+ 		},
+ 		Relays: []model.RelayID{"hk"},
++		// Made in M1: as the server moved them, new members wait, new
++		// devices do not (DESIGN §6.7).
++		ApproveMembers: true,
+ 	}
+ 	work := &model.LAN{
+ 		ID: "work", Name: "工作室", Owner: "me",
+@@ -246,7 +413,8 @@
+ 			"lindb":  {shell(true), web(true)},
+ 			"linci":  {web(true)},
+ 		},
+-		Relays: []model.RelayID{"hk"},
++		Relays:         []model.RelayID{"hk"},
++		ApproveMembers: true,
+ 	}
+ 	direct := func(ms int) model.Path {
+ 		return model.Path{Kind: model.PathDirect, RTT: time.Duration(ms) * time.Millisecond}
+@@ -283,7 +451,9 @@
+ 	}
+ 	n := *s
+ 	l := &model.LAN{ID: id, Name: name, Owner: s.Me, Members: []model.PersonID{s.Me},
+-		Devices: []model.DeviceID{s.Self}, Services: map[model.DeviceID][]model.Service{}}
++		Devices: []model.DeviceID{s.Self}, Services: map[model.DeviceID][]model.Service{},
++		// A new LAN asks me about new devices and members (DESIGN §6.7).
++		ApproveDevices: true, ApproveMembers: true}
+ 	if me := s.Devices[s.Self]; me != nil {
+ 		l.Services[s.Self] = slices.Clone(me.Catalog)
+ 	}
+diff -ruN -x .mygo -x build -x *peek_test.go client/model/model.go /tmp/deneb-m2/client/model/model.go
+--- client/model/model.go	2026-11-08 09:24:49
++++ client/model/model.go	2026-11-08 10:18:37
+@@ -64,6 +64,16 @@
+ 	// Local are the common services this computer listens on, off: what
+ 	// its card offers to open besides those it has opened before.
+ 	Local []Service
++
++	// Invitations are the invites sent to me by name that wait for my
++	// answer: the card shows one as it does a link's (DESIGN §6.7).
++	Invitations []Invitation
++	// Notices are what this computer's engine found that the person should
++	// know, as another program taking Deneb's connections (DESIGN §6.8).
++	Notices []Notice
++	// Using is since when this computer has used a service of each device it
++	// uses one of now, for the "已连接" count (DESIGN §6.7).
++	Using map[DeviceID]time.Time
+ }
+ 
+ // Person is someone in my LANs, me too.
+@@ -89,8 +99,67 @@
+ 	Services map[DeviceID][]Service
+ 	// Relays are the relays the LAN uses, the one it prefers first.
+ 	Relays []RelayID
++
++	// ApproveDevices and ApproveMembers are the owner's two switches: new
++	// devices, new members wait until the owner lets them in (DESIGN §6.7).
++	ApproveDevices, ApproveMembers bool
++	// Waiting is set when I am the one who waits for the owner: the LAN shows
++	// only its name and its owner until they let me in.
++	Waiting bool
++	// Pending are devices that wait for the owner, not in Devices yet: all
++	// of them for the owner, my own for me.
++	Pending []DeviceID
++	// PendingMembers are people who wait for the owner; only the owner sees
++	// them.
++	PendingMembers []PersonID
++	// Invited are people invited by name who have not answered: all of them
++	// for the owner, the ones I invited for a member.
++	Invited []Invited
+ }
+ 
++// Invited is someone asked into a LAN by name, who has not answered yet.
++type Invited struct {
++	Person  PersonID
++	By      PersonID
++	Invite  string // its id: what takes it back
++	Expires time.Time
++}
++
++// Invitation is an invite sent to me by name (DESIGN §6.7).
++type Invitation struct {
++	ID      string
++	LAN     LANID
++	LANName string
++	Inviter Person
++	Expires time.Time
++}
++
++// Notice is something the engine found that the person should know: the
++// sentence to show, and the rule to add to the other program, if any.
++type Notice struct {
++	Code    string
++	Short   string // a few words, for the header's pill: "Clash 可能挡住连接"
++	Message string
++	Rule    string
++}
++
++// Login is when a device's login runs out. Only my own devices tell the
++// dates; another's tells only whether it has run out.
++type Login struct {
++	Expires   time.Time
++	RenewFrom time.Time // from when it asks to be renewed
++	Expired   bool
++}
++
++// Due reports whether the login asks to be renewed at now: it runs out
++// soon, or has.
++func (l Login) Due(now time.Time) bool {
++	return l.Expired || !l.RenewFrom.IsZero() && !now.Before(l.RenewFrom)
++}
++
++// HasPending reports whether dev waits to be let into the LAN.
++func (l *LAN) HasPending(dev DeviceID) bool { return slices.Contains(l.Pending, dev) }
++
+ // Has reports whether dev is in the LAN.
+ func (l *LAN) Has(dev DeviceID) bool { return slices.Contains(l.Devices, dev) }
+ 
+@@ -115,6 +184,10 @@
+ 	Refused map[PersonID]bool
+ 	// RefusesMe is set on another's device whose owner does not let me use it.
+ 	RefusesMe bool
++	// Login is when its login runs out (DESIGN §6.8).
++	Login Login
++	// LastSeen is when the control server last heard from it, while offline.
++	LastSeen time.Time
+ }
+ 
+ // Service is something a device opens to others, in everyday words.
+diff -ruN -x .mygo -x build -x *peek_test.go client/model/op.go /tmp/deneb-m2/client/model/op.go
+--- client/model/op.go	2026-11-07 23:38:42
++++ client/model/op.go	2026-11-08 10:10:04
+@@ -1,6 +1,9 @@
+ package model
+ 
+-import "slices"
++import (
++	"slices"
++	"time"
++)
+ 
+ // OpKind names an operation (implementation.md §2.6.2). The strings are the
+ // control server's.
+@@ -16,6 +19,24 @@
+ 	OpLANRemoveDevice OpKind = "lan.removeDevice" // LAN, Device
+ 	OpServiceSet      OpKind = "service.set"      // LAN, Device, Service, On
+ 	OpDeviceRefuse    OpKind = "device.refuse"    // Device, Person, Refuse
++
++	// M2 (DESIGN §6.7–§6.9). lan.invite also takes a Person, inviting them
++	// by name; invite.accept and invite.decline take an Invitation instead
++	// of a link.
++	OpLANSetApproveDevices OpKind = "lan.setApproveDevices" // LAN, On
++	OpLANSetApproveMembers OpKind = "lan.setApproveMembers" // LAN, On
++	OpDeviceApprove        OpKind = "device.approve"        // LAN, Device
++	OpDeviceReject         OpKind = "device.reject"         // LAN, Device
++	OpMemberApprove        OpKind = "member.approve"        // LAN, Person
++	OpMemberReject         OpKind = "member.reject"         // LAN, Person
++	OpInviteRevoke         OpKind = "invite.revoke"         // Invite (an Invited's id), or LAN and Person
++	OpDeviceRenew          OpKind = "device.renew"          // Device
++	OpDeviceRename         OpKind = "device.rename"         // Device, Name
++	OpDeviceSetKind        OpKind = "device.setKind"        // Device, DevKind
++	// OpLANAddRelay is the reason's "加一个中转站": the LAN's devices that
++	// nothing reaches go through a relay. The demo plays it; the real one
++	// comes with relays in M4.
++	OpLANAddRelay OpKind = "lan.addRelay" // LAN
+ )
+ 
+ // Op is one thing the person asks for: what a drag or a click turns into.
+@@ -32,8 +53,11 @@
+ 	Name    string
+ 	Invite  string // the link, or its token
+ 	Service string // the service's Key
+-	On      bool   // service.set: open it, or close it
++	On      bool   // service.set: open it, or close it; the approve switches
+ 	Refuse  bool   // device.refuse: refuse them, or let them back
++
++	DevKind    string // device.setKind
++	Invitation string // invite.accept, invite.decline: an Invitation's ID
+ }
+ 
+ // Result is what an op that went through answers.
+@@ -70,6 +94,12 @@
+ 		return n
+ 	case OpLANRemoveDevice:
+ 		l := s.LAN(op.LAN)
++		if l != nil && l.HasPending(op.Device) {
++			// Mine, taken back while it waited to be let in.
++			n, nl := s.withLAN(op.LAN)
++			nl.Pending = slices.DeleteFunc(slices.Clone(l.Pending), func(d DeviceID) bool { return d == op.Device })
++			return n
++		}
+ 		if l == nil || !l.Has(op.Device) {
+ 			return s
+ 		}
+@@ -127,6 +157,111 @@
+ 		}
+ 		n, nl := s.withLAN(op.LAN)
+ 		nl.Name = op.Name
++		return n
++	case OpLANSetApproveDevices, OpLANSetApproveMembers:
++		l := s.LAN(op.LAN)
++		if l == nil {
++			return s
++		}
++		devices := op.Kind == OpLANSetApproveDevices
++		if devices && l.ApproveDevices == op.On || !devices && l.ApproveMembers == op.On {
++			return s
++		}
++		n, nl := s.withLAN(op.LAN)
++		if devices {
++			nl.ApproveDevices = op.On
++		} else {
++			nl.ApproveMembers = op.On
++		}
++		return n
++	case OpDeviceApprove, OpDeviceReject:
++		l := s.LAN(op.LAN)
++		if l == nil || !l.HasPending(op.Device) {
++			return s
++		}
++		n, nl := s.withLAN(op.LAN)
++		nl.Pending = slices.DeleteFunc(slices.Clone(l.Pending), func(d DeviceID) bool { return d == op.Device })
++		if op.Kind == OpDeviceApprove {
++			nl.Devices = append(slices.Clone(l.Devices), op.Device)
++			if _, ok := l.Services[op.Device]; !ok {
++				if d := s.Devices[op.Device]; d != nil {
++					nl.Services[op.Device] = slices.Clone(d.Catalog)
++				}
++			}
++		}
++		return n
++	case OpMemberApprove, OpMemberReject:
++		l := s.LAN(op.LAN)
++		if l == nil || !slices.Contains(l.PendingMembers, op.Person) {
++			return s
++		}
++		n, nl := s.withLAN(op.LAN)
++		nl.PendingMembers = slices.DeleteFunc(slices.Clone(l.PendingMembers), func(p PersonID) bool { return p == op.Person })
++		if op.Kind == OpMemberApprove {
++			nl.Members = append(slices.Clone(l.Members), op.Person)
++		}
++		return n
++	case OpLANInvite:
++		// By name: they wait for their answer in the LAN's ball stack. By
++		// link, nothing shows until someone uses it.
++		l := s.LAN(op.LAN)
++		if l == nil || op.Person == "" || slices.Contains(l.Members, op.Person) ||
++			slices.ContainsFunc(l.Invited, func(v Invited) bool { return v.Person == op.Person }) {
++			return s
++		}
++		n, nl := s.withLAN(op.LAN)
++		nl.Invited = append(slices.Clone(l.Invited), Invited{Person: op.Person, By: s.Me})
++		return n
++	case OpInviteRevoke:
++		for _, l := range s.LANs {
++			i := slices.IndexFunc(l.Invited, func(v Invited) bool {
++				return op.Invite != "" && v.Invite == op.Invite || op.Invite == "" && l.ID == op.LAN && v.Person == op.Person
++			})
++			if i < 0 {
++				continue
++			}
++			n, nl := s.withLAN(l.ID)
++			nl.Invited = slices.Delete(slices.Clone(l.Invited), i, i+1)
++			return n
++		}
++		return s
++	case OpInviteAccept, OpInviteDecline:
++		// The LAN an accepted invitation brings comes with the store: only
++		// the invitation goes at once.
++		i := slices.IndexFunc(s.Invitations, func(v Invitation) bool { return op.Invitation != "" && v.ID == op.Invitation })
++		if i < 0 {
++			return s
++		}
++		n := s.clone()
++		n.Invitations = slices.Delete(slices.Clone(s.Invitations), i, i+1)
++		return n
++	case OpDeviceRenew, OpDeviceRename, OpDeviceSetKind:
++		d := s.Devices[op.Device]
++		if d == nil {
++			return s
++		}
++		nd := *d
++		switch op.Kind {
++		case OpDeviceRenew:
++			// The new dates come with the store; until then it no longer asks.
++			if !d.Login.Due(time.Now()) {
++				return s
++			}
++			nd.Login = Login{Expires: d.Login.Expires}
++		case OpDeviceRename:
++			if op.Name == "" || d.Name == op.Name {
++				return s
++			}
++			nd.Name = op.Name
++		case OpDeviceSetKind:
++			if op.DevKind == "" || d.Kind == op.DevKind {
++				return s
++			}
++			nd.Kind = op.DevKind
++		}
++		n := s.clone()
++		n.Devices = cloneMap(s.Devices)
++		n.Devices[op.Device] = &nd
+ 		return n
+ 	}
+ 	return s
+diff -ruN -x .mygo -x build -x *peek_test.go client/model/op_test.go /tmp/deneb-m2/client/model/op_test.go
+--- client/model/op_test.go	2026-11-08 09:24:49
++++ client/model/op_test.go	2026-11-08 10:26:59
+@@ -4,6 +4,7 @@
+ 	"reflect"
+ 	"slices"
+ 	"testing"
++	"time"
+ )
+ 
+ func world() *Snapshot {
+@@ -137,6 +138,86 @@
+ 		c := ColorFor("me", id)
+ 		if c == 0 || c >= NumColors || c != ColorFor("someone", id) {
+ 			t.Errorf("%s gets color %d", id, c)
++		}
++	}
++}
++
++// M2's ops show on a copy as they will be once in effect (DESIGN §6.7–§6.9).
++func TestWithM2(t *testing.T) {
++	s := world()
++	s.People = map[PersonID]*Person{"me": {ID: "me"}, "jie": {ID: "jie"}, "lin": {ID: "lin"}}
++	l := s.LANs[0]
++	l.Pending = []DeviceID{"pi"}
++	l.PendingMembers = []PersonID{"lin"}
++	s.Devices["pi"] = &Device{ID: "pi", Owner: "jie", Catalog: []Service{{Key: "tcp/22", Kind: "shell", On: true}}}
++	s.Invitations = []Invitation{{ID: "inv", LAN: "games", LANName: "桌游夜"}}
++	s.Devices["game"].Login = Login{Expires: time.Now().Add(10 * 24 * time.Hour), RenewFrom: time.Now().Add(-time.Hour)}
++
++	n := s.With(Op{Kind: OpDeviceApprove, LAN: "weekend", Device: "pi"})
++	if nl := n.LAN("weekend"); !nl.Has("pi") || nl.HasPending("pi") || len(nl.Services["pi"]) != 1 {
++		t.Errorf("approved, pi is in %v, waits in %v, opens %v", nl.Devices, nl.Pending, nl.Services["pi"])
++	}
++	n = s.With(Op{Kind: OpDeviceReject, LAN: "weekend", Device: "pi"})
++	if nl := n.LAN("weekend"); nl.Has("pi") || nl.HasPending("pi") {
++		t.Errorf("turned away, pi is in %v, waits in %v", nl.Devices, nl.Pending)
++	}
++	n = s.With(Op{Kind: OpLANRemoveDevice, LAN: "weekend", Device: "pi"})
++	if nl := n.LAN("weekend"); nl.HasPending("pi") {
++		t.Error("taken back while it waited, pi still waits")
++	}
++	n = s.With(Op{Kind: OpMemberApprove, LAN: "weekend", Person: "lin"})
++	if nl := n.LAN("weekend"); !slices.Contains(nl.Members, "lin") || len(nl.PendingMembers) != 0 {
++		t.Errorf("let in, members %v, waiting %v", nl.Members, nl.PendingMembers)
++	}
++	n = s.With(Op{Kind: OpMemberReject, LAN: "weekend", Person: "lin"})
++	if nl := n.LAN("weekend"); slices.Contains(nl.Members, "lin") || len(nl.PendingMembers) != 0 {
++		t.Errorf("turned away, members %v, waiting %v", nl.Members, nl.PendingMembers)
++	}
++	n = s.With(Op{Kind: OpLANInvite, LAN: "weekend", Person: "lin"})
++	if nl := n.LAN("weekend"); len(nl.Invited) != 1 || nl.Invited[0].Person != "lin" || nl.Invited[0].By != "me" {
++		t.Errorf("invited by name: %v", nl.Invited)
++	}
++	if back := n.With(Op{Kind: OpInviteRevoke, LAN: "weekend", Person: "lin"}); len(back.LAN("weekend").Invited) != 0 {
++		t.Error("the invite taken back stays")
++	}
++	if n := s.With(Op{Kind: OpLANInvite, LAN: "weekend", Person: "jie"}); n != s {
++		t.Error("a member was invited again")
++	}
++	if n := s.With(Op{Kind: OpInviteDecline, Invitation: "inv"}); len(n.Invitations) != 0 {
++		t.Error("the invitation declined stays")
++	}
++	if n := s.With(Op{Kind: OpDeviceRenew, Device: "game"}); n.Devices["game"].Login.Due(time.Now()) {
++		t.Error("renewed, the login still asks to be renewed")
++	}
++	if n := s.With(Op{Kind: OpDeviceRename, Device: "game", Name: "客厅的游戏机"}); n.Devices["game"].Name != "客厅的游戏机" {
++		t.Error("not renamed")
++	}
++	if n := s.With(Op{Kind: OpDeviceSetKind, Device: "game", DevKind: "desktop"}); n.Devices["game"].Kind != "desktop" {
++		t.Error("its kind did not change")
++	}
++	n = s.With(Op{Kind: OpLANSetApproveDevices, LAN: "weekend", On: true})
++	if !n.LAN("weekend").ApproveDevices || n.LAN("weekend").ApproveMembers {
++		t.Error("the switches did not change as asked")
++	}
++	if !reflect.DeepEqual(s.LAN("weekend").Pending, []DeviceID{"pi"}) {
++		t.Error("an op changed the snapshot it was laid over")
++	}
++}
++
++// A login asks to be renewed from RenewFrom on, and once it ran out.
++func TestLoginDue(t *testing.T) {
++	now := time.Now()
++	for _, c := range []struct {
++		l   Login
++		due bool
++	}{
++		{Login{}, false},
++		{Login{RenewFrom: now.Add(time.Hour)}, false},
++		{Login{RenewFrom: now.Add(-time.Hour)}, true},
++		{Login{Expired: true}, true},
++	} {
++		if got := c.l.Due(now); got != c.due {
++			t.Errorf("%+v: due %v", c.l, got)
+ 		}
+ 	}
+ }
