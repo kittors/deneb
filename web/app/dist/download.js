@@ -14,10 +14,10 @@ const UI                         = {
 export function icon(k        , size = 18)         {
   return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${UI[k] ?? ''}</svg>`;
 }
-// The Deneb mark: a bright star, a round core and four light spikes
-// (DESIGN §15; the same glyph as the desktop's starGlyph).
+// The Deneb mark: a bright star, four rays with concave sides, the
+// vertical pair the longer (DESIGN §15; the desktop's starGlyph).
 export function star(size = 18, color = 'currentColor')         {
-  return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" aria-hidden="true"><path fill="${color}" d="M12,1.5 C12.29,9.48 14.31,11.69 21.61,12 C14.31,12.31 12.29,14.52 12,22.5 C11.71,14.52 9.69,12.31 2.39,12 C9.69,11.69 11.71,9.48 12,1.5Z"/><circle fill="${color}" cx="12" cy="12" r="4.24"/></svg>`;
+  return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" aria-hidden="true"><path fill="${color}" d="M12,1.5 C12.21,4.07 12.27,6.03 13.3,8.03 C14.03,9.46 15.11,10.54 16.56,11.2 C17.94,11.83 19.09,11.87 20.67,12 C19.09,12.13 17.94,12.17 16.56,12.8 C15.11,13.46 14.03,14.54 13.3,15.97 C12.27,17.97 12.21,19.93 12,22.5 C11.79,19.93 11.73,17.97 10.7,15.97 C9.97,14.54 8.89,13.46 7.44,12.8 C6.06,12.17 4.91,12.13 3.33,12 C4.91,11.87 6.06,11.83 7.44,11.2 C8.89,10.54 9.97,9.46 10.7,8.03 C11.73,6.03 11.79,4.07 12,1.5Z"/></svg>`;
 }
 
 export function esc(s        )         {

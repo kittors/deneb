@@ -1,7 +1,9 @@
 #!/bin/sh
 # build-final.sh: writes final/ (final.py) and renders it: every size drawn
 # from the vector at that size by headless Chrome (ImageMagick's own SVG
-# renderer gets gradients wrong), the 16-32 px ones from the small mark.
+# renderer gets gradients and blurs wrong). Three cuts of the icon: the full
+# one from 48 px, the small one from 22 to 32, and at 16 px one of its own,
+# set on the pixel grid.
 # Then the .icns (iconutil), the .ico (ImageMagick packs the PNGs), and the
 # menu bar images, copied from cmd/deneb/trayicons (DENEB_TRAY_ICONS=1 go
 # test -run TestTrayIcons ./cmd/deneb draws them from the client's glyphs).
@@ -15,13 +17,15 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
 # px <svg> <n> <png>: the SVG drawn at n x n pixels (its root's width and
-# height set to n; the viewBox keeps the drawing).
+# height set to n; the viewBox keeps the drawing), in its light colours
+# whatever this Mac's appearance (the favicon has a dark one).
 cat >"$TMP/size.py" <<'EOF'
 import re, sys
 src, n, dst = sys.argv[1:4]
 s = open(src).read()
 s = re.sub(r'<svg([^>]*?) width="[0-9.]+" height="[0-9.]+"',
            lambda m: '<svg%s width="%s" height="%s"' % (m.group(1), n, n), s, count=1)
+s = re.sub(r"@media \(prefers-color-scheme:dark\)\{[^{}]*\{[^{}]*\}\}", "", s)
 open(dst, "w").write(s)
 EOF
 px() {
@@ -39,17 +43,22 @@ print(*(round(float(re.search(k + r"=\"([0-9.]+)\"", s).group(1))) for k in ("wi
 		--user-data-dir="$PROFILE" --force-device-scale-factor="$1" --default-background-color=00000000 \
 		--window-size="$4,$5" --screenshot="$3" "file://$2" >/dev/null 2>&1
 }
-# icon <dir-svg-stem> <n> <png>: the small mark up to 48 px, the full one above.
+# icon <dir-svg-stem> <n> <png>: 16 px its own, the small cut to 32 px, the
+# full one above.
 icon() {
-	if [ "$2" -le 48 ]; then px "$1-small.svg" "$2" "$3"; else px "$1.svg" "$2" "$3"; fi
+	if [ "$2" -le 16 ]; then px "$1-16.svg" "$2" "$3"
+	elif [ "$2" -le 32 ]; then px "$1-small.svg" "$2" "$3"
+	else px "$1.svg" "$2" "$3"; fi
 }
 
-# macOS: the .iconset, then the .icns. 32 px stays small (16@2x and 32@1x).
+# macOS: the .iconset, then the .icns. 16 px its own, 32 px small (16@2x
+# and 32@1x), 64 px and up full.
 set_dir=$F/macos/AppIcon.iconset
 rm -rf "$set_dir" && mkdir -p "$set_dir"
 for spec in 16:16x16 32:16x16@2x 32:32x32 64:32x32@2x 128:128x128 256:128x128@2x 256:256x256 512:256x256@2x 512:512x512 1024:512x512@2x; do
 	n=${spec%%:*}
-	if [ "$n" -le 32 ]; then px "$F/macos/app-icon-small.svg" "$n" "$set_dir/icon_${spec#*:}.png"; else px "$F/macos/app-icon.svg" "$n" "$set_dir/icon_${spec#*:}.png"; fi
+	if [ "$n" -le 16 ]; then src=app-icon-16; elif [ "$n" -le 32 ]; then src=app-icon-small; else src=app-icon; fi
+	px "$F/macos/$src.svg" "$n" "$set_dir/icon_${spec#*:}.png"
 done
 iconutil -c icns "$set_dir" -o "$F/macos/Deneb.icns"
 cp "$set_dir/icon_512x512@2x.png" "$F/macos/icon-1024.png"
