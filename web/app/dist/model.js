@@ -160,6 +160,9 @@
                  
                     
                  
+                                                                            
+                                                                        
+                    
  
 
                                 
@@ -214,6 +217,7 @@
                                 
                       
                                 
+                          
  
 
                               
@@ -267,6 +271,31 @@
                    
                             
                       
+                                                                          
+                                                    
+                      
+                 
+ 
+
+                              
+                             
+                
+ 
+
+// The deployment's operators' page (M4-13): the public relays as their
+// cards have them, and the join codes not used yet.
+                               
+                      
+                         
+ 
+
+// What the operators' page counts: people and devices on the public relays
+// now (each once), and each public relay's month.
+                                
+                
+                 
+                  
+                       
  
 
                              
@@ -302,6 +331,7 @@
                   
                     
                 
+                   
  
 
                      
@@ -358,6 +388,7 @@ export const Paths = {
   stream: '/api/v1/stream',
   ops: '/api/v1/ops',
   relayUsage: '/api/v1/relay-usage',
+  operatorUsage: '/api/v1/operator/relay-usage',
   invite: '/api/v1/invite',
 }         ;
 

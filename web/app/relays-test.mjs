@@ -1,5 +1,6 @@
-// The relays page on the mock: open cards, turn someone away and back, the
-// install command, a relay coming up.
+// The relays page on the mock (deneb-web -mock): open cards, turn someone
+// away and back, the install command, a relay coming up. M4's share bar
+// and LANs are in m4web-test.mjs, against the development control server.
 import { open, sleep } from '../probe/cdp.mjs';
 const [out, theme = 'light', base = 'http://127.0.0.1:47624'] = process.argv.slice(2);
 const b = await open({ W: 1280, H: 800, scale: 2, dark: theme === 'dark' });
@@ -13,7 +14,7 @@ await b.S('Page.navigate', { url: base + '/login' }); await sleep(600);
 await b.ev(`(async () => { const h = { 'Content-Type': 'application/json' }; await fetch('/api/v1/logout', { method: 'POST', headers: h, body: '{}' }); await fetch('/api/v1/login/email', { method: 'POST', headers: h, body: JSON.stringify({ email: 'kittors@deneb.test' }) }); await fetch('/api/v1/login/code', { method: 'POST', headers: h, body: JSON.stringify({ email: 'kittors@deneb.test', code: '000000' }) }); })()`);
 await b.S('Page.navigate', { url: base + '/relays?theme=' + theme });
 check(await until(`!!document.querySelector('.relays-page .rcell[data-k="r_tokyo"]')`), 'my relay 东京 in its well');
-check(await until(`/\\d+ 个人在用/.test((document.querySelector('.rcell[data-k="r_tokyo"] small') || {}).textContent || '')`), 'its second line: ' + (await text('.rcell[data-k="r_tokyo"] small')));
+check(await until(`/周末联机/.test((document.querySelector('.rcell[data-k="r_tokyo"] .lchips') || {}).textContent || '')`), 'under its name, the LAN that uses it: ' + (await text('.rcell[data-k="r_tokyo"] .lchips')));
 check(!!(await b.ev(`document.querySelector('.rwell.pub .rcell[data-k="r_hk"]')`)), 'the public 香港 in the other well');
 check(!!(await b.ev(`document.querySelector('.rcell[data-k="add"]')`)), '用我自己的服务器 cell');
 check(await b.ev(`[...document.querySelectorAll('.rcell')].every((c) => c.getAttribute('aria-label') && c.tabIndex === 0)`), 'cells named and focusable');
@@ -26,7 +27,7 @@ const who = await b.ev(`document.querySelector('.relays-card .chip').dataset.k`)
 const whoName = await b.ev(`[...document.querySelector('.relays-card .chip').childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join('').trim()`);
 const CH = `.relays-card .chip[data-k="${who}"]`;
 const card = await text('.relays-card');
-check(/在线/.test(card) && /个人 · \d+ 台设备/.test(card) && /MB\/s|KB\/s/.test(card) && /不忙/.test(card) && /周末联机/.test(card) && /GB/.test(card), 'card: now and this month');
+check(/在线/.test(card) && /个人 · \d+ 台设备/.test(card) && /不忙/.test(card) && /周末联机/.test(card) && /GB/.test(card), 'card: now and this month');
 check(!(await b.ev(`!!document.querySelector('.relays-card .chip[data-k="p_kittors"]')`)), 'not myself among who is on it');
 await sleep(400);
 await b.shot(`${out}/r2-card-${theme}.png`);
@@ -35,7 +36,7 @@ const order0 = await b.ev(`[...document.querySelectorAll('.relays-card .chip')].
 await click(CH);
 check(await until(`document.querySelector('${CH}').classList.contains('blocked')`), `kick: ${whoName} greyed`);
 check((await b.ev(`[...document.querySelectorAll('.relays-card .chip')].map((c) => c.dataset.k).join(',')`)) === order0, 'the balls keep their order: ' + order0);
-check(await until(`/已不让${whoName}用东京中转站/.test((document.querySelector('.toast') || {}).textContent || '')`), 'toast with undo: ' + (await text('.toast')));
+check(await until(`/已不让${whoName}用东京/.test((document.querySelector('.toast') || {}).textContent || '')`), 'toast with undo: ' + (await text('.toast')));
 await sleep(500);
 await b.shot(`${out}/r3-kicked-${theme}.png`);
 await click('.toast button');
@@ -67,8 +68,8 @@ const n0 = await b.ev(`document.querySelectorAll('.rwell.mine .rcell').length`);
 await b.ev(`fetch('/api/v1/_mock/relay-up', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then((r) => r.status)`);
 check(await until(`document.querySelectorAll('.rwell.mine .rcell').length === ${n0 + 1} && !!document.querySelector('.rcell[data-k="add"]')`), 'the new relay is in, the add cell back');
 check(await until(`/新加坡/.test((document.querySelector('.relays-card') || {}).textContent || '')`), 'the card is the new relay');
-check(await until(`/新加坡中转站上线了/.test((document.querySelector('.toast') || {}).textContent || '')`), 'toast: 上线了');
-check(/刚上线/.test(await text('.rcell:nth-child(2) small')) || /刚上线/.test(await b.ev(`[...document.querySelectorAll('.rcell small')].map((x) => x.textContent).join(',')`)), 'its cell says 刚上线');
+check(await until(`/新加坡上线了/.test((document.querySelector('.toast') || {}).textContent || '')`), 'toast: 上线了');
+check(/还没进局域网/.test(await b.ev(`[...document.querySelectorAll('.rcell small')].map((x) => x.textContent).join(',')`)), 'its cell: not in a LAN yet');
 await sleep(900);
 const h1 = await b.ev(`document.querySelector('.rwell.mine').getBoundingClientRect().height`);
 check(h1 > h0, `the well grew ${h0} → ${h1}`);

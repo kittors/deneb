@@ -1,11 +1,12 @@
-/* The relays page (DESIGN.md §14.8), from design/demos/web/m3-15-relays.html:
-   two wells as scene 4's console, a relay as the desktop's white glossy
-   ball. Under .relays-page (the wells) and .relays-card (its cards, which
-   live in the window's card layer). */
+/* The relays pages (DESIGN.md §14.8, §14.12), from design/demos/web/
+   webrelays.css: the wells of scene 4's console, a relay as the desktop's
+   white glossy ball; the share bar (M4-11), the LAN chips on a cell and the
+   capsule that goes with the hand (M4-12), the three buttons in the card.
+   Under .relays-page (the wells; the deployment's page too) and
+   .relays-card (its cards, which live in the window's card layer). */
 .relays-page .rwell {
   position: absolute;
   top: 20px;
-  width: 284px;
   box-sizing: border-box;
   border-radius: 20px;
   background: var(--well);
@@ -14,9 +15,15 @@
 }
 .relays-page .rwell.mine {
   left: 28px;
+  width: 400px;
 }
 .relays-page .rwell.pub {
-  left: 328px;
+  left: 448px;
+  width: 172px;
+}
+.relays-page .rwell.ops {
+  left: 28px;
+  width: 592px;
 }
 .relays-page .card-label {
   display: flex;
@@ -28,15 +35,23 @@
 }
 .relays-page .rgrid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  row-gap: 14px;
+  grid-template-columns: repeat(2, 1fr);
+  align-items: start;
+  row-gap: 10px;
+  column-gap: 6px;
+}
+.relays-page .rwell.pub .rgrid {
+  grid-template-columns: 1fr;
+}
+.relays-page .rwell.ops .rgrid {
+  grid-template-columns: repeat(4, 1fr);
 }
 .relays-page .rcell {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  padding: 10px 4px 8px;
+  padding: 10px 6px 10px;
   border-radius: 16px;
   font-size: 13px;
   font-weight: 500;
@@ -44,10 +59,14 @@
   cursor: pointer;
   user-select: none;
   outline: none;
-  transition: background 0.16s ease-out, box-shadow 0.16s ease-out;
+  transition: background 0.16s ease-out, box-shadow 0.16s ease-out, opacity 0.16s ease-out;
 }
 .relays-page .rcell:hover {
   background: var(--well-2);
+}
+/* Something in the hand: the cells it passes over do not light up. */
+.carrying .relays-page .rcell:not(.sel):hover {
+  background: transparent;
 }
 .relays-page .rcell:focus-visible {
   box-shadow: 0 0 0 2px var(--primary);
@@ -56,6 +75,10 @@
   background: var(--bg);
   box-shadow: var(--shadow-sm);
 }
+/* The cell whose relay is in the hand: a faint shadow of itself. */
+.relays-page .rcell.ghost {
+  opacity: 0.35;
+}
 .relays-page .rcell small {
   display: block;
   margin-top: 2px;
@@ -63,14 +86,20 @@
   font-weight: 400;
   color: var(--ink-2);
 }
+.relays-page .rcell small.none {
+  margin-top: 0;
+  line-height: 1.45;
+  color: var(--ink-3);
+}
 .relays-page .rcell.add-cell {
   color: var(--ink-2);
   font-weight: 400;
 }
-:is(.relays-page, .relays-card) .orb {
+:is(.relays-page, .relays-card, .rpill) .orb {
   position: relative;
   width: 44px;
   height: 44px;
+  flex: none;
   border-radius: 50%;
   display: grid;
   place-items: center;
@@ -78,7 +107,7 @@
   background: radial-gradient(circle at 34% 28%, var(--ball-hi) 0%, var(--ball-mid) 52%, var(--ball-lo) 100%);
   box-shadow: inset 0 -1.5px 3px rgba(0, 0, 0, 0.08), 0 6px 14px rgba(9, 9, 11, 0.12), 0 1px 2px rgba(9, 9, 11, 0.1);
 }
-:is(.relays-page, .relays-card) .orb svg {
+:is(.relays-page, .relays-card, .rpill) .orb svg {
   fill: currentColor;
 }
 :is(.relays-page, .relays-card) .orb .on {
@@ -91,6 +120,9 @@
   background: var(--ok);
   box-shadow: 0 0 0 2px var(--well);
   transition: background 0.16s ease-out;
+}
+:is(.relays-page, .relays-card) .orb .on.busy {
+  background: #f59e0b;
 }
 :is(.relays-page, .relays-card) .orb .on.off {
   background: var(--ink-3);
@@ -112,7 +144,7 @@
   inset: 0;
 }
 :is(.relays-page, .relays-card) .orb.wait .ring {
-  animation: relays-breathe 1.6s ease-in-out infinite alternate;
+  animation: relays-breathe 1.2s ease-in-out infinite alternate;
 }
 @keyframes relays-breathe {
   from {
@@ -128,6 +160,174 @@
   line-height: 1.55;
   color: var(--ink-2);
 }
+
+/* ---- The LANs a relay is in: small chips under its name, as the sidebar's rows ---- */
+.relays-page .lchips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
+}
+.relays-page .lchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px 0 6px;
+  border-radius: 999px;
+  background: var(--bg);
+  box-shadow: 0 0 0 1px var(--line);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-2);
+  white-space: nowrap;
+  cursor: grab;
+  transition: opacity 0.16s ease-out;
+}
+.relays-page .lchip.ghost {
+  opacity: 0.3;
+}
+:is(.relays-page, .relays-card, .rpill) .mdots {
+  display: flex;
+  flex: none;
+}
+.relays-page .lchip .mdots {
+  padding-right: 3px;
+}
+:is(.relays-page, .relays-card, .rpill) .mdots .ball {
+  width: 8px;
+  height: 8px;
+  margin-right: -3px;
+  box-shadow: 0 0 0 1.5px var(--bg);
+}
+
+/* ---- What goes with the hand: the relay as a capsule, and what letting go does ---- */
+.rpill {
+  position: absolute;
+  z-index: 40;
+  transform: translate(-50%, -50%) rotate(-2deg);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 14px 0 4px;
+  border-radius: 999px;
+  background: var(--bg);
+  box-shadow: var(--shadow-md), 0 0 0 1px var(--line);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.rpill .orb {
+  width: 32px;
+  height: 32px;
+}
+.rpill.lan {
+  height: 30px;
+  padding: 0 12px 0 10px;
+  gap: 7px;
+  font-size: 12px;
+}
+
+/* ---- The share bar: how many devices go first to which relay ---------------------------- */
+/* Its own block formatting context: the same height clipped or not (it is
+   clipped while it opens). */
+.relays-page .wbar-slot {
+  display: flow-root;
+}
+.relays-page .wbar-wrap {
+  margin: 0 2px 14px;
+}
+.relays-page .wbar {
+  position: relative;
+  height: 38px;
+}
+.relays-page .wseg {
+  position: absolute;
+  top: 0;
+  height: 38px;
+  box-sizing: border-box;
+  border-radius: 12px;
+  background: var(--bg);
+  box-shadow: var(--shadow-sm), 0 0 0 1px var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--ink);
+}
+.relays-page .wseg .pct {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+  font-weight: 400;
+}
+/* A standby relay: dashed, at the bar's end, takes no share. */
+.relays-page .wseg.spare {
+  background: transparent;
+  box-shadow: none;
+  border: 1.5px dashed color-mix(in srgb, var(--ink) 22%, transparent);
+  color: var(--ink-3);
+  font-weight: 400;
+}
+.relays-page .whandle {
+  position: absolute;
+  top: 0;
+  width: 14px;
+  height: 38px;
+  margin-left: -7px;
+  cursor: col-resize;
+  display: grid;
+  place-items: center;
+  touch-action: none;
+}
+.relays-page .whandle i {
+  width: 4px;
+  height: 18px;
+  border-radius: 2px;
+  background: var(--ink-3);
+  opacity: 0.55;
+  transition: background 0.14s ease-out, opacity 0.14s ease-out, height 0.14s ease-out;
+}
+.relays-page .whandle:hover i,
+.relays-page .whandle.held i {
+  background: var(--primary);
+  opacity: 1;
+  height: 24px;
+}
+/* A segment too narrow for its name: the name over it, on hover. */
+.relays-page .wtip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  padding: 4px 9px;
+  border-radius: 8px;
+  background: var(--bg);
+  box-shadow: var(--shadow-md), 0 0 0 1px var(--line);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.14s ease-out;
+}
+.relays-page .wtip.on {
+  opacity: 1;
+}
+.relays-page .wsay {
+  margin: 10px 4px 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink-3);
+}
+
+/* ---- The card ----------------------------------------------------------------- */
 .relays-card .orb-s {
   position: relative;
   flex: none;
@@ -142,6 +342,96 @@
   margin-left: auto;
   font-variant-numeric: tabular-nums;
   color: var(--ink-2);
+}
+.relays-card .seg {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 12px;
+  background: var(--well);
+}
+.relays-card .seg button {
+  flex: 1;
+  height: 30px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background 0.16s ease-out, color 0.16s ease-out, box-shadow 0.16s ease-out;
+}
+.relays-card .seg button:hover {
+  color: var(--ink);
+}
+.relays-card .seg button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.relays-card .seg button.on {
+  background: var(--bg);
+  color: var(--ink);
+  box-shadow: var(--shadow-sm);
+}
+.relays-card .lan-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.relays-card .lan-row .lchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 6px 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+  background: var(--well);
+  white-space: nowrap;
+}
+.relays-card .lan-row .lchip .mdots {
+  padding-right: 3px;
+}
+.relays-card .lan-row .lchip .x {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-left: 1px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.relays-card .lan-row .lchip .x:hover {
+  background: var(--well-2);
+  color: var(--ink);
+}
+.relays-card .lan-row .lchip.add {
+  padding: 0 12px 0 8px;
+  background: transparent;
+  color: var(--ink-3);
+  border: 1.5px dashed color-mix(in srgb, var(--ink) 22%, transparent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.relays-card .lan-row .lchip.add.pick {
+  padding: 0 12px 0 10px;
+  color: var(--ink);
+}
+.relays-card .chip .gb {
+  margin-left: 2px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink-3);
 }
 .relays-card .cmd {
   margin: 2px 0 0;
@@ -168,14 +458,12 @@
   min-width: 84px;
   justify-content: center;
 }
-.relays-card .mdots {
-  display: flex;
-  flex: none;
+.relays-card .rows .mdots {
   width: 18px;
 }
-.relays-card .mdots .ball {
-  width: 10px;
-  height: 10px;
-  margin-right: -4px;
-  box-shadow: 0 0 0 1.5px var(--well);
+/* Myself among who uses it most: there, but no one to turn away. */
+.relays-card .chip:disabled {
+  color: var(--ink);
+  cursor: default;
+  transform: none;
 }

@@ -2,9 +2,7 @@
 // origin (deneb-web passes it on). The session is a cookie the browser
 // keeps; every write is JSON, which the server's cross-site check expects.
 import { Paths } from './model.ts';
-import type {
-  ErrorBody, ErrorCode, InvitePreview, OpArgs, OpResult, OpType, RelayUsage, StreamFrame, UserView, WebLoginResult,
-} from './model.ts';
+import type { ErrorBody, ErrorCode, InvitePreview, OpArgs, OpResult, OpType, RelayUsage, StreamFrame, UserView, WebLoginResult, OperatorUsage } from './model.ts';
 
 // ApiError is an answer the server refused, with its code and its words
 // for people ("已经有了", "6 个位置都用上了").
@@ -70,6 +68,7 @@ export const api = {
   userView: () => call<UserView>('GET', Paths.userView),
   op: (op: OpType, args: OpArgs = {}) => call<OpResult>('POST', Paths.ops, { id: opID(), op, args }),
   relayUsage: () => call<RelayUsage>('GET', Paths.relayUsage),
+  operatorUsage: () => call<OperatorUsage>('GET', Paths.operatorUsage),
   // The mock's stand-ins (deneb-web -mock) for what happens away from the
   // browser: Deneb installed on this computer, a relay set up.
   mock: {

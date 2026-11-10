@@ -43,6 +43,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/cookiejar"
+	"net/netip"
 	"os"
 	"os/signal"
 	"strings"
@@ -146,6 +147,31 @@ var lans = []lanSpec{
 	},
 }
 
+// relaySpec is a relay of the world: kittors's own server, or a public one
+// the deployment runs (kittors is its operator). It registers as the relay
+// program does, with the join code of the install command, and then syncs
+// every few seconds: the devices on it, what they sent this month, and its
+// load. Its name is the place it reports; with none, the server names it
+// by its address.
+type relaySpec struct {
+	key, name, addr string
+	public          bool
+	lans            []string // the LANs that use it (my own)
+	weight          int      // public: the operators' share; 0 keeps it standby
+	on              []string // the devices connected through it
+	cpu             float64
+	gb              float64 // what each device on it sent this month, in GB, at the first sync
+}
+
+var relays = []relaySpec{
+	{key: "office", name: "公司机房", addr: "198.51.100.4", lans: []string{"weekend", "studio"}, on: []string{"kittors.mac", "mia.mac", "jie.desk"}, cpu: 0.12, gb: 4.1},
+	{key: "sh", name: "上海", addr: "198.51.100.17", lans: []string{"weekend"}, on: []string{"kittors.game", "jie.desk"}, cpu: 0.08, gb: 1.6},
+	{key: "fresh", addr: "203.0.113.9", cpu: 0.02},
+	{key: "pub-hk", name: "香港", addr: "203.0.113.55", public: true, weight: 60, on: []string{"lin.laptop", "mia.mac", "kittors.studio", "jie.pi", "kittors.gpu"}, cpu: 0.62, gb: 9.5},
+	{key: "pub-tokyo", name: "东京", addr: "203.0.113.66", public: true, weight: 30, on: []string{"jie.desk", "kittors.db", "mia.mac"}, cpu: 0.21, gb: 5.2},
+	{key: "pub-fra", name: "法兰克福", addr: "203.0.113.20", public: true, weight: 10, on: []string{"kittors.print", "lin.laptop"}, cpu: 0.09, gb: 1.4},
+}
+
 // shares are device → person, by the device's owner.
 var shares = [][2]string{
 	{"kittors.build", "lin"}, {"kittors.print", "lin"}, {"kittors.gpu", "jie"}, {"kittors.test", "jie"}, {"kittors.files", "mia"},
@@ -221,6 +247,7 @@ type device struct {
 	cl      *controlclient.Client
 	id      proto.DeviceID
 	machine proto.MachinePrivate
+	node    proto.NodePublic
 	mu      sync.Mutex
 	cancel  context.CancelFunc
 }
@@ -236,9 +263,11 @@ func (d *device) login(ctx context.Context, owner *person) error {
 		return err
 	}
 	d.cl = cl
-	var nk proto.NodePublic
+	if d.node == (proto.NodePublic{}) {
+		rand.Read(d.node[:])
+	}
+	nk := d.node
 	var dk proto.DiscoPublic
-	rand.Read(nk[:])
 	rand.Read(dk[:])
 	st, err := cl.Login(ctx, proto.LoginRequest{NodeKey: nk, DiscoKey: dk, Hostname: d.spec.host, OS: proto.OS(d.spec.os), DisplayName: d.spec.display, Kind: proto.DeviceKind(d.spec.kind), EngineVersion: "devworld"})
 	if err != nil {
@@ -291,6 +320,115 @@ func (d *device) stop() {
 	}
 }
 
+// ---- Relays: as the relay program, without carrying anything ------------------------------
+
+type relay struct {
+	spec   relaySpec
+	id     proto.RelayID
+	secret string
+	w      *world
+	start  time.Time
+	mu     sync.Mutex
+	denied map[proto.NodePublic]time.Time // turned away: off it for a while, then tried again
+	synced bool
+}
+
+// register uses a join code as the install command would.
+func (r *relay) register(code string) error {
+	_, _, token, err := proto.ParseRelayJoinCode(code)
+	if err != nil {
+		return err
+	}
+	var pin [32]byte
+	rand.Read(pin[:])
+	req := proto.RelayRegisterRequest{Token: token, RelayInfo: r.info("sha256:" + hex.EncodeToString(pin[:]))}
+	var res proto.RelayRegisterResult
+	if err := relayCall(proto.PathRelayRegister, "", req, &res); err != nil {
+		return fmt.Errorf("%s: register: %w", r.spec.key, err)
+	}
+	r.id, r.secret = res.Relay, res.Secret
+	return nil
+}
+
+func (r *relay) info(pin string) proto.RelayInfo {
+	in := proto.RelayInfo{IPv4: netip.MustParseAddr(r.spec.addr), DERPPort: 47445, STUNPort: 47478, Pin: pin, Version: "devworld"}
+	if r.spec.name != "" {
+		in.Region = "name:" + r.spec.name
+	}
+	return in
+}
+
+func relayCall(path, secret string, body, out any) error {
+	b, _ := json.Marshal(body)
+	req, _ := http.NewRequest("POST", *controlURL+path, bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	if secret != "" {
+		req.Header.Set("Authorization", "Bearer "+secret)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("%d %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	if out != nil {
+		return json.Unmarshal(raw, out)
+	}
+	return nil
+}
+
+// run syncs every 3 seconds: the devices on it that are online and not
+// turned away; at the first sync, what they sent this month; then a
+// trickle; and its load, about steady.
+func (r *relay) run() {
+	if r.start.IsZero() {
+		r.start = time.Now().Add(-time.Duration(len(r.spec.key)) * 24 * time.Hour)
+	}
+	for {
+		r.sync()
+		time.Sleep(3 * time.Second)
+	}
+}
+
+func (r *relay) sync() {
+	r.mu.Lock()
+	var req proto.RelaySyncRequest
+	req.Connected = []proto.NodePublic{}
+	now := time.Now()
+	for _, k := range r.spec.on {
+		d := r.w.devices[k]
+		if d == nil || d.cancel == nil {
+			continue // offline
+		}
+		if t, ok := r.denied[d.node]; ok && now.Sub(t) < 20*time.Second {
+			continue
+		}
+		req.Connected = append(req.Connected, d.node)
+		sent := int64(40 << 10)
+		if !r.synced {
+			sent = int64(r.spec.gb * 1e9 / float64(len(req.Connected)))
+		}
+		req.Usage = append(req.Usage, proto.RelayClientUsage{Node: d.node, Sent: sent, Received: sent / 3})
+	}
+	n := len(req.Connected)
+	req.Health = &proto.RelayHealth{Connections: n * 2, BytesPerSec: int64(n) * 380_000, CPU: r.spec.cpu, Memory: 48 << 20, MemoryLimit: 512 << 20, Uptime: int64(now.Sub(r.start).Seconds())}
+	r.mu.Unlock()
+	var res proto.RelaySyncResult
+	if err := relayCall(proto.PathRelaySync, r.secret, req, &res); err != nil {
+		log.Printf("relay %s: sync: %v", r.spec.key, err)
+		return
+	}
+	r.mu.Lock()
+	r.synced = true
+	for _, nk := range res.Deny {
+		r.denied[nk] = now
+	}
+	r.mu.Unlock()
+}
+
 // ---- Building it ------------------------------------------------------------------
 
 var (
@@ -306,16 +444,25 @@ type saved struct {
 	Devices map[string]struct {
 		ID      proto.DeviceID `json:"id"`
 		Machine string         `json:"machine"`
+		Node    string         `json:"node"`
 	} `json:"devices"`
+	Relays  map[string]savedRelay  `json:"relays"`
 	LANs    map[string]proto.LANID `json:"lans"`
 	Invites map[string]string      `json:"invites"`
+}
+
+type savedRelay struct {
+	ID     proto.RelayID `json:"id"`
+	Secret string        `json:"secret"`
 }
 
 type world struct {
 	people  map[string]*person
 	devices map[string]*device
+	relays  map[string]*relay
 	lans    map[string]proto.LANID
 	invites map[string]string // lan key → an unused invite link by its owner (the join tests' Leo)
+	relayMu sync.Mutex        // relays: /install adds to it while /ids reads it
 }
 
 func main() {
@@ -452,6 +599,30 @@ func build() (*world, error) {
 			d.stop()
 		}
 	}
+	// Relays: kittors's own, then the public ones he runs as the
+	// deployment's operator (deneb-control operators -add, before this).
+	k := w.people["kittors"]
+	w.relays = map[string]*relay{}
+	for _, rs := range relays {
+		args := map[string]any{}
+		if rs.public {
+			args["public"] = true
+			args["name"] = rs.name
+		}
+		res := must(k.op("relay.join", args))
+		r := &relay{spec: rs, w: w, denied: map[proto.NodePublic]time.Time{}}
+		if err := r.register(res.Result.RelayJoin.Code); err != nil {
+			return nil, err
+		}
+		for _, l := range rs.lans {
+			must(k.op("relay.add", map[string]any{"relay": r.id, "lan": w.lans[l]}))
+		}
+		if rs.weight > 0 {
+			must(k.op("relay.setWeight", map[string]any{"relay": r.id, "weight": rs.weight}))
+		}
+		w.relays[rs.key] = r
+		go r.run()
+	}
 	return w, nil
 }
 
@@ -460,12 +631,18 @@ func (w *world) save(path string) error {
 	s.Devices = map[string]struct {
 		ID      proto.DeviceID `json:"id"`
 		Machine string         `json:"machine"`
+		Node    string         `json:"node"`
 	}{}
 	for k, d := range w.devices {
 		s.Devices[k] = struct {
 			ID      proto.DeviceID `json:"id"`
 			Machine string         `json:"machine"`
-		}{d.id, hex.EncodeToString(d.machine[:])}
+			Node    string         `json:"node"`
+		}{d.id, hex.EncodeToString(d.machine[:]), hex.EncodeToString(d.node[:])}
+	}
+	s.Relays = map[string]savedRelay{}
+	for k, r := range w.relays {
+		s.Relays[k] = savedRelay{r.id, r.secret}
 	}
 	s.LANs, s.Invites = w.lans, w.invites
 	b, _ := json.MarshalIndent(s, "", "  ")
@@ -504,6 +681,9 @@ func takeUp() (*world, error) {
 			return nil, fmt.Errorf("%s: bad machine key", ds.key)
 		}
 		copy(d.machine[:], k)
+		if nk, err := hex.DecodeString(sd.Node); err == nil && len(nk) == len(d.node) {
+			copy(d.node[:], nk)
+		}
 		if err := d.login(ctx, w.people[ds.owner]); err != nil {
 			return nil, err
 		}
@@ -517,6 +697,17 @@ func takeUp() (*world, error) {
 			time.AfterFunc(1500*time.Millisecond, d.stop)
 		}
 		w.devices[ds.key] = d
+	}
+	w.relays = map[string]*relay{}
+	for _, rs := range relays {
+		sr, ok := s.Relays[rs.key]
+		if !ok {
+			continue
+		}
+		// Its month is in the data put back already: only the trickle now.
+		r := &relay{spec: rs, w: w, id: sr.ID, secret: sr.Secret, denied: map[proto.NodePublic]time.Time{}, synced: true}
+		w.relays[rs.key] = r
+		go r.run()
 	}
 	return w, nil
 }
@@ -535,7 +726,13 @@ func (w *world) ids() map[string]any {
 	for k, id := range w.lans {
 		ls[k] = string(id)
 	}
-	out["devices"], out["people"], out["lans"], out["invites"] = devs, ppl, ls, w.invites
+	rs := map[string]string{}
+	w.relayMu.Lock()
+	for k, r := range w.relays {
+		rs[k] = string(r.id)
+	}
+	w.relayMu.Unlock()
+	out["devices"], out["people"], out["lans"], out["invites"], out["relays"] = devs, ppl, ls, w.invites, rs
 	return out
 }
 
@@ -558,6 +755,10 @@ func (w *world) resolve(as *person, args map[string]any) error {
 		case "lan":
 			if id, ok := w.lans[s]; ok {
 				args[k] = string(id)
+			}
+		case "relay":
+			if r := w.relays[s]; r != nil {
+				args[k] = string(r.id)
 			}
 		case "share":
 			dk, pk, ok := strings.Cut(s, ">")
@@ -632,6 +833,41 @@ func (w *world) handler() http.Handler {
 		log.Printf("%s %s %v", req.As, req.Op, req.Args)
 		rw.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(rw).Encode(res)
+	})
+	// POST /install runs an install command as the server it is shown for
+	// would (the web's "用我自己的服务器", "加一台公共中转站"): the join code
+	// in it registers a new relay, here, which syncs from then on, with no
+	// one on it yet. Body: {"command": "...", "name": "新加坡", "addr":
+	// "203.0.113.7"}; no name: it has only its address, as a server whose
+	// place is not known.
+	m.HandleFunc("POST /install", func(rw http.ResponseWriter, r *http.Request) {
+		var req struct{ Command, Name, Addr string }
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(rw, err.Error(), 400)
+			return
+		}
+		code := ""
+		for _, f := range strings.Fields(req.Command) {
+			if strings.HasPrefix(f, proto.RelayJoinPrefix) {
+				code = f
+			}
+		}
+		if _, err := netip.ParseAddr(req.Addr); err != nil || code == "" {
+			http.Error(rw, "a command with a join code, and an address", 400)
+			return
+		}
+		rl := &relay{spec: relaySpec{key: "installed-" + req.Addr, name: req.Name, addr: req.Addr, cpu: 0.03}, w: w, denied: map[proto.NodePublic]time.Time{}, start: time.Now()}
+		if err := rl.register(code); err != nil {
+			http.Error(rw, err.Error(), 409)
+			return
+		}
+		w.relayMu.Lock()
+		w.relays[rl.spec.key] = rl
+		w.relayMu.Unlock()
+		go rl.run()
+		log.Printf("installed %s (%s) as %s", req.Addr, req.Name, rl.id)
+		rw.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(rw).Encode(map[string]string{"relay": string(rl.id)})
 	})
 	m.HandleFunc("POST /device/{key}/{state}", func(rw http.ResponseWriter, r *http.Request) {
 		d := w.devices[r.PathValue("key")]

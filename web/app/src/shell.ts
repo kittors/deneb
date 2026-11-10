@@ -28,6 +28,8 @@ const MORE: Record<string, string> = {
   online: '<circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/><path d="M7.2 7.2a6.8 6.8 0 0 0 0 9.6M16.8 7.2a6.8 6.8 0 0 1 0 9.6"/>',
   relayLine: '<path d="M3 12h18M7 8l-4 4 4 4M17 8l4 4-4 4"/>',
   share: '<rect x="3.5" y="6.5" width="10" height="10" rx="2.5"/><path d="M15.5 11.5h5M18 9l2.5 2.5L18 14"/>',
+  // 运营 (the deployment's page): a pulse, the public relays' load.
+  ops: '<path d="M3.5 12.5h4l2.2-5.5 4.3 11 2.3-5.5h4.2"/>',
 };
 if (!G.__web) {
   const ui0 = G.ui;
@@ -192,10 +194,11 @@ export function clear(): void {
 }
 
 // The sidebar, as the desktop's (DESIGN.md §7, §14.3): my LANs; 我的设备,
-// 共享给我 and the relays; then the console of each LAN I own. What the
-// web does not have yet (全部, 新建局域网) is left out rather than shown
-// dead. A LAN I wait to be let into is a grey row, "等同意" (§6.7); one of
-// mine with someone or something waiting for me has a small blue dot.
+// 共享给我 and the relays; then the console of each LAN I own; last, for
+// the deployment's operators, 运营. What the web does not have yet (全部,
+// 新建局域网) is left out rather than shown dead. A LAN I wait to be let
+// into is a grey row, "等同意" (§6.7); one of mine with someone or something
+// waiting for me has a small blue dot.
 function side(v: UserView, sel: string, ctx: Ctx): void {
   const P = App.PEOPLE;
   const row = (id: string, label: string, lead: string, tail = '', cls = '') => `<div class="nav ${id === sel ? 'on' : ''} ${cls}" data-id="${esc(id)}" role="link" tabindex="0">${lead}<span class="nav-label">${esc(spaced(label))}</span>${tail}</div>`;
@@ -213,6 +216,8 @@ function side(v: UserView, sel: string, ctx: Ctx): void {
   html += `<div class="group">设备</div>` + row('mine', '我的设备', G.ui('home', 18), count(v.devices.filter((d) => d.owner === v.me && !d.publicLAN).length));
   html += row('shared', '共享给我', G.ui('inbox', 18), count(shared)) + row('relays', '中转站', G.ui('relayLine', 18));
   for (const l of listedLANs(v).filter((x) => x.owner === v.me)) html += `<div class="gap"></div><div class="group">${esc(spaced('管理' + l.name))}</div>` + row('share:' + l.id, '设备共享', G.ui('share', 18));
+  // The deployment's operators: its public relays, at the foot (§14.12 M4-13).
+  if (v.operator) html += `<div class="gap"></div><div class="group">部署</div>` + row('ops', '运营', G.ui('ops', 18));
   const list = app.win.querySelector('.side-list');
   list.innerHTML = html;
   for (const nav of list.querySelectorAll('.nav[data-id]')) {

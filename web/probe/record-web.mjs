@@ -136,6 +136,8 @@ if (login && isURL) {
   await first;
   await evaluate(`(async () => { const h = { 'Content-Type': 'application/json' }; await fetch('/api/v1/login/email', { method: 'POST', headers: h, body: JSON.stringify({ email: ${JSON.stringify(email)} }) }); const r = await fetch('/api/v1/login/code', { method: 'POST', headers: h, body: JSON.stringify({ email: ${JSON.stringify(email)}, code: ${JSON.stringify(code)} }) }); return r.status; })()`);
 }
+// (web) "复制" may write to the clipboard, as it does for a person.
+if (isURL) await cdp.send('Browser.grantPermissions', { permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'], origin: new URL(scene).origin }).catch(() => {});
 const loaded = cdp.once('Page.loadEventFired');
 await S('Page.navigate', { url });
 await loaded;
@@ -168,6 +170,10 @@ for (const a of plan.actions) {
   if (a.up) steps.push({ at, run: () => press('mouseReleased') });
   if (a.key) steps.push({ at, run: () => key(a.key) });
   if (a.js) steps.push({ at, run: () => evaluate(a.js) });
+  // (web) post: a request from here, not from the page (whose CSP keeps it
+  // to its own server): to a dev tool such as web/probe/devworld, with a
+  // body the page makes (a JS expression evaluated in it).
+  if (a.post) steps.push({ at, run: async () => { const r = await fetch(a.post.url, { method: 'POST', body: await evaluate(a.post.body) }); if (!r.ok) console.error('post', a.post.url, r.status, await r.text()); } });
   if (a.shot) steps.push({ at, shot: a.shot, clean: !!a.clean });
 }
 steps.sort((p, q) => p.at - q.at);

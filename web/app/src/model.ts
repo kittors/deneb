@@ -160,6 +160,9 @@ export interface RelayView {
   weight: number;
   capacity?: number;
   full?: boolean;
+  // default: a public relay the deployment's seed lists; every LAN tries it
+  // first, so it is in no share bar, and only kicks are the operators'.
+  default?: boolean;
 }
 
 export interface RelayJoinView {
@@ -214,6 +217,7 @@ export interface UserView {
   invitations?: InvitePreview[];
   features?: string[];
   sharedWithMe?: SharedDevice[];
+  operator?: OperatorView;
 }
 
 export interface StreamFrame {
@@ -267,6 +271,31 @@ export interface RelayMonth {
   load?: RelayLoad;
   connected?: RelayClient[];
   kicks?: RelayKick[];
+  // The operators' page: who used a public relay most this month (five at
+  // most, most first), and how many used it at all.
+  top?: PersonBytes[];
+  users?: number;
+}
+
+export interface PersonBytes {
+  person: Person; // no email
+  bytes: number;
+}
+
+// The deployment's operators' page (M4-13): the public relays as their
+// cards have them, and the join codes not used yet.
+export interface OperatorView {
+  relays: RelayView[];
+  joins: RelayJoinView[];
+}
+
+// What the operators' page counts: people and devices on the public relays
+// now (each once), and each public relay's month.
+export interface OperatorUsage {
+  month: string;
+  people: number;
+  devices: number;
+  relays: RelayMonth[];
 }
 
 export interface RelayUsage {
@@ -302,6 +331,7 @@ export interface OpArgs {
   weight?: number;
   capacity?: number;
   kick?: string;
+  public?: boolean;
 }
 
 export interface Op {
@@ -358,6 +388,7 @@ export const Paths = {
   stream: '/api/v1/stream',
   ops: '/api/v1/ops',
   relayUsage: '/api/v1/relay-usage',
+  operatorUsage: '/api/v1/operator/relay-usage',
   invite: '/api/v1/invite',
 } as const;
 
