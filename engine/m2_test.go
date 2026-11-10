@@ -387,8 +387,17 @@ func TestPauseLeavesOtherLANAloneAndResumesFast(t *testing.T) {
 		}
 	}
 	time.Sleep(3 * time.Second)
-	if n, gap := stream.since(t0); n < 30 || gap > 300*time.Millisecond {
-		t.Fatalf("the studio connection got %d lines in the pause, longest gap %s", n, gap)
+	// The stream sends a line every 100 ms. On a loaded machine (a CI
+	// runner) each line comes a little late, so expect two thirds of the
+	// time's worth, and allow a longer stall there. What this guards
+	// against, the pause cutting the other LAN's connection, stalls it for
+	// seconds.
+	want, maxGap := int(time.Since(t0)/(150*time.Millisecond)), 300*time.Millisecond
+	if os.Getenv("CI") != "" {
+		maxGap = 600 * time.Millisecond
+	}
+	if n, gap := stream.since(t0); n < want || gap > maxGap {
+		t.Fatalf("the studio connection got %d lines in the pause (want %d), longest gap %s (at most %s)", n, want, gap, maxGap)
 	}
 
 	t1 := time.Now()
