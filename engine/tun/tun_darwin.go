@@ -22,7 +22,7 @@ func Open(cfg Config, logf func(string, ...any)) (*Kernel, error) {
 		logf = log.Printf
 	}
 	if os.Geteuid() != 0 {
-		return nil, fmt.Errorf("kernel mode needs root (it creates an interface and a route)")
+		return nil, fmt.Errorf("%w: it creates an interface and a route", ErrNoPermission)
 	}
 	if err := Preflight(cfg.Block, routeFor); err != nil {
 		return nil, err
@@ -34,7 +34,7 @@ func Open(cfg Config, logf func(string, ...any)) (*Kernel, error) {
 	name, _ := dev.Name()
 	u := &Undo{Interface: name, Route: cfg.Block}
 	if cfg.DNS.IsValid() && cfg.Domain != "" {
-		u.ResolverFile = filepath.Join("/etc/resolver", cfg.Domain)
+		u.ResolverFile = filepath.Join(resolverDir, cfg.Domain)
 		u.ResolverBody = ResolverBody(cfg.DNS)
 	}
 	// Write the record before changing anything, so a crash between two
@@ -72,6 +72,31 @@ func Open(cfg Config, logf func(string, ...any)) (*Kernel, error) {
 	return k, nil
 }
 
+type platform struct{}
+
+// SetPeers changes nothing on macOS: one route covers the whole block.
+func (k *Kernel) SetPeers([]netip.Addr, func(string, ...any)) {}
+
+// Plan says, changing nothing, what Open would do here with cfg, after the
+// same checks; an error is what would stop it.
+func Plan(cfg Config, peers []netip.Addr) ([]string, error) {
+	if err := Preflight(cfg.Block, routeFor); err != nil {
+		return nil, err
+	}
+	var steps []string
+	if os.Geteuid() != 0 {
+		steps = append(steps, "不是 root：要用 sudo 运行，否则建不了网卡")
+	}
+	steps = append(steps,
+		fmt.Sprintf("建一张 utun 网卡，地址 %s", cfg.Self),
+		fmt.Sprintf("加一条路由：%s 经这张网卡（%d 个对端都在里面）", cfg.Block, len(peers)))
+	if cfg.DNS.IsValid() && cfg.Domain != "" {
+		steps = append(steps, fmt.Sprintf("写 /etc/resolver/%s：只有 %s 下的名字问 %s", cfg.Domain, cfg.Domain, cfg.DNS))
+	}
+	steps = append(steps, "不改默认路由、别的 DNS、防火墙和转发设置；停下时全部撤掉")
+	return steps, nil
+}
+
 // Close removes the resolver file and the route, then the interface.
 func (k *Kernel) Close(logf func(string, ...any)) {
 	if logf == nil {
@@ -104,7 +129,7 @@ func Preflight(block netip.Prefix, lookup func(netip.Addr) (int, string, error))
 	addrs, _ := net.InterfaceAddrs()
 	for _, a := range addrs {
 		if p, err := netip.ParsePrefix(a.String()); err == nil && block.Contains(p.Addr()) {
-			return fmt.Errorf("an interface already has %s inside %s", p.Addr(), block)
+			return fmt.Errorf("%w: an interface already has %s inside %s", ErrConflict, p.Addr(), block)
 		}
 	}
 	for _, probe := range []netip.Addr{block.Masked().Addr().Next(), lastAddr(block)} {
@@ -113,7 +138,7 @@ func Preflight(block netip.Prefix, lookup func(netip.Addr) (int, string, error))
 			return err
 		}
 		if bits >= block.Bits() {
-			return fmt.Errorf("an existing /%d route via %s already covers %s", bits, iface, probe)
+			return fmt.Errorf("%w: an existing /%d route via %s already covers %s", ErrConflict, bits, iface, probe)
 		}
 	}
 	return nil

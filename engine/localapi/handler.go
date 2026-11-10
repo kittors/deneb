@@ -7,10 +7,13 @@
 package localapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -34,10 +37,22 @@ type Backend interface {
 	Services(ctx context.Context) ([]apitype.LocalService, error)
 	Open(ctx context.Context, req apitype.OpenRequest) (*apitype.OpenResult, error)
 	UserView(ctx context.Context) (json.RawMessage, error)
+	// RelayUsage is the control server's proto.RelayUsage, passed on (M4).
+	RelayUsage(ctx context.Context) (json.RawMessage, error)
 	// PreviewInvite asks the control server what an invite link is for,
 	// before the person accepts it: proto.InvitePreview, passed on as is.
 	PreviewInvite(ctx context.Context, invite string) (json.RawMessage, error)
 	EngineVersion() string
+	// UpdateEngine replaces the engine with the executable at path, where
+	// it is a system service that can (M6).
+	UpdateEngine(ctx context.Context, path string) apitype.UpdateResult
+	// Diagnostics writes a zip for a bug report: state, paths, counters
+	// and the log; no keys, no traffic (M6 i7).
+	Diagnostics(ctx context.Context, w io.Writer) error
+	// Shutdown stops a user-space engine: the window stops its own when
+	// the system service takes over (M6). A system service is stopped by
+	// the system, not here.
+	Shutdown(ctx context.Context) error
 }
 
 // Handler returns the local API for b. extra, if not nil, serves paths the
@@ -45,7 +60,7 @@ type Backend interface {
 func Handler(b Backend, extra http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/version", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, apitype.VersionInfo{API: apitype.APIVersion, Engine: b.EngineVersion()})
+		writeJSON(w, apitype.VersionInfo{API: apitype.APIVersion, Engine: b.EngineVersion(), PID: os.Getpid()})
 	})
 	mux.HandleFunc("GET /v1/state", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, b.State())
@@ -130,6 +145,18 @@ func Handler(b Backend, extra http.Handler) http.Handler {
 		}
 		writeJSON(w, res)
 	})
+	mux.HandleFunc("GET /v1/relay-usage", func(w http.ResponseWriter, r *http.Request) {
+		raw, err := b.RelayUsage(r.Context())
+		if err != nil {
+			WriteError(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if len(raw) == 0 {
+			raw = json.RawMessage("null")
+		}
+		w.Write(raw)
+	})
 	mux.HandleFunc("GET /v1/userview", func(w http.ResponseWriter, r *http.Request) {
 		raw, err := b.UserView(r.Context())
 		if err != nil {
@@ -158,6 +185,30 @@ func Handler(b Backend, extra http.Handler) http.Handler {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(raw)
+	})
+	mux.HandleFunc("POST /v1/shutdown", func(w http.ResponseWriter, r *http.Request) {
+		if err := b.Shutdown(r.Context()); err != nil {
+			WriteError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("POST /v1/engine/update", func(w http.ResponseWriter, r *http.Request) {
+		var req apitype.UpdateRequest
+		if !readJSON(w, r, &req) {
+			return
+		}
+		writeJSON(w, b.UpdateEngine(r.Context(), req.Path))
+	})
+	mux.HandleFunc("GET /v1/diagnostics", func(w http.ResponseWriter, r *http.Request) {
+		var buf bytes.Buffer
+		if err := b.Diagnostics(r.Context(), &buf); err != nil {
+			WriteError(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/zip")
+		w.Header().Set("Content-Disposition", `attachment; filename="deneb-diagnostics.zip"`)
+		w.Write(buf.Bytes())
 	})
 	if extra != nil {
 		mux.Handle("/", extra)
@@ -201,12 +252,18 @@ func serveWatch(w http.ResponseWriter, r *http.Request, b Backend) {
 	}
 }
 
-// eventQueue keeps at most one pending State and one pending path per peer.
+// eventQueue keeps at most one pending State, one pending path per peer
+// and one pending usage (each newer one says it all), and every cut in
+// order (each is a moment the red light runs). Before 11-08 evening it
+// kept only States and paths, and usage and cut events never reached a
+// watcher (the client line found it: the "已连接" timer never started).
 type eventQueue struct {
 	mu    sync.Mutex
 	state *apitype.State
 	paths map[apitype.DeviceID]apitype.PeerPath
 	order []apitype.DeviceID
+	usage *apitype.Event
+	cuts  []apitype.Event
 	wake  chan struct{}
 }
 
@@ -230,6 +287,12 @@ func (q *eventQueue) push(ev apitype.Event) {
 				q.order = append(q.order, p.DeviceID)
 			}
 			q.paths[p.DeviceID] = p
+		}
+	case apitype.EventUsage:
+		q.usage = &ev
+	case apitype.EventCut:
+		if len(q.cuts) < 64 { // a watcher that stopped reading loses the oldest moments, not memory
+			q.cuts = append(q.cuts, ev)
 		}
 	}
 	q.mu.Unlock()
@@ -262,6 +325,12 @@ func (q *eventQueue) drain() []apitype.Event {
 		q.paths = map[apitype.DeviceID]apitype.PeerPath{}
 		q.order = q.order[:0]
 	}
+	if q.usage != nil {
+		out = append(out, *q.usage)
+		q.usage = nil
+	}
+	out = append(out, q.cuts...)
+	q.cuts = nil
 	return out
 }
 

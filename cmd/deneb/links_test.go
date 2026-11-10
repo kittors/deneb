@@ -46,7 +46,9 @@ func TestDropIntoTrayLeaves(t *testing.T) {
 	game := a.device("game")
 	rest := game.at()
 	from := ui.Point{X: sidebarWidth + rest.X, Y: headerHeight + rest.Y}
-	drag(tt, from, ui.Point{X: from.X + 150, Y: 740 - 40})
+	// Aim where the tray is, as a hand would: centered under the canvas.
+	tray := a.trayZone(a.cw, a.ch)
+	drag(tt, from, ui.Point{X: a.origin.X + tray.X + tray.W/2, Y: a.origin.Y + tray.Y + tray.H/2})
 	tt.Advance(1500 * time.Millisecond)
 	if a.device("game") != nil || !slices.Contains(a.tray, game) {
 		t.Fatalf("游戏主机 did not go into the tray: in the LAN %v, tray holds %d", a.device("game") != nil, len(a.tray))

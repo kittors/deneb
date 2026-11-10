@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kittors/deneb/engine/localapi/apitype"
@@ -19,11 +20,14 @@ import (
 // msPath is the engine's own view of a path (deneb debug paths): beyond
 // State's, whether the peer is idle, why it is on the relay, pings sent.
 type msPath struct {
-	Kind    string `json:"kind"`
-	Relay   string `json:"relay"`
-	Reason  string `json:"reason"`
-	Idle    bool   `json:"idle"`
-	PingsTx uint64 `json:"pingsTx"`
+	Kind       string `json:"kind"`
+	Relay      string `json:"relay"`
+	Reason     string `json:"reason"`
+	Idle       bool   `json:"idle"`
+	Held       bool   `json:"held"`
+	PingsTx    uint64 `json:"pingsTx"`
+	PingsRelay uint64 `json:"pingsRelay"`
+	HSBoth     bool   `json:"hsBoth"`
 }
 
 func fqdnOf(name string) string {
@@ -77,7 +81,8 @@ func checkIdle() error {
 		return err
 	}
 	if p2.PingsTx != p1.PingsTx {
-		return fmt.Errorf("an idle peer got %d pings in 3 s", p2.PingsTx-p1.PingsTx)
+		return fmt.Errorf("an idle peer got %d pings in 3 s (%d through the relay); before %+v, after %+v",
+			p2.PingsTx-p1.PingsTx, p2.PingsRelay-p1.PingsRelay, p1, p2)
 	}
 	out, err := deneb("mac", "ping", "nas", "-c", "1")
 	if err != nil {
@@ -300,8 +305,22 @@ func checkNetChange() error {
 	if err := reachAll(30 * time.Second); err != nil {
 		return fmt.Errorf("after moving back: %w", err)
 	}
-	fmt.Printf("     net-change: all peers back %s after the move (socket moved: %v); long connection %d lines, longest stall %d ms\n",
-		back.Round(100*time.Millisecond), rebound, r.Lines, r.MaxGapMs)
+	// The control server must be reachable again too, not only the peers
+	// (11-08: every request timed out on the dead connection for minutes).
+	t1 := time.Now()
+	if _, err := waitFor(30*time.Second, func() (string, error) {
+		out, err := deneb("mac", "lan", "add", "周末联机", "构建服务器")
+		if err != nil {
+			return out, err
+		}
+		_, err = deneb("mac", "lan", "remove", "周末联机", "构建服务器")
+		return "", err
+	}); err != nil {
+		return fmt.Errorf("the control server after the moves: %w", err)
+	}
+	ctl := time.Since(t1)
+	fmt.Printf("     net-change: all peers back %s after the move (socket moved: %v); control ops work %s after moving back; long connection %d lines, longest stall %d ms\n",
+		back.Round(100*time.Millisecond), rebound, ctl.Round(100*time.Millisecond), r.Lines, r.MaxGapMs)
 	if back > 30*time.Second || r.Broken {
 		return fmt.Errorf("long connection: %+v", r)
 	}
@@ -339,5 +358,209 @@ func checkSleep() error {
 	if back > 30*time.Second || !noticed {
 		return errors.New("the engine did not notice the sleep, or took too long")
 	}
+	return nil
+}
+
+// longResult is what test/topo/longconn prints.
+type longResult struct {
+	Host     string  `json:"host"`
+	Requests int     `json:"requests"`
+	MaxMs    int64   `json:"maxMs"`
+	WakesMs  []int64 `json:"wakesMs"`
+	Pauses   int     `json:"pauses"`
+	Broken   bool    `json:"broken"`
+	Err      string  `json:"err"`
+	Slow     []struct {
+		At time.Time `json:"at"`
+		Ms int64     `json:"ms"`
+	} `json:"slow"`
+}
+
+// checkLongIdle holds one TCP connection per pair for more than three
+// minutes, with silences longer than the engines' idle time in between:
+// the heartbeat stops, then the next request wakes the path. No connection
+// may break, and no answer may take over 0.5 s, the first one after each
+// silence included. Run with -m1, the same connections cross M1 and M2
+// engines (an M1 engine never goes idle; the M2 one opposite it does).
+func checkLongIdle() error {
+	for _, c := range [][]string{ // the test page answers the requests
+		{"build", "service", "工作室", "web", "tcp/80"},
+		{"desktop", "service", "周末联机", "web", "tcp/80"},
+		{"nas", "service", "周末联机", "web", "tcp/80"},
+	} {
+		if _, err := deneb(c[0], append(c[1:], "on")...); err == nil { // else it was open already
+			defer deneb(c[0], append(c[1:], "off")...)
+		}
+	}
+	time.Sleep(time.Second)
+	owner := map[string]string{}
+	for _, n := range nodes {
+		owner[n.name] = n.owner
+	}
+	label := func(n string) string { return n + "." + owner[n] }
+	pairs := [][2]string{{"mac", "build"}, {"mac", "nas"}, {"nas", "desktop"}}
+	since := time.Now()
+	results := make([]longResult, len(pairs))
+	errs := make([]error, len(pairs))
+	var wg sync.WaitGroup
+	for i, pr := range pairs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			out, err := docker("exec", "dnb-"+pr[0], "longconn", "-active", "20s", "-pause", "12s", "-total", "200s", pr[1])
+			lines := strings.Split(strings.TrimSpace(out), "\n")
+			if jerr := json.Unmarshal([]byte(lines[len(lines)-1]), &results[i]); jerr != nil {
+				errs[i] = fmt.Errorf("%v: %s", err, out)
+			}
+		}()
+	}
+	wg.Wait()
+	var bad []string
+	for i, pr := range pairs {
+		r := results[i]
+		if errs[i] != nil {
+			bad = append(bad, fmt.Sprintf("%s→%s: %v", pr[0], pr[1], errs[i]))
+			continue
+		}
+		// Which side shows the idle: an M2 engine, on the other one's line.
+		idles, wakes := -1, -1
+		for _, side := range [][2]string{{pr[0], pr[1]}, {pr[1], pr[0]}} {
+			if isM1(side[0]) {
+				continue
+			}
+			logs, _ := logsOf("dnb-"+side[0], since.Format(time.RFC3339))
+			idles = strings.Count(logs, "[idle] "+label(side[1])+": no traffic")
+			wakes = strings.Count(logs, "[idle] "+label(side[1])+": traffic again")
+			break
+		}
+		fmt.Printf("     %s→%s: %d requests, slowest %d ms, after the %d silences %v ms; idle %d times, woken %d times\n",
+			pr[0], pr[1], r.Requests, r.MaxMs, r.Pauses, r.WakesMs, idles, wakes)
+		switch {
+		case r.Broken:
+			bad = append(bad, fmt.Sprintf("%s→%s broke: %s", pr[0], pr[1], r.Err))
+		case r.MaxMs > 500:
+			bad = append(bad, fmt.Sprintf("%s→%s: an answer took %d ms (slow ones: %+v)", pr[0], pr[1], r.MaxMs, r.Slow))
+		case r.Pauses < 5:
+			bad = append(bad, fmt.Sprintf("%s→%s: only %d silences", pr[0], pr[1], r.Pauses))
+		case idles >= 0 && (idles < r.Pauses || wakes < r.Pauses):
+			bad = append(bad, fmt.Sprintf("%s→%s: idle %d times and woken %d times in %d silences", pr[0], pr[1], idles, wakes, r.Pauses))
+		}
+	}
+	if len(bad) > 0 {
+		return errors.New(strings.Join(bad, "; "))
+	}
+	return nil
+}
+
+// checkPauseShared: build in both LANs, as on the real machines. The Mac
+// pauses 周末联机 and resumes it three times; the long connection to build
+// through 工作室 must not stall at all (lines every 100 ms, nothing over
+// 300 ms), and nas is back each time.
+func checkPauseShared() error {
+	if _, err := deneb("mac", "lan", "add", "周末联机", "构建服务器"); err != nil {
+		return err
+	}
+	defer deneb("mac", "lan", "remove", "周末联机", "构建服务器")
+	if err := pingOK("nas", "build", 6*time.Second); err != nil {
+		return err
+	}
+	long := tickAsync("mac", "build", 16)
+	time.Sleep(2 * time.Second)
+	for i := 0; i < 3; i++ {
+		if _, err := deneb("mac", "lan", "pause", "周末联机"); err != nil {
+			return err
+		}
+		time.Sleep(time.Second)
+		if _, err := deneb("mac", "lan", "resume", "周末联机"); err != nil {
+			return err
+		}
+		if err := pingOK("mac", "nas", 3*time.Second); err != nil {
+			return err
+		}
+		time.Sleep(time.Second)
+	}
+	r, err := long()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("     pause-shared: 工作室's connection to build (in both LANs) through three pauses of 周末联机: %d lines, longest stall %d ms\n", r.Lines, r.MaxGapMs)
+	if r.Broken || r.MaxGapMs > 300 {
+		return fmt.Errorf("工作室's connection to build: %+v", r)
+	}
+	return nil
+}
+
+// checkLossyBoth: the direct path loses 20% of its UDP and the relay's
+// answers come late a quarter of the time, as on the home line to Hong
+// Kong, where TCP is lost too. The relay is no cleaner: the path stays
+// direct (moving would only add the detour).
+func checkLossyBoth() error {
+	// Both ends back on direct first: lossy-line, just before, may have
+	// left one on the relay for its 20 s.
+	for _, pr := range [][2]string{{"mac", "build"}, {"build", "mac"}} {
+		if err := waitPath(pr[0], pr[1], apitype.PathDirect, 40*time.Second); err != nil {
+			return err
+		}
+	}
+	long := tickAsync("mac", "build", 18)
+	for _, c := range [][]string{{"mac", "build"}, {"build", "mac"}} {
+		if _, err := deneb(c[0], "debug", "relaylate", c[1], "25", "400"); err != nil {
+			return err
+		}
+	}
+	defer func() {
+		for _, c := range [][]string{{"mac", "build"}, {"build", "mac"}} {
+			deneb(c[0], "debug", "relaylate", c[1], "0", "0")
+		}
+	}()
+	if _, err := deneb("mac", "debug", "loss", "build", "20"); err != nil {
+		return err
+	}
+	defer deneb("mac", "debug", "loss", "build", "0")
+	kinds := map[string]bool{}
+	end := time.Now().Add(15 * time.Second)
+	for time.Now().Before(end) {
+		for _, n := range [][2]string{{"mac", "build"}, {"build", "mac"}} {
+			if p, err := debugPath(n[0], n[1]); err == nil {
+				kinds[n[0]+":"+p.Kind] = true
+			}
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	r, _ := long()
+	fmt.Printf("     lossy-both: paths seen %v; long connection %d lines, longest stall %d ms\n", kinds, r.Lines, r.MaxGapMs)
+	if kinds["mac:relay"] || kinds["build:relay"] {
+		return fmt.Errorf("moved to the relay although it is no cleaner: %v", kinds)
+	}
+	return nil
+}
+
+// checkRelayFirst times scene 1 ("先经中转连上，打通后换直连") for a new
+// pair of devices: the Mac adds build to 周末联机, and nas, which never
+// had build as a peer, reaches it first through the relay, then direct.
+func checkRelayFirst() error {
+	defer deneb("mac", "lan", "remove", "周末联机", "构建服务器")
+	t0 := time.Now()
+	if out, err := deneb("mac", "lan", "add", "周末联机", "构建服务器"); err != nil {
+		return fmt.Errorf("%v %s", err, out)
+	}
+	var first, direct time.Duration
+	firstKind := ""
+	for time.Since(t0) < 15*time.Second && direct == 0 {
+		if p, err := debugPath("nas", "build"); err == nil {
+			if first == 0 && (p.Kind == "relay" || p.Kind == "direct") {
+				first, firstKind = time.Since(t0), p.Kind
+			}
+			if p.Kind == "direct" {
+				direct = time.Since(t0)
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if direct == 0 {
+		return fmt.Errorf("nas never went direct to build (first: %s after %s)", firstKind, first)
+	}
+	fmt.Printf("     relay-first: nas reaches build (just added to 周末联机) %s after the add, first through the %s; direct after %s\n",
+		first.Round(10*time.Millisecond), firstKind, direct.Round(10*time.Millisecond))
 	return nil
 }

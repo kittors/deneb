@@ -1,0 +1,10 @@
+//go:build !windows
+
+package localclient
+
+import "os/exec"
+
+// Measurement-only overlay for web/probe/build.sh: browsers have no
+// sessions, so the desktop client compiles for js/wasm without the repo
+// changing.
+func detach(cmd *exec.Cmd) {}

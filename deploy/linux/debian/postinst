@@ -1,0 +1,34 @@
+#!/bin/sh
+# Enable and (re)start the engine; nothing on the network changes until it
+# logs in and the network map gives it an address.
+set -e
+
+# The desktop user, allowed on the engine besides root (the window and the
+# `deneb` command run as them): who ran sudo or pkexec, else, for a package
+# a graphical store installed as root, whoever is at the console. Chosen
+# once, at the first install; DENEB_FLAGS="-allow-uid N" in
+# /etc/default/denebd overrides it.
+desktop_uid() {
+	for uid in "${SUDO_UID:-}" "${PKEXEC_UID:-}"; do
+		if [ -n "$uid" ] && [ "$uid" != 0 ]; then
+			echo "$uid"
+			return
+		fi
+	done
+	if [ -r /run/systemd/seats/seat0 ]; then
+		sed -n 's/^ACTIVE_UID=\([1-9][0-9]*\)$/\1/p' /run/systemd/seats/seat0
+	fi
+}
+if [ "$1" = configure ] && [ ! -e /var/lib/deneb/desktop-user.env ]; then
+	uid=$(desktop_uid)
+	if [ -n "$uid" ]; then
+		install -d -m 0700 /var/lib/deneb
+		echo "DENEB_ALLOW_UID=$uid" >/var/lib/deneb/desktop-user.env
+	fi
+fi
+
+if [ "$1" = configure ] && [ -d /run/systemd/system ]; then
+	systemctl daemon-reload
+	systemctl enable denebd.service >/dev/null 2>&1 || true
+	systemctl restart denebd.service || true
+fi

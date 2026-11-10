@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>M3-11 · 在浏览器里接受邀请 · Deneb</title>
+    <link rel="stylesheet" href="../v3/v3.css" />
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="web.css" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script src="../shared/motion.js"></script>
+    <script src="../shared/demo.js"></script>
+    <script src="../v3/glyphs.js"></script>
+    <script src="../v3/links.js"></script>
+    <script src="../v3/app.js"></script>
+    <script src="web.js"></script>
+    <script src="weblan.js"></script>
+    <script>
+      // M3-11 (DESIGN.md §14.5, §14.4, §14.7): Leo has no Deneb yet. kittors
+      // sent him a link; he opens it in his computer's browser, joins with
+      // his email and a code in the same card, and lands in the web version
+      // of 周末联机. He has no device there yet, so the middle holds this
+      // computer as a dashed tile, and the download card opens. Once he
+      // installs Deneb and logs in, the tile fills in.
+      const app = new App({
+        title: '周末联机',
+        sub: '',
+        stack: ['me', 'mia', 'jie', 'leo'],
+        action: '邀请朋友',
+        side: [
+          { group: '局域网' },
+          { id: 'weekend', dots: ['me', 'mia', 'jie'], label: '周末联机', on: true },
+          { id: 'new', icon: 'plus', label: '新建局域网' },
+          { gap: true },
+          { group: '设备' },
+          { id: 'mine', icon: 'home', label: '我的设备' },
+          { id: 'shared', icon: 'inbox', label: '共享给我' },
+        ],
+        controls: [{ label: '装好登录了', onClick: () => lan.fillPending('Leo 的 MacBook') }],
+      });
+      const br = Web.browser(app, { url: 'deneb.app/join/k3xQ9' });
+      Web.setMe(app, 'leo');
+      app.win.dataset.k = 'win';
+      app.win.style.visibility = 'hidden';
+      app.o.trace = (app.o.trace || []).concat(['.page-join', '.join-card', '.field', '.cb', '.pair .ball', '.win']);
+      const lan = WebLan(app, {
+        me: 'leo',
+        people: ['me', 'mia', 'jie', 'leo'],
+        devs: {
+          self: { type: 'laptop', owner: 'leo', name: '这台电脑', x: 300, y: 290, pending: true },
+          mia: { type: 'laptop', owner: 'mia', name: 'Mia 的 MacBook', x: 136, y: 128 },
+          kmac: { type: 'laptop', owner: 'me', name: 'kittors 的 MacBook', x: 302, y: 104 },
+          jdesk: { type: 'desktop', owner: 'jie', name: '阿杰的台式机', x: 468, y: 128 },
+          game: { type: 'console', owner: 'me', name: 'kittors 的游戏主机', x: 136, y: 440 },
+          jnas: { type: 'nas', owner: 'jie', name: '阿杰的 NAS', x: 468, y: 452 },
+        },
+        tray: [],
+        downloadToast: '开始下载了，装好后用 l***@gmail.com 登录',
+      });
+      const join = Web.joinPage(br.frame, { from: 'me', lan: '周末联机', members: ['me', 'mia', 'jie'], devices: 5, me: 'leo', email: 'leo.chen@gmail.com', masked: 'l***@gmail.com' });
+      window.WEB = {
+        typeEmail: () => join.typeEmail(),
+        typeCode: () =>
+          join.typeCode('482916', () => {
+            join.leave(app.win);
+            br.url('deneb.app/#/周末联机');
+            D.after(700, () => lan.openDownload());
+          }),
+        installed: () => lan.fillPending('Leo 的 MacBook'),
+      };
+
+      window.RECORDING = {
+        title: 'M3-11-在浏览器里接受邀请',
+        duration: 17400,
+        actions: [
+          { at: 500, glide: { sel: '[data-act="join"]' }, dur: 800 },
+          { at: 1400, shot: '邀请卡', clean: true },
+          { at: 1500, down: true },
+          { at: 1580, up: true },
+          { at: 1700, glide: [1010, 650], dur: 600 },
+          { at: 2100, js: 'WEB.typeEmail()' },
+          { at: 4000, glide: { sel: '[data-act="send"]' }, dur: 600 },
+          { at: 4700, shot: '填邮箱', clean: true },
+          { at: 4800, down: true },
+          { at: 4880, up: true },
+          { at: 5000, glide: [1010, 650], dur: 600 },
+          { at: 5500, js: 'WEB.typeCode()' },
+          { at: 6250, shot: '输入验证码', clean: true },
+          { at: 7000, shot: '加入了', clean: true },
+          { at: 9400, shot: '网页版里的局域网', clean: true },
+          { at: 9500, glide: { sel: '[data-act="dl"]' }, dur: 800 },
+          { at: 10400, down: true },
+          { at: 10480, up: true },
+          { at: 10700, glide: [760, 560], dur: 600 },
+          { at: 11500, shot: '开始下载', clean: true },
+          { at: 12400, js: 'WEB.installed()' },
+          { at: 13600, shot: '这台电脑加进来了', clean: true },
+          { at: 14000, glide: { sel: '.dev[data-id="jnas"] .tile' }, dur: 800 },
+          { at: 14900, down: true },
+          { at: 14980, up: true },
+          { at: 15200, glide: [760, 600], dur: 600 },
+          { at: 16400, shot: '阿杰的NAS', clean: true },
+        ],
+      };
+      window.__ready = true;
+    </script>
+  </body>
+</html>

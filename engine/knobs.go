@@ -17,4 +17,7 @@ type testKnobs struct {
 	// noDNSFlush leaves macOS's DNS caches alone when a name comes back,
 	// to measure how long they keep "no such name" (kernel round).
 	noDNSFlush bool
+	// offline replaces the system's answer to "is there a network?"
+	// (checkOnline), for in-process tests.
+	offline func(bound string) bool
 }

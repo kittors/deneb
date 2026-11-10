@@ -11,3 +11,21 @@ mygo_windows_*.syso
 # The frames before the prototype was split, for the demo's frame-by-frame
 # check (design/plan/m1/client.md): 17 MB of PNGs, kept out of commits.
 /design/plan/m1/client-frames-baseline/
+# deploy/package.sh: the release it builds, and what it puts among the
+# app's resources while it builds (it takes them away again when done).
+/deploy/out/
+/cmd/deneb/resources/*/denebd.exe
+/cmd/deneb/resources/*/wintun.dll
+/cmd/deneb/resources/*/LICENSE.txt
+/cmd/deneb/resources/*/THIRD_PARTY_NOTICES.txt
+# Stray `go build ./cmd/...` output in the repository root.
+/deneb-control
+/deneb-relay
+/deneb-web
+/denebd
+/denebd.exe
+/topo
+# Python caches and macOS Finder files.
+__pycache__/
+*.pyc
+.DS_Store

@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>M3-15 · 网页上管中转站 · Deneb</title>
+    <link rel="stylesheet" href="../v3/v3.css" />
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="web.css" />
+    <style>
+      /* M3-15 (DESIGN.md §14.8): the relays page. Two wells as in scene 4's
+         console: my relays, which I manage, and the public ones, which I
+         only see. A relay is the desktop's white glossy ball. */
+      .rwell {
+        position: absolute;
+        top: 20px;
+        width: 284px;
+        border-radius: 20px;
+        background: var(--well);
+        padding: 14px 14px 16px;
+      }
+      .rwell.mine {
+        left: 28px;
+      }
+      .rwell.pub {
+        left: 328px;
+      }
+      .rwell .card-label {
+        display: flex;
+        justify-content: space-between;
+        margin: 0 4px 12px;
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--ink-3);
+      }
+      .rgrid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        row-gap: 14px;
+      }
+      .rcell {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 4px 8px;
+        border-radius: 16px;
+        font-size: 13px;
+        font-weight: 500;
+        text-align: center;
+        cursor: pointer;
+        user-select: none;
+        transition: background 0.16s ease-out;
+      }
+      .rcell:hover {
+        background: var(--well-2);
+      }
+      .rcell.sel {
+        background: var(--bg);
+        box-shadow: var(--shadow-sm);
+      }
+      .rcell small {
+        display: block;
+        margin-top: 2px;
+        font-size: 12px;
+        font-weight: 400;
+        color: var(--ink-2);
+      }
+      .orb {
+        position: relative;
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        color: var(--ink-2);
+        background: radial-gradient(circle at 34% 28%, var(--ball-1) 0%, var(--ball-2) 52%, var(--ball-3) 100%);
+        box-shadow: inset 0 -1.5px 3px rgba(0, 0, 0, 0.08), 0 6px 14px rgba(9, 9, 11, 0.12), 0 1px 2px rgba(9, 9, 11, 0.1);
+      }
+      .orb svg {
+        fill: currentColor;
+      }
+      .orb .on {
+        position: absolute;
+        right: 1px;
+        bottom: 1px;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--ok);
+        box-shadow: 0 0 0 2px var(--well);
+      }
+      .rcell.sel .orb .on {
+        box-shadow: 0 0 0 2px var(--bg);
+      }
+      .orb.add {
+        background: none;
+        box-shadow: none;
+        color: var(--ink-3);
+      }
+      .orb.add .ring {
+        position: absolute;
+        inset: 0;
+      }
+      .orb.wait .ring {
+        animation: breathe 1.6s ease-in-out infinite alternate;
+      }
+      @keyframes breathe {
+        from {
+          opacity: 1;
+        }
+        to {
+          opacity: 0.45;
+        }
+      }
+      .rcell.add-cell {
+        color: var(--ink-2);
+        font-weight: 400;
+      }
+      .sheet .orb-s {
+        position: relative;
+        flex: none;
+        width: 40px;
+        height: 40px;
+      }
+      .sheet .orb-s .orb {
+        width: 40px;
+        height: 40px;
+      }
+      .sheet .num {
+        margin-left: auto;
+        font-variant-numeric: tabular-nums;
+        color: var(--ink-2);
+      }
+      .cmd {
+        margin: 2px 0 0;
+        padding: 10px 12px;
+        border-radius: 14px;
+        background: var(--well);
+        font: 12px/1.55 ui-monospace, 'SF Mono', Menlo, monospace;
+        color: var(--ink);
+        word-break: break-all;
+        user-select: all;
+      }
+      .cmd-foot {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 12px;
+      }
+      .cmd-foot .hint {
+        margin: 0;
+        flex: 1;
+      }
+      .cmd-foot .btn {
+        flex: none;
+        min-width: 84px;
+        justify-content: center;
+      }
+      .mdots {
+        display: flex;
+        flex: none;
+        width: 18px;
+      }
+      .mdots .ball {
+        width: 10px;
+        height: 10px;
+        margin-right: -4px;
+        box-shadow: 0 0 0 1.5px var(--well);
+      }
+      .say {
+        margin: 10px 2px 0;
+        font-size: 12px;
+        line-height: 1.55;
+        color: var(--ink-2);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script src="../shared/motion.js"></script>
+    <script src="../shared/demo.js"></script>
+    <script src="../v3/glyphs.js"></script>
+    <script src="../v3/links.js"></script>
+    <script src="../v3/app.js"></script>
+    <script src="web.js"></script>
+    <script>
+      // M3-15 (DESIGN.md §14.8): kittors's relays. His own server in Hong
+      // Kong: who uses it, how busy, this month's traffic; a click on
+      // someone's ball turns them away (and undo). The public one he can
+      // only look at. "用我自己的服务器" gives one line to run; once it has
+      // run, the new relay shows up by itself.
+      const P = App.PEOPLE;
+      const app = new App({
+        title: '中转站',
+        sub: '',
+        side: [
+          { group: '局域网' },
+          { id: 'all', icon: 'people', label: '全部' },
+          { id: 'weekend', dots: ['me', 'mia', 'jie'], label: '周末联机' },
+          { id: 'team', dots: ['me', 'lin'], label: '工作室' },
+          { id: 'new', icon: 'plus', label: '新建局域网' },
+          { gap: true },
+          { group: '设备' },
+          { id: 'mine', icon: 'home', label: '我的设备', count: 4 },
+          { id: 'shared', icon: 'inbox', label: '共享给我', count: 2 },
+          { id: 'relays', icon: 'relayLine', label: '中转站', on: true },
+          { gap: true },
+          { group: '管理工作室' },
+          { id: 'share', icon: 'share', label: '设备共享' },
+        ],
+        controls: [{ label: '在服务器上跑了', onClick: () => installed() }],
+      });
+      const br = Web.browser(app, { url: 'deneb.app/#/中转站' });
+      app.win.dataset.k = 'win';
+      app.o.trace = (app.o.trace || []).concat(['.rcell', '.rwell']);
+      const $ = (s, r = app.win) => r.querySelector(s);
+      app.setTitle('中转站', '连不上的时候，自动经中转站，不用选', 'ok');
+
+      const RELAY = G.device('relay', 20);
+      const RING = (r = 20.25) => `<svg class="ring" viewBox="0 0 44 44" width="44" height="44" aria-hidden="true"><circle cx="22" cy="22" r="${r}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="4 3.5"/></svg>`;
+      const MINE = [{ id: 'hk', name: '香港', sub: '3 个人在用', users: ['mia', 'jie', 'leo'], devices: 5, rate: '2.4 MB/s', month: [['周末联机', '12.4 GB', ['me', 'mia', 'jie']], ['工作室', '3.1 GB', ['me', 'lin']]], up: '已经运行 12 天', busy: '不忙' }];
+      const PUB = [{ id: 'pub-hk', name: '香港', sub: '公共 · 自动兜底', speed: '很快', limit: '每条连接 2 MB/s' }];
+      const kicked = {};
+      let pending = false;
+      const cell = (r, mine) => `<div class="rcell" data-k="${r.id}" data-mine="${mine ? 1 : ''}"><div class="orb">${RELAY}<span class="on"></span></div><div>${App.space(r.name)}<small>${App.space(r.sub)}</small></div></div>`;
+      const addCell = () =>
+        pending
+          ? `<div class="rcell add-cell" data-k="join"><div class="orb add wait">${RING()}${G.ui('relayLine', 18)}</div><div>等待安装<small>命令还没跑</small></div></div>`
+          : `<div class="rcell add-cell" data-k="add"><div class="orb add">${RING()}${G.ui('plus', 18)}</div><div>用我自己的服务器<small>一行命令装好</small></div></div>`;
+      app.canvas.innerHTML =
+        `<section class="rwell mine" data-k="mine"><div class="card-label"><span>我的中转站</span><span class="n-mine">${MINE.length} 个</span></div><div class="rgrid g-mine"></div></section>` +
+        `<section class="rwell pub" data-k="pub"><div class="card-label"><span>公共中转站</span><span>${PUB.length} 个</span></div><div class="rgrid g-pub">${PUB.map((r) => cell(r, false)).join('')}</div></section>`;
+      // The well grows and shrinks with what is in it, smoothly (§5).
+      function drawMine() {
+        const w = $('.rwell.mine');
+        const h0 = w.offsetHeight;
+        $('.g-mine').innerHTML = MINE.map((r) => cell(r, true)).join('') + addCell();
+        $('.n-mine').textContent = `${MINE.length} 个`;
+        const h1 = w.offsetHeight;
+        if (h0 && Math.abs(h1 - h0) > 1) w.animate([{ height: h0 + 'px' }, { height: h1 + 'px' }], { duration: 360, easing: 'cubic-bezier(0.3, 0.3, 0.2, 1)' });
+        wire();
+      }
+      function select(k) {
+        for (const c of app.win.querySelectorAll('.rcell')) c.classList.toggle('sel', c.dataset.k === k);
+      }
+      const head = (orb, name, sub) => `<div class="top"><div class="orb-s">${orb}</div><div><b>${App.space(name)}</b><span>${sub}</span></div><button class="icon-btn sheet-close" title="关闭">${G.ui('close', 16)}</button></div>`;
+      const chip = (r, k) => `<button class="chip ${kicked[r.id + k] ? 'blocked' : ''}" data-k="${k}">${App.ball(k, kicked[r.id + k] ? 'off' : '')}${P[k].name}</button>`;
+      function openMine(r) {
+        select(r.id);
+        const html =
+          head(`<div class="orb">${RELAY}<span class="on"></span></div>`, r.name, '我的服务器') +
+          `<div class="status"><span class="badge" style="--c:#22C55E">${G.ui('online', 16)}</span><div>在线<small>${r.up}</small></div></div>` +
+          `<div class="label">现在</div><div class="rows">` +
+          `<div class="row">${G.ui('people', 18)}<span>在用</span><span class="num">${r.users.length} 个人 · ${r.devices} 台设备</span></div>` +
+          `<div class="row">${G.ui('bolt', 18)}<span>带宽</span><span class="num">${r.rate}</span></div>` +
+          `<div class="row">${G.ui('screen', 18)}<span>忙不忙</span><span class="num">${r.busy}</span></div></div>` +
+          `<div class="label">这个月替谁转了</div>` +
+          (r.month.length ? `<div class="rows">${r.month.map(([l, v, dots]) => `<div class="row"><span class="mdots">${dots.map((k) => App.dot(P[k].c)).join('')}</span><span>${l}</span><span class="num">${v}</span></div>`).join('')}</div>` : `<p class="say">还没有替谁转过。</p>`) +
+          `<div class="label">谁在用</div>` +
+          (r.users.length ? `<div class="people">${r.users.map((k) => chip(r, k)).join('')}</div><div class="hint">点一下头像，就不让他用这个中转站了</div>` : `<p class="say">还没有人在用。拖到侧边栏的局域网上，那里连不上的设备就会用它。</p>`) +
+          `<div class="card-foot"><button class="more">更多${G.ui('chevron', 14)}</button><button class="out-btn">删除</button></div><div class="detail"><p>地址 103.42.31.40 · 端口 47445<br />权重 1 · 不限人数</p></div>`;
+        const s = app.sheet(html, r.id);
+        for (const ch of s.querySelectorAll('.chip')) ch.onclick = () => kick(r, ch.dataset.k, ch);
+      }
+      function kick(r, k, chipEl) {
+        const on = !kicked[r.id + k];
+        kicked[r.id + k] = on;
+        chipEl.classList.toggle('blocked', on);
+        chipEl.querySelector('.ball').classList.toggle('off', on);
+        const left = r.users.filter((u) => !kicked[r.id + u]).length;
+        r.sub = `${left} 个人在用`;
+        const c = app.win.querySelector(`.rcell[data-k="${r.id}"] small`);
+        if (c) c.textContent = App.space(r.sub);
+        const row = app.sheetEl.querySelector('.rows .row .num');
+        if (row) row.textContent = `${left} 个人 · ${r.devices - (r.users.length - left) * 1} 台设备`;
+        if (on) app.toast(`已不让${P[k].name}用香港中转站`, { undo: () => chipEl.isConnected && chipEl.click() });
+      }
+      function openPub(r) {
+        select(r.id);
+        const html =
+          head(`<div class="orb">${RELAY}<span class="on"></span></div>`, r.name, '公共中转站') +
+          `<div class="status"><span class="badge" style="--c:#22C55E">${G.ui('online', 16)}</span><div>在线<small>离你${r.speed}</small></div></div>` +
+          `<div class="rows"><div class="row">${G.ui('bolt', 18)}<span>限速</span><span class="num">${r.limit}</span></div></div>` +
+          `<p class="say">自动兜底，不用管。你自己的中转站连不上时，自动改走这里。</p>`;
+        app.sheet(html, r.id);
+      }
+      const CMD = 'docker run -d --name deneb-relay --restart unless-stopped --network host -v deneb-relay:/data deneb-relay:v0 --join deneb-join-q7Lm2xVt9K --region auto';
+      function openAdd() {
+        pending = true;
+        drawMine();
+        select('join');
+        const html =
+          head(`<div class="orb add wait">${RING(18.25).replace('viewBox="0 0 44 44" width="44" height="44"', 'viewBox="0 0 40 40" width="40" height="40"').replace('cx="22" cy="22"', 'cx="20" cy="20"')}${G.ui('relayLine', 18)}</div>`, '用我自己的服务器', '装好后，它自己出现在这里') +
+          `<div class="label">在服务器上运行这一行</div><div class="cmd">${CMD}</div>` +
+          `<div class="cmd-foot"><p class="hint">1 小时内有效，只能用一次。要先装好 Docker。</p><button class="btn primary" data-act="copy">${G.ui('copy', 15)}复制</button></div>`;
+        const s = app.sheet(html, 'join');
+        const b = s.querySelector('[data-act="copy"]');
+        b.onclick = () => {
+          b.innerHTML = `${G.ui('check', 15)}已复制`;
+          b.animate([{ opacity: 0.4 }, { opacity: 1 }], { duration: 160, easing: 'ease-out' });
+        };
+      }
+      // The command ran on the server: the waiting cell fills in, with a
+      // bounce (it joined, §5), named for where it is.
+      function installed() {
+        if (!pending) return;
+        pending = false;
+        const r = { id: 'tokyo', name: '东京', sub: '刚上线', users: [], devices: 0, rate: '0 KB/s', month: [], up: '刚上线', busy: '不忙' };
+        MINE.push(r);
+        drawMine();
+        const c = app.win.querySelector('.rcell[data-k="tokyo"]');
+        c.querySelector('.orb').animate([{ transform: 'scale(0.6)', opacity: 0 }, { transform: 'scale(1.08)', opacity: 1, offset: 0.55 }, { transform: 'none' }], { duration: 560, easing: 'cubic-bezier(0.3, 1.2, 0.5, 1)' });
+        app.toast('东京中转站上线了，拖到局域网上就能用');
+        if (app.sheetKey === 'join') openMine(r);
+      }
+      function wire() {
+        for (const c of app.win.querySelectorAll('.rcell')) {
+          c.onclick = () => {
+            const k = c.dataset.k;
+            if (k === 'add' || k === 'join') return openAdd();
+            const m = MINE.find((x) => x.id === k);
+            if (m) return openMine(m);
+            const p = PUB.find((x) => x.id === k);
+            if (p) openPub(p);
+          };
+        }
+      }
+      drawMine();
+      app.onSheetClose = () => select(null);
+      window.WEB = { installed };
+
+      window.RECORDING = {
+        title: 'M3-15-网页上管中转站',
+        duration: 16600,
+        actions: [
+          { at: 600, shot: '中转站', clean: true },
+          { at: 800, glide: { sel: '.rcell[data-k="hk"] .orb' }, dur: 700 },
+          { at: 1600, down: true },
+          { at: 1680, up: true },
+          { at: 1900, glide: [760, 680], dur: 500 },
+          { at: 2800, shot: '我的中转站', clean: true },
+          { at: 3000, glide: { sel: '.sheet .chip[data-k="jie"] .ball' }, dur: 700 },
+          { at: 3800, down: true },
+          { at: 3880, up: true },
+          { at: 4100, glide: [760, 690], dur: 500 },
+          { at: 4900, shot: '不让阿杰用', clean: true },
+          { at: 5200, glide: { sel: '.rcell[data-k="pub-hk"] .orb' }, dur: 800 },
+          { at: 6100, down: true },
+          { at: 6180, up: true },
+          { at: 6400, glide: [760, 680], dur: 500 },
+          { at: 7300, shot: '公共中转站', clean: true },
+          { at: 7500, glide: { sel: '.rcell[data-k="add"] .orb' }, dur: 800 },
+          { at: 8400, down: true },
+          { at: 8480, up: true },
+          { at: 8800, glide: { sel: '.sheet [data-act="copy"]' }, dur: 700 },
+          { at: 9600, down: true },
+          { at: 9680, up: true },
+          { at: 9900, glide: [760, 690], dur: 500 },
+          { at: 10700, shot: '一行命令', clean: true },
+          { at: 11500, js: 'WEB.installed()' },
+          { at: 13000, shot: '刚上线', clean: true },
+          { at: 13400, glide: [600, 600], dur: 600 },
+          { at: 14200, down: true },
+          { at: 14280, up: true },
+          { at: 15600, shot: '收起卡片', clean: true },
+        ],
+      };
+      window.__ready = true;
+    </script>
+  </body>
+</html>

@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -62,6 +63,12 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		err = c.rawOp(ctx, args[1:])
 	case "debug":
 		err = c.debug(ctx, args[1:])
+	case "diag":
+		err = c.diag(ctx, args[1:])
+	case "shutdown":
+		err = c.shutdown(ctx)
+	case "update":
+		err = c.update(ctx, args[1:])
 	default:
 		usage(stderr)
 		return fmt.Errorf("不认识的命令 %q", args[0])
@@ -92,7 +99,76 @@ func usage(w io.Writer) {
   services                            这台设备在听的常见服务
   open <设备> <端口>                  给对方的一项服务一个本机能打开的地址
   op <操作> [JSON 参数]               直接发一个操作
+  diag [-o 文件]                      导出诊断包（不含密钥和传输内容），默认存到当前目录
+  shutdown                            停下用户态引擎，等它的进程退出（系统服务里的引擎由系统来停）
+  update <denebd 的完整路径>          让系统服务换成这个文件里的引擎（Windows）
 `)
+}
+
+// diag saves the engine's diagnostics zip.
+func (c *cmd) diag(ctx context.Context, args []string) error {
+	out := "deneb-diagnostics-" + time.Now().Format("20060102-150405") + ".zip"
+	if len(args) == 2 && args[0] == "-o" {
+		out = args[1]
+	} else if len(args) != 0 {
+		return errors.New("用法：deneb diag [-o 文件]")
+	}
+	f, err := os.Create(out)
+	if err != nil {
+		return err
+	}
+	if err := c.lc.Diagnostics(ctx, f); err != nil {
+		f.Close()
+		os.Remove(out)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	fmt.Fprintf(c.out, "诊断包存到了 %s\n", out)
+	return nil
+}
+
+// shutdown stops the user-space engine and returns once its process is
+// gone: the Windows installer and uninstaller run it before they replace
+// or remove denebd.exe, which the running engine holds (M6 i2). Nothing
+// running is fine; a system service's engine refuses, the system stops it.
+func (c *cmd) shutdown(ctx context.Context) error {
+	v, err := c.lc.Version(ctx)
+	if errors.Is(err, localclient.ErrNotRunning) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := c.lc.Shutdown(ctx); err != nil {
+		return err
+	}
+	if v.PID > 0 && !waitExit(v.PID, 10*time.Second) {
+		return fmt.Errorf("引擎（进程 %d）10 秒还没退出", v.PID)
+	}
+	fmt.Fprintln(c.out, "引擎已停下。")
+	return nil
+}
+
+// update asks the system service to replace itself with an executable.
+func (c *cmd) update(ctx context.Context, args []string) error {
+	if len(args) != 1 {
+		return errors.New("用法：deneb update <denebd 的完整路径>")
+	}
+	path, err := filepath.Abs(args[0])
+	if err != nil {
+		return err
+	}
+	res, err := c.lc.UpdateEngine(ctx, path)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(c.out, "%s %s %s\n", res.Result, res.Version, res.Message)
+	if res.Result != apitype.UpdateDone && res.Result != apitype.UpdateSame {
+		return fmt.Errorf("没有更新：%s", res.Result)
+	}
+	return nil
 }
 
 type cmd struct {
@@ -107,6 +183,9 @@ func friendly(err error) error {
 	}
 	if errors.Is(err, localclient.ErrNotRunning) {
 		return errors.New("Deneb 引擎没在运行。先启动它：denebd run")
+	}
+	if errors.Is(err, localclient.ErrNotAllowed) {
+		return errors.New("这台电脑上的 Deneb 引擎在为别的用户运行，这个用户用不了它。")
 	}
 	if ae, ok := localclient.AsError(err); ok {
 		if len(ae.Candidates) > 0 {
@@ -873,6 +952,23 @@ func (c *cmd) debug(ctx context.Context, args []string) error {
 			}
 		}
 		err = c.lc.Raw(ctx, "POST", "/v1/test/loss", map[string]any{"peer": args[1], "tx": tx, "rx": rx}, &out)
+	case "relaylate":
+		// relaylate <设备> <百分比> <毫秒>：中转的回应按比例晚到
+		if len(args) != 4 {
+			return errors.New("用法：deneb debug relaylate <设备> <百分比，如 25> <毫秒，如 400>")
+		}
+		pct, perr := strconv.ParseFloat(strings.TrimSuffix(args[2], "%"), 64)
+		ms, merr := strconv.Atoi(args[3])
+		if perr != nil || merr != nil || pct < 0 || pct > 100 || ms < 0 {
+			return errors.New("百分比在 0 到 100 之间，毫秒不能是负数")
+		}
+		err = c.lc.Raw(ctx, "POST", "/v1/test/relaylate", map[string]any{"peer": args[1], "frac": pct / 100, "ms": ms}, &out)
+	case "dup":
+		// dup auto|on|off：丢包的直连上小包发两份
+		if len(args) != 2 {
+			return errors.New("用法：deneb debug dup auto|on|off")
+		}
+		err = c.lc.Raw(ctx, "POST", "/v1/test/dup", map[string]any{"mode": args[1]}, &out)
 	case "block", "unblock":
 		if len(args) != 2 {
 			return errors.New("用法：deneb debug block|unblock <设备>")

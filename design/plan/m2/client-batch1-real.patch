@@ -1,0 +1,417 @@
+diff -ruN -x .mygo -x build -x *.orig cmd/deneb/canvas.go cmd/deneb/canvas.go
+--- cmd/deneb/canvas.go	2026-11-08 12:23:09
++++ cmd/deneb/canvas.go	2026-11-08 12:19:18
+@@ -7,6 +7,7 @@
+ 	"time"
+ 
+ 	"github.com/egoist/mygo/ui"
++	"github.com/kittors/deneb/client/model"
+ )
+ 
+ // The canvas: devices as glossy tiles colored by their owner, joined to
+@@ -907,7 +908,7 @@
+ // and the "×" of a device that waits, shown as the pointer is on it, which
+ // turns it away, or takes mine back (DESIGN §6.7, §6.8).
+ func (a *app) tileBadges(c *ui.Context, p *palette, d *device, hovered bool) {
+-	if d.mine && d.login.Due(a.now()) && !d.pending {
++	if d.mine && d.login.Due(a.now()) && !d.pending && a.snap.Can(model.FeatureRenew) {
+ 		dot := ui.ButtonBase(c.Key("renew")).Absolute().Right(-3).Top(-3).Size(14, 14).Radius(999).
+ 			Background(ui.Hex("#F59E0B")).Border(2, p.bg).FocusRing(false)
+ 		dot.Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: &ui.Motion{Scale: 0.4}, Exit: &ui.Motion{Scale: 0.4}})
+diff -ruN -x .mygo -x build -x *.orig cmd/deneb/live_test.go cmd/deneb/live_test.go
+--- cmd/deneb/live_test.go	2026-11-08 12:23:09
++++ cmd/deneb/live_test.go	2026-11-08 12:32:51
+@@ -381,3 +381,64 @@
+ 		t.Error("构建服务器 did not go back into the tray")
+ 	}
+ }
++
++// A control server of M1 does none of what M2 adds, and its user view lists
++// none of it: the window offers none of it, rather than send what the
++// server would turn down — no switches in the LAN's card, no member's ball
++// to drag onto a LAN. A device's name and kind change in place on any
++// server, M1's too (DESIGN §6.7, §6.9).
++func TestLiveOldServerHidesM2(t *testing.T) {
++	r := newLiveRig(t, fakeworld.Ready, "m1-server")
++	r.until("the canvas", func() bool { return r.a.device(build) != nil && r.a.device(r.a.self) != nil })
++	r.settle(600 * time.Millisecond)
++	if s := r.store(); len(s.Features) > 0 {
++		t.Fatalf("the M1 world lists features: %v", s.Features)
++	}
++	p := r.at(r.a.device(build))
++	r.tt.ClickAt(p.X, p.Y)
++	r.settle(500 * time.Millisecond)
++	if r.a.selected != build || r.a.cardAt.W == 0 {
++		t.Fatalf("构建服务器's card did not open: %q", r.a.selected)
++	}
++	card := ui.Point{X: r.a.origin.X + r.a.cardAt.X, Y: r.a.origin.Y + r.a.cardAt.Y}
++	r.tt.ClickAt(card.X+16+40+12+30, card.Y+16+9) // its name
++	r.settle(300 * time.Millisecond)
++	if r.a.renaming == nil {
++		t.Fatal("构建服务器's name does not change in place")
++	}
++	r.tt.Key(0, ui.KeyBackspace)
++	r.tt.Type("编译机")
++	r.tt.Key(0, ui.KeyEnter)
++	r.until("the new name", func() bool { return r.store().Devices[model.DeviceID(build)].Name == "编译机" })
++	r.tt.ClickAt(sidebarWidth+60, 36) // the LAN's name
++	r.settle(500 * time.Millisecond)
++	if r.a.selected != lanCard {
++		t.Fatalf("the LAN's card did not open: %q", r.a.selected)
++	}
++	if r.tt.HasText("新设备要我同意") || r.tt.HasText("新成员要我同意") {
++		t.Error("the LAN's card offers switches the server cannot keep")
++	}
++	r.tt.ClickAt(sidebarWidth+300, headerHeight+600)
++	r.settle(400 * time.Millisecond)
++	r.click("周末联机")
++	r.settle(600 * time.Millisecond)
++	jie := r.a.people[string(fakeworld.Jie)]
++	b, ok := r.tt.Find(jie.ch)
++	if !ok {
++		t.Fatalf("no ball of 阿杰's in the header: %q", r.tt.Texts())
++	}
++	row := r.a.rowAt(model.LANID(fakeworld.Studio))
++	from := ui.Point{X: b.X + b.W/2, Y: b.Y + b.H/2}
++	r.tt.Press(from.X, from.Y)
++	for i := 1; i <= 20; i++ {
++		k := float32(i) / 20
++		r.tt.Move(from.X+(row.X+30-from.X)*k, from.Y+(row.Y+row.H/2-from.Y)*k)
++		r.tt.Frame()
++		r.tt.Advance(16 * time.Millisecond)
++		if r.a.person != nil {
++			t.Fatal("a member's ball drags to invite on a server that cannot invite by name")
++		}
++	}
++	r.tt.Release(row.X+30, row.Y+row.H/2)
++	r.settle(300 * time.Millisecond)
++}
+diff -ruN -x .mygo -x build -x *.orig cmd/deneb/panels.go cmd/deneb/panels.go
+--- cmd/deneb/panels.go	2026-11-08 12:23:09
++++ cmd/deneb/panels.go	2026-11-08 12:32:17
+@@ -953,7 +953,7 @@
+ 	switch {
+ 	case d.pending && d.mine:
+ 		return "不加了", func(c *ui.Context) { a.approve(c, d, false) }
+-	case d.login.Expired && d.mine, d.mine && d.login.Due(a.now()):
++	case (d.login.Expired || d.login.Due(a.now())) && d.mine && a.snap.Can(model.FeatureRenew):
+ 		return "续上", func(c *ui.Context) { a.renew(c, d) }
+ 	case d.login.Expired:
+ 		return "提醒" + who, tell("你的"+d.name+"在 Deneb 里登录过期了，打开 Deneb 点一下续上就好", "")
+@@ -971,7 +971,7 @@
+ 		}
+ 	case d.path == "refused":
+ 		return "问问" + who, tell("能让我用一下你的"+d.name+"吗？在 Deneb 里点一下就行", "")
+-	case d.path == "unreachable":
++	case d.path == "unreachable" && a.snap.Can(model.FeatureAddRelay):
+ 		return "加一个中转站", func(c *ui.Context) { a.send(c, model.Op{Kind: model.OpLANAddRelay, LAN: a.lan}) }
+ 	}
+ 	return "", nil
+@@ -1067,7 +1067,8 @@
+ 					})
+ 				}
+ 			})
+-			if !mine {
++			if !mine || !a.snap.Can(model.FeatureApprove) {
++				// Not mine, or a server that cannot ask me: no switches.
+ 				return
+ 			}
+ 			ui.Text(c, "新来的").FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(18, 4, 8, 4)
+@@ -1183,7 +1184,9 @@
+ 	switch how {
+ 	case member:
+ 		if id != a.me {
+-			a.personHandle(c, el, id)
++			if a.snap.Can(model.FeatureInvitePerson) {
++				a.personHandle(c, el, id)
++			}
+ 		}
+ 	case waitsForMe:
+ 		el.Cursor(ui.CursorPointer).Tooltip(strings.TrimLeft(spaced(who.name), " ") + "想加入，点一下同意")
+diff -ruN -x *.orig client/demo.go client/demo.go
+--- client/demo.go	2026-11-08 12:23:09
++++ client/demo.go	2026-11-08 12:32:17
+@@ -439,6 +439,10 @@
+ 			"leopc": direct(21),
+ 		},
+ 		SharedWithMe: 2,
++		// The demo's server does all that M2 adds, and M4's relay in a
++		// click, to show what they look like.
++		Features: map[string]bool{model.FeatureApprove: true, model.FeatureInvitePerson: true,
++			model.FeatureRenew: true, model.FeatureAddRelay: true},
+ 	}
+ }
+ 
+diff -ruN -x *.orig client/fakeworld/world.go client/fakeworld/world.go
+--- client/fakeworld/world.go	2026-11-08 12:23:09
++++ client/fakeworld/world.go	2026-11-08 12:32:17
+@@ -303,6 +303,24 @@
+ 			delete(d.refused, a.Person)
+ 		}
+ 		return nil, nil
++	case proto.OpDeviceRename, proto.OpDeviceSetKind:
++		// As M1's server has them: a new name keeps the DNS label.
++		d := w.devices[a.Device]
++		if d == nil {
++			return no(apitype.ErrNotFound, "找不到这台设备。")
++		}
++		if d.owner != who {
++			return no(apitype.ErrForbidden, "只有设备的主人能改它。")
++		}
++		if op == proto.OpDeviceRename {
++			if strings.TrimSpace(a.Name) == "" {
++				return no(apitype.ErrInvalid, "给设备起个名字。")
++			}
++			d.display = strings.TrimSpace(a.Name)
++		} else {
++			d.kind = a.Kind
++		}
++		return nil, nil
+ 	}
+ 	return no(apitype.ErrInvalid, "这个操作还不支持。")
+ }
+diff -ruN -x *.orig client/live.go client/live.go
+--- client/live.go	2026-11-08 12:23:09
++++ client/live.go	2026-11-08 12:32:17
+@@ -216,6 +216,13 @@
+ 	}
+ 	if v := l.view; v != nil && st.LoggedIn {
+ 		s.Loaded = true
++		if len(v.Features) > 0 {
++			// What the server does beyond M1 (M2 on).
++			s.Features = make(map[string]bool, len(v.Features))
++			for _, f := range v.Features {
++				s.Features[f] = true
++			}
++		}
+ 		if v.Me != "" {
+ 			s.Me = model.PersonID(v.Me)
+ 		}
+@@ -241,6 +248,9 @@
+ 			for _, p := range d.Refused {
+ 				md.Refused[model.PersonID(p)] = true
+ 			}
++			// M2: when it was last online, and how long its login lasts.
++			md.LastSeen = d.LastSeen
++			md.Login = model.Login{Expires: d.Login.ExpiresAt, RenewFrom: d.Login.RenewFrom, Expired: d.Login.Expired}
+ 			for _, svc := range d.Services {
+ 				md.Catalog = append(md.Catalog, service(svc, false))
+ 			}
+@@ -254,17 +264,31 @@
+ 		}
+ 		for _, lv := range v.LANs {
+ 			ml := &model.LAN{ID: model.LANID(lv.ID), Name: lv.Name, Owner: model.PersonID(lv.Owner),
+-				Services: map[model.DeviceID][]model.Service{}}
++				Services: map[model.DeviceID][]model.Service{},
++				// M2: its two switches, and whether I wait to be let in.
++				ApproveDevices: lv.ApproveDevices, ApproveMembers: lv.ApproveMembers, Waiting: lv.Pending}
+ 			for _, m := range lv.Members {
+-				// Only those in: someone invited, or waiting to be let in
+-				// (M2), is not in the LAN yet.
+-				if m.State == proto.MemberJoined || m.State == "" {
++				// Only those in are members: someone invited is not in yet,
++				// and one who waits for me to let them in shows apart (M2).
++				switch m.State {
++				case proto.MemberJoined, "":
+ 					ml.Members = append(ml.Members, model.PersonID(m.Person))
++				case proto.MemberPending:
++					ml.PendingMembers = append(ml.PendingMembers, model.PersonID(m.Person))
+ 				}
+ 			}
++			for _, iv := range lv.Invited {
++				ml.Invited = append(ml.Invited, model.Invited{Person: model.PersonID(iv.Person), By: model.PersonID(iv.InvitedBy),
++					Invite: string(iv.Invite), Expires: iv.ExpiresAt})
++			}
+ 			for _, d := range lv.Devices {
+ 				id := model.DeviceID(d.Device)
+-				ml.Devices = append(ml.Devices, id)
++				if d.Pending {
++					// Waits for the owner: a dashed tile, not in the LAN yet.
++					ml.Pending = append(ml.Pending, id)
++				} else {
++					ml.Devices = append(ml.Devices, id)
++				}
+ 				svcs := make([]model.Service, 0, len(d.Services))
+ 				for _, ss := range d.Services {
+ 					svcs = append(svcs, service(ss.Service, ss.On))
+@@ -276,6 +300,14 @@
+ 			}
+ 			s.LANs = append(s.LANs, ml)
+ 		}
++		for _, iv := range v.Invitations {
++			// Invites made out to me that wait for my answer (M2).
++			if iv.State != "" && iv.State != proto.InvitePending {
++				continue
++			}
++			s.Invitations = append(s.Invitations, model.Invitation{ID: string(iv.Invite), LAN: model.LANID(iv.LAN),
++				LANName: iv.LANName, Inviter: *person(iv.Inviter, s.Me), Expires: iv.ExpiresAt})
++		}
+ 	}
+ 	for _, ls := range l.local {
+ 		s.Local = append(s.Local, service(localService(ls), false))
+@@ -346,6 +378,7 @@
+ 	args := proto.OpArgs{
+ 		LAN: proto.LANID(op.LAN), Device: proto.DeviceID(op.Device), Person: proto.PersonID(op.Person),
+ 		Name: op.Name, Invite: op.Invite, On: op.On, Refuse: op.Refuse,
++		Kind: proto.DeviceKind(op.DevKind), Invitation: proto.InviteID(op.Invitation),
+ 	}
+ 	if op.Kind == model.OpServiceSet {
+ 		svc := l.service(op.Device, op.LAN, op.Service)
+@@ -497,6 +530,11 @@
+ 		return &model.Error{Code: model.ErrTimeout, Message: "等了太久，没办成"}
+ 	}
+ 	if e, ok := localclient.AsError(err); ok {
++		if strings.HasPrefix(e.Message, "不认识的操作") {
++			// A server older than this client: in plain words, never the
++			// op's name (the view hides what it knows the server lacks).
++			return &model.Error{Code: model.ErrorCode(e.Code), Message: "服务器还没更新，暂时用不了"}
++		}
+ 		msg := strings.TrimRight(e.Message, "。.")
+ 		if msg == "" {
+ 			msg = "没办成，等一下再试试"
+diff -ruN -x *.orig client/live_test.go client/live_test.go
+--- client/live_test.go	2026-11-08 12:23:09
++++ client/live_test.go	2026-11-08 12:32:51
+@@ -2,6 +2,7 @@
+ 
+ import (
+ 	"context"
++	"encoding/json"
+ 	"errors"
+ 	"os"
+ 	"path/filepath"
+@@ -12,7 +13,10 @@
+ 	"github.com/kittors/deneb/client"
+ 	"github.com/kittors/deneb/client/fakeworld"
+ 	"github.com/kittors/deneb/client/model"
++	"github.com/kittors/deneb/engine/localapi/apitype"
++	"github.com/kittors/deneb/engine/localapi/fake"
+ 	"github.com/kittors/deneb/engine/localapi/localclient"
++	"github.com/kittors/deneb/proto"
+ )
+ 
+ // live starts a world, its fake engine on a socket of its own, and the live
+@@ -254,4 +258,93 @@
+ 	}
+ 	defer stop()
+ 	waitFor(t, l, "the engine to answer", func(s *model.Snapshot) bool { return s.Engine && len(s.LANs) == 2 })
++}
++
++// M2's fields come through as the server sends them: the LAN's switches,
++// who and what waits, the invites made out to people, the logins, the
++// invites made out to me. A server that names no features does none.
++func TestLiveM2View(t *testing.T) {
++	dir, err := os.MkdirTemp("", "dnb")
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { os.RemoveAll(dir) })
++	e := fake.New()
++	path := filepath.Join(dir, "d.sock")
++	stop, err := e.Listen(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(stop)
++	t0 := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
++	e.Update(func(s *apitype.State) { s.LoggedIn, s.User, s.SelfDeviceID = true, "me", "mac" })
++	raw, _ := json.Marshal(proto.UserView{Version: 3, Me: "me",
++		People: []proto.Person{{ID: "me", Name: "kittors"}, {ID: "jie", Name: "jie", DisplayName: "阿杰"}, {ID: "lin", Name: "lin", DisplayName: "小林"}},
++		LANs: []proto.LANView{{ID: "weekend", Name: "周末联机", Owner: "me", ApproveDevices: true,
++			Members: []proto.Member{{Person: "me", State: proto.MemberJoined}, {Person: "jie", State: proto.MemberJoined}, {Person: "lin", State: proto.MemberPending}},
++			Devices: []proto.LANDevice{{Device: "mac"}, {Device: "jpi", Pending: true}},
++			Invited: []proto.InvitedPerson{{Person: "leo", InvitedBy: "me", Invite: "inv1", ExpiresAt: t0}}}},
++		Devices: []proto.DeviceView{
++			{ID: "mac", Owner: "me", Name: "mac", DisplayName: "kittors 的 MacBook", Login: proto.LoginInfo{ExpiresAt: t0.Add(48 * time.Hour), RenewFrom: t0}},
++			{ID: "jpi", Owner: "jie", Name: "pi", DisplayName: "阿杰的树莓派", LastSeen: t0, Login: proto.LoginInfo{Expired: true}}},
++		Invitations: []proto.InvitePreview{{Invite: "inv9", LAN: "boardgame", LANName: "桌游夜",
++			Inviter: proto.Person{ID: "leo", Name: "leo", DisplayName: "Leo"}, State: proto.InvitePending, ExpiresAt: t0}},
++	})
++	e.SetUserView(raw, 3)
++	l := client.NewLive(localclient.New(path))
++	l.Start()
++	t.Cleanup(l.Close)
++	s := waitFor(t, l, "the M2 view", func(s *model.Snapshot) bool { return s.Loaded && len(s.LANs) == 1 })
++	w := s.LANs[0]
++	if !w.ApproveDevices || w.ApproveMembers || w.Waiting {
++		t.Errorf("周末联机's switches: devices %v, members %v; waiting %v", w.ApproveDevices, w.ApproveMembers, w.Waiting)
++	}
++	if !slices.Equal(w.Members, []model.PersonID{"me", "jie"}) || !slices.Equal(w.PendingMembers, []model.PersonID{"lin"}) {
++		t.Errorf("members %v, waiting %v", w.Members, w.PendingMembers)
++	}
++	if !slices.Equal(w.Devices, []model.DeviceID{"mac"}) || !slices.Equal(w.Pending, []model.DeviceID{"jpi"}) {
++		t.Errorf("devices %v, waiting %v", w.Devices, w.Pending)
++	}
++	if len(w.Invited) != 1 || w.Invited[0] != (model.Invited{Person: "leo", By: "me", Invite: "inv1", Expires: t0}) {
++		t.Errorf("invited %+v", w.Invited)
++	}
++	if m := s.Devices["mac"].Login; !m.Expires.Equal(t0.Add(48*time.Hour)) || !m.RenewFrom.Equal(t0) || m.Expired {
++		t.Errorf("this Mac's login %+v", m)
++	}
++	if pi := s.Devices["jpi"]; !pi.Login.Expired || !pi.LastSeen.Equal(t0) {
++		t.Errorf("the Pi's login %+v, last seen %v", pi.Login, pi.LastSeen)
++	}
++	if len(s.Invitations) != 1 || s.Invitations[0].ID != "inv9" || s.Invitations[0].LANName != "桌游夜" || s.Invitations[0].Inviter.Name != "Leo" {
++		t.Errorf("invitations %+v", s.Invitations)
++	}
++	if len(s.Features) > 0 {
++		t.Errorf("a view without features lists %v", s.Features)
++	}
++	// An M2 server lists what it does.
++	var v proto.UserView
++	json.Unmarshal(raw, &v)
++	v.Features = proto.M2Features
++	raw, _ = json.Marshal(v)
++	e.SetUserView(raw, 4)
++	s = waitFor(t, l, "the features", func(s *model.Snapshot) bool { return len(s.Features) > 0 })
++	if !s.Can(model.FeatureApprove) || !s.Can(model.FeatureInvitePerson) || !s.Can(model.FeatureRenew) || s.Can(model.FeatureAddRelay) {
++		t.Errorf("an M2 server does %v", s.Features)
++	}
++}
++
++// An op the server does not know is turned down in plain words, never by
++// its name.
++func TestLiveOldServerSaysPlainly(t *testing.T) {
++	w, l := live(t, fakeworld.Ready)
++	waitFor(t, l, "the world", func(s *model.Snapshot) bool { return len(s.LANs) == 2 })
++	w.E.HandleOps(func(op apitype.OpRequest) (*apitype.OpResult, *apitype.Error) {
++		return nil, &apitype.Error{Code: apitype.ErrInvalid, Message: "不认识的操作：" + op.Op}
++	})
++	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
++	defer cancel()
++	_, err := l.Do(ctx, model.Op{Kind: model.OpDeviceApprove, LAN: model.LANID(fakeworld.Weekend), Device: "x"})
++	var e *model.Error
++	if !errors.As(err, &e) || e.Message != "服务器还没更新，暂时用不了" {
++		t.Errorf("turned down as %v", err)
++	}
+ }
+diff -ruN -x *.orig client/model/model.go client/model/model.go
+--- client/model/model.go	2026-11-08 12:23:09
++++ client/model/model.go	2026-11-08 12:32:17
+@@ -74,7 +74,26 @@
+ 	// Using is since when this computer has used a service of each device it
+ 	// uses one of now, for the "已连接" count (DESIGN §6.7).
+ 	Using map[DeviceID]time.Time
++	// Features are what the control server does beyond M1 (Feature…), as
++	// its user view lists them: the view shows a control only where the
++	// server takes what it sends. An M1 server lists none, and neither does
++	// an M1 engine, which drops what it does not know as it passes the view
++	// on.
++	Features map[string]bool
+ }
++
++// What a control server does beyond M1, by the names its user view gives
++// them (proto.Feature…). Renaming a device and changing its kind need
++// none: every server takes them, M1's too.
++const (
++	FeatureApprove      = "approve"      // a LAN's two switches; letting devices and people in, or not
++	FeatureInvitePerson = "invitePerson" // an invite made out to a person: their ball dropped on a LAN
++	FeatureRenew        = "renew"        // a device's login renewed from another of its owner's
++	FeatureAddRelay     = "addRelay"     // a relay added to a LAN in a click: M4's, no server lists it yet
++)
++
++// Can reports whether the control server does what feature names.
++func (s *Snapshot) Can(feature string) bool { return s.Features[feature] }
+ 
+ // Person is someone in my LANs, me too.
+ type Person struct {

@@ -303,6 +303,24 @@ func (w *World) decideLocked(who proto.PersonID, from proto.DeviceID, op proto.O
 			delete(d.refused, a.Person)
 		}
 		return nil, nil
+	case proto.OpDeviceRename, proto.OpDeviceSetKind:
+		// As M1's server has them: a new name keeps the DNS label.
+		d := w.devices[a.Device]
+		if d == nil {
+			return no(apitype.ErrNotFound, "找不到这台设备。")
+		}
+		if d.owner != who {
+			return no(apitype.ErrForbidden, "只有设备的主人能改它。")
+		}
+		if op == proto.OpDeviceRename {
+			if strings.TrimSpace(a.Name) == "" {
+				return no(apitype.ErrInvalid, "给设备起个名字。")
+			}
+			d.display = strings.TrimSpace(a.Name)
+		} else {
+			d.kind = a.Kind
+		}
+		return nil, nil
 	}
 	return no(apitype.ErrInvalid, "这个操作还不支持。")
 }

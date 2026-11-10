@@ -32,14 +32,75 @@ type World struct {
 	byMachine map[proto.MachinePublic]*device
 	relays    map[proto.RelayID]*proto.Relay
 	relayPos  map[proto.RelayID]int // each relay's default_pos, as stored
-	defaults  []proto.RelayID       // the relays a LAN uses unless it has its own list
-	invites   map[proto.InviteID]*invite
-	byToken   map[string]*invite
+	defaults  []proto.RelayID       // the deployment's default relays, in position order
+	// fallback is what every LAN and share falls back on after its own
+	// relays (M4): the defaults, then the other public relays.
+	fallback  []proto.RelayID
+	relayMeta map[proto.RelayID]*relayMeta
+	joins     map[string]*relayJoin // join codes not used yet, expired ones too until swept
+	kicks     map[string]*relayKick // every kick, lifted ones too
+	// kickedPerson and kickedDevice are the kicks in force, per relay.
+	kickedPerson map[proto.RelayID]map[proto.PersonID]bool
+	kickedDevice map[proto.RelayID]map[proto.DeviceID]bool
+	// relayOffline and relayFull say whether a relay that syncs is offline
+	// or full, so lists put it last; the server sets them, a test world
+	// may leave them nil.
+	relayOffline func(proto.RelayID) bool
+	relayFull    func(proto.RelayID) bool
+	bySecret     map[string]proto.RelayID     // a relay's secret hash → the relay
+	byNodeKey    map[proto.NodePublic]*device // usable devices only
+	// relayStatus says whether a relay is online and when it last checked
+	// in; the server sets it, a test world may leave it nil.
+	relayStatus func(proto.RelayID) (bool, time.Time)
+	invites     map[proto.InviteID]*invite
+	byToken     map[string]*invite
+	shares      map[string]*share // every share, revoked ones too
+	// seatLimit is the deployment's seats per person; 0 means no limit.
+	seatLimit int
 }
+
+// share is one device shared with one person (M3).
+type share struct {
+	ID        string
+	Device    proto.DeviceID
+	Receiver  proto.PersonID
+	Sharer    proto.PersonID // who shared it: the device's owner, or its LAN's owner for a public device
+	State     string         // shareActive or shareRevoked
+	CreatedAt time.Time
+	RevokedAt time.Time
+	// HoldUntil is when a revoked share's seat comes free: when the client
+	// says the undo is gone (share.release), or seatHold after the revoke
+	// at the latest.
+	HoldUntil time.Time
+}
+
+const (
+	shareActive  = "active"
+	shareRevoked = "revoked" // taken back by the giver; undo brings it back
+	shareLeft    = "left"    // given up by the receiver
+)
+
+// seatHold is how long at most a revoked share keeps its seat: the toast
+// offers undo for 4 seconds and then the client releases it; this bounds
+// a client that went away first (pricing-and-relays §1.5 item 7).
+const seatHold = 10 * time.Second
+
+// held reports whether a revoked share still holds its seat at now.
+func (s *share) held(now time.Time) bool {
+	return s.State == shareRevoked && now.Before(s.HoldUntil)
+}
+
+func shareScope(id string) proto.ScopeID { return proto.ShareScope(proto.ShareID(id)) }
 
 type person struct {
 	proto.Person
 	CreatedAt time.Time
+	// SeatLimit is the operator's limit for this person alone, for a
+	// test: 0 is the deployment's, -1 none.
+	SeatLimit int
+	// Operator: one of the deployment's operators (deneb-control
+	// operators), who manage the public relays on the ops page.
+	Operator bool
 }
 
 type lan struct {
@@ -52,15 +113,29 @@ type lan struct {
 	// owner waits for the owner (M2).
 	ApproveDevices bool
 	ApproveMembers bool
-	members        []*member // in the order they joined, every state
-	memberOf       map[proto.PersonID]*member
-	devices        []*lanDevice // in, in the order they joined
-	hasDevice      map[proto.DeviceID]*lanDevice
+	// Mode is how the LAN works (M3): proto.LANModeShare holds only the
+	// owner's devices and its public devices; members get shares.
+	Mode      proto.LANMode
+	members   []*member // in the order they joined, every state
+	memberOf  map[proto.PersonID]*member
+	devices   []*lanDevice // in, in the order they joined
+	hasDevice map[proto.DeviceID]*lanDevice
 	// pending are the devices waiting for the owner. They are kept apart
 	// from devices so nothing that computes a network map can count them.
 	pending    []*lanDevice
 	hasPending map[proto.DeviceID]*lanDevice
-	relays     []proto.RelayID
+	// added are the relays dragged in (relay.add), in order (M4); relays
+	// is the list the LAN's devices try: added, then the fallback.
+	added  []proto.RelayID
+	relays []proto.RelayID
+}
+
+// counts reports whether device d may be in l: any member's device, but in
+// a sharing LAN only the owner's and the LAN's public devices (M3). The
+// loader, the maps and the views all ask, so a slip in one place never
+// shows a member's device in a sharing LAN.
+func (l *lan) counts(d *device) bool {
+	return l.Mode != proto.LANModeShare || d.Owner == l.Owner || d.PublicLAN == l.ID
 }
 
 // joined reports whether p is a member of l who has joined. Only joined
@@ -83,26 +158,35 @@ type lanDevice struct {
 }
 
 type device struct {
-	ID            proto.DeviceID
-	Owner         proto.PersonID
-	MachineKey    proto.MachinePublic
-	NodeKey       proto.NodePublic
-	DiscoKey      proto.DiscoPublic
-	Name          string // DNS label, unique per owner
-	NamePinned    bool   // set by hand (device.setDNSName): renames leave it
-	DisplayName   string
-	Kind          proto.DeviceKind
-	OS            proto.OS
-	Hostname      string
-	IPv4          netip.Addr
-	IPv6          netip.Addr
-	Endpoints     []netip.AddrPort
-	HomeRelay     proto.RelayID
+	ID         proto.DeviceID
+	Owner      proto.PersonID
+	MachineKey proto.MachinePublic
+	NodeKey    proto.NodePublic
+	DiscoKey   proto.DiscoPublic
+	Name       string // DNS label, unique per owner
+	NamePinned bool   // set by hand (device.setDNSName): renames leave it
+	// PublicLAN is the LAN a public device belongs to (M3): its owner,
+	// not the person who logged it in, manages it. Empty for a person's.
+	PublicLAN   proto.LANID
+	DisplayName string
+	Kind        proto.DeviceKind
+	OS          proto.OS
+	Hostname    string
+	IPv4        netip.Addr
+	IPv6        netip.Addr
+	Endpoints   []netip.AddrPort
+	HomeRelay   proto.RelayID
+	// Relays are the relays the engine says it is connected to, HomeRelay
+	// first (M4).
+	Relays        []proto.RelayID
 	Paused        map[proto.ScopeID]bool
 	EngineVersion string
-	LoggedOut     bool
-	CreatedAt     time.Time
-	LastSeen      time.Time
+	// Caps are what its engine claimed at its last login (checkCaps'd),
+	// nil for none.
+	Caps      []string
+	LoggedOut bool
+	CreatedAt time.Time
+	LastSeen  time.Time
 	// ExpiresAt is when its login runs out. Each token the device gets
 	// moves it forward, so only a device away for the whole lifetime
 	// expires. An expired device is in no network map; logging in again,
@@ -181,8 +265,17 @@ func loadWorld(q querier, network proto.Network, publicURL string, now time.Time
 		byMachine: map[proto.MachinePublic]*device{},
 		relays:    map[proto.RelayID]*proto.Relay{},
 		relayPos:  map[proto.RelayID]int{},
-		invites:   map[proto.InviteID]*invite{},
-		byToken:   map[string]*invite{},
+		relayMeta: map[proto.RelayID]*relayMeta{},
+		joins:     map[string]*relayJoin{},
+		kicks:     map[string]*relayKick{},
+
+		kickedPerson: map[proto.RelayID]map[proto.PersonID]bool{},
+		kickedDevice: map[proto.RelayID]map[proto.DeviceID]bool{},
+		bySecret:     map[string]proto.RelayID{},
+		byNodeKey:    map[proto.NodePublic]*device{},
+		invites:      map[proto.InviteID]*invite{},
+		byToken:      map[string]*invite{},
+		shares:       map[string]*share{},
 	}
 	each := func(query string, scan func(*sql.Rows) error) error {
 		rows, err := q.QueryContext(ctx, query)
@@ -198,10 +291,10 @@ func loadWorld(q querier, network proto.Network, publicURL string, now time.Time
 		return rows.Err()
 	}
 
-	err := each(`SELECT id, email, name, display_name, initial, created_at FROM people`, func(r *sql.Rows) error {
+	err := each(`SELECT id, email, name, display_name, initial, created_at, seat_limit, operator FROM people`, func(r *sql.Rows) error {
 		var p person
 		var created int64
-		if err := r.Scan(&p.ID, &p.Email, &p.Name, &p.DisplayName, &p.Initial, &created); err != nil {
+		if err := r.Scan(&p.ID, &p.Email, &p.Name, &p.DisplayName, &p.Initial, &created, &p.SeatLimit, &p.Operator); err != nil {
 			return err
 		}
 		p.CreatedAt = fromMS(created)
@@ -213,14 +306,14 @@ func loadWorld(q querier, network proto.Network, publicURL string, now time.Time
 		return nil, err
 	}
 
-	err = each(`SELECT id, name, owner, created_at, approve_devices, approve_members FROM lans`, func(r *sql.Rows) error {
+	err = each(`SELECT id, name, owner, created_at, approve_devices, approve_members, mode FROM lans`, func(r *sql.Rows) error {
 		l := &lan{
 			memberOf:   map[proto.PersonID]*member{},
 			hasDevice:  map[proto.DeviceID]*lanDevice{},
 			hasPending: map[proto.DeviceID]*lanDevice{},
 		}
 		var created int64
-		if err := r.Scan(&l.ID, &l.Name, &l.Owner, &created, &l.ApproveDevices, &l.ApproveMembers); err != nil {
+		if err := r.Scan(&l.ID, &l.Name, &l.Owner, &created, &l.ApproveDevices, &l.ApproveMembers, &l.Mode); err != nil {
 			return err
 		}
 		l.CreatedAt = fromMS(created)
@@ -252,7 +345,7 @@ func loadWorld(q querier, network proto.Network, publicURL string, now time.Time
 	}
 
 	err = each(`SELECT id, owner, machine_key, node_key, disco_key, name, display_name, kind, os, hostname,
-			ipv4, ipv6, endpoints, home_relay, paused, engine_version, logged_out, created_at, last_seen, expires_at, name_pinned FROM devices`,
+			ipv4, ipv6, endpoints, home_relay, relays, paused, engine_version, caps, logged_out, created_at, last_seen, expires_at, name_pinned, public_lan FROM devices`,
 		func(r *sql.Rows) error {
 			d := &device{
 				Paused:  map[proto.ScopeID]bool{},
@@ -261,10 +354,10 @@ func loadWorld(q querier, network proto.Network, publicURL string, now time.Time
 				opens:   map[proto.ScopeID]map[proto.ServiceKey]bool{},
 				refused: map[proto.PersonID]bool{},
 			}
-			var mk, nk, dk, v4, v6, eps, paused string
+			var mk, nk, dk, v4, v6, eps, relays, paused, caps string
 			var created, seen, expires int64
 			if err := r.Scan(&d.ID, &d.Owner, &mk, &nk, &dk, &d.Name, &d.DisplayName, &d.Kind, &d.OS, &d.Hostname,
-				&v4, &v6, &eps, &d.HomeRelay, &paused, &d.EngineVersion, &d.LoggedOut, &created, &seen, &expires, &d.NamePinned); err != nil {
+				&v4, &v6, &eps, &d.HomeRelay, &relays, &paused, &d.EngineVersion, &caps, &d.LoggedOut, &created, &seen, &expires, &d.NamePinned, &d.PublicLAN); err != nil {
 				return err
 			}
 			d.ExpiresAt = fromMS(expires)
@@ -288,6 +381,15 @@ func loadWorld(q querier, network proto.Network, publicURL string, now time.Time
 			if err := json.Unmarshal([]byte(eps), &d.Endpoints); err != nil {
 				return err
 			}
+			if err := json.Unmarshal([]byte(relays), &d.Relays); err != nil {
+				return err
+			}
+			if err := json.Unmarshal([]byte(caps), &d.Caps); err != nil {
+				return err
+			}
+			if len(d.Caps) == 0 {
+				d.Caps = nil // "[]": one spelling for none
+			}
 			var ps []proto.ScopeID
 			if err := json.Unmarshal([]byte(paused), &ps); err != nil {
 				return err
@@ -301,6 +403,9 @@ func loadWorld(q querier, network proto.Network, publicURL string, now time.Time
 			}
 			w.devices[d.ID] = d
 			w.byMachine[d.MachineKey] = d
+			if d.usable() {
+				w.byNodeKey[d.NodeKey] = d
+			}
 			return nil
 		})
 	if err != nil {
@@ -317,7 +422,7 @@ func loadWorld(q querier, network proto.Network, publicURL string, now time.Time
 		}
 		ld.JoinedAt = fromMS(joined)
 		l, d := w.lans[lanID], w.devices[ld.Device]
-		if l == nil || d == nil || l.memberOf[d.Owner] == nil {
+		if l == nil || d == nil || l.memberOf[d.Owner] == nil || !l.counts(d) {
 			return nil
 		}
 		// A device is in a LAN only while its owner is a joined member.
@@ -412,17 +517,43 @@ func loadWorld(q querier, network proto.Network, publicURL string, now time.Time
 		return nil, err
 	}
 
+	err = each(`SELECT id, device, receiver, sharer, state, created_at, revoked_at, hold_until FROM shares`, func(r *sql.Rows) error {
+		var sh share
+		var created, revoked, hold int64
+		if err := r.Scan(&sh.ID, &sh.Device, &sh.Receiver, &sh.Sharer, &sh.State, &created, &revoked, &hold); err != nil {
+			return err
+		}
+		sh.CreatedAt, sh.RevokedAt, sh.HoldUntil = fromMS(created), fromMS(revoked), fromMS(hold)
+		if w.devices[sh.Device] == nil || w.people[sh.Receiver] == nil {
+			return nil
+		}
+		w.shares[sh.ID] = &sh
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	type pos struct {
 		id  proto.RelayID
 		pos int
 	}
 	var defaults []pos
-	err = each(`SELECT id, name, source, owner, host_name, ipv4, ipv6, derp_port, stun_port, default_pos FROM relays`, func(r *sql.Rows) error {
+	err = each(`SELECT id, name, source, owner, host_name, ipv4, ipv6, derp_port, stun_port, default_pos,
+			pin, rate_limit, secret_hash, created_at, registered_at, weight, capacity FROM relays`, func(r *sql.Rows) error {
 		var rl proto.Relay
+		var m relayMeta
 		var v4, v6 string
 		var dpos int
-		if err := r.Scan(&rl.ID, &rl.Name, &rl.Source, &rl.Owner, &rl.HostName, &v4, &v6, &rl.DERPPort, &rl.STUNPort, &dpos); err != nil {
+		var created, registered int64
+		if err := r.Scan(&rl.ID, &rl.Name, &rl.Source, &rl.Owner, &rl.HostName, &v4, &v6, &rl.DERPPort, &rl.STUNPort, &dpos,
+			&rl.Pin, &rl.RateLimit, &m.SecretHash, &created, &registered, &m.Weight, &m.Capacity); err != nil {
 			return err
+		}
+		m.CreatedAt, m.RegisteredAt = fromMS(created), fromMS(registered)
+		w.relayMeta[rl.ID] = &m
+		if m.SecretHash != "" {
+			w.bySecret[m.SecretHash] = rl.ID
 		}
 		if v4 != "" {
 			a, err := netip.ParseAddr(v4)
@@ -458,27 +589,48 @@ func loadWorld(q querier, network proto.Network, publicURL string, now time.Time
 		w.defaults = append(w.defaults, d.id)
 	}
 
-	own := map[proto.LANID][]proto.RelayID{}
-	err = each(`SELECT lan, relay FROM lan_relays ORDER BY lan, position`, func(r *sql.Rows) error {
+	err = each(`SELECT lan, relay FROM lan_relays ORDER BY lan, position, relay`, func(r *sql.Rows) error {
 		var l proto.LANID
 		var rl proto.RelayID
 		if err := r.Scan(&l, &rl); err != nil {
 			return err
 		}
-		if w.relays[rl] != nil {
-			own[l] = append(own[l], rl)
+		if w.relays[rl] != nil && w.lans[l] != nil {
+			w.lans[l].added = append(w.lans[l].added, rl)
 		}
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	for id, l := range w.lans {
-		if rs, ok := own[id]; ok {
-			l.relays = rs
-		} else {
-			l.relays = slices.Clone(w.defaults)
+	err = each(`SELECT id, owner, relay, source, name, rate_limit, token_hash, created_at, expires_at FROM relay_joins`, func(r *sql.Rows) error {
+		var j relayJoin
+		var relay sql.NullString
+		var created, expires int64
+		if err := r.Scan(&j.ID, &j.Owner, &relay, &j.Source, &j.Name, &j.RateLimit, &j.TokenHash, &created, &expires); err != nil {
+			return err
 		}
+		j.Relay, j.CreatedAt, j.ExpiresAt = proto.RelayID(relay.String), fromMS(created), fromMS(expires)
+		w.joins[j.ID] = &j
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
+	err = each(`SELECT id, relay, person, device, by_person, at, lifted_at, lifted_by FROM relay_kicks`, func(r *sql.Rows) error {
+		var k relayKick
+		var at, lifted int64
+		if err := r.Scan(&k.ID, &k.Relay, &k.Person, &k.Device, &k.By, &at, &lifted, &k.LiftedBy); err != nil {
+			return err
+		}
+		k.At, k.LiftedAt = fromMS(at), fromMS(lifted)
+		w.kicks[k.ID] = &k
+		w.indexKick(&k)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	w.finishRelays()
 	return w, nil
 }

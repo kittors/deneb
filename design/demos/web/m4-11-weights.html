@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>M4-11 · 调权重 · Deneb</title>
+    <link rel="stylesheet" href="../v3/v3.css" />
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="web.css" />
+    <link rel="stylesheet" href="webrelays.css" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script src="../shared/motion.js"></script>
+    <script src="../shared/demo.js"></script>
+    <script src="../v3/glyphs.js"></script>
+    <script src="../v3/links.js"></script>
+    <script src="../v3/app.js"></script>
+    <script src="web.js"></script>
+    <script src="webrelays.js"></script>
+    <script>
+      // M4-11 (DESIGN.md §14.12): kittors's relays page. His two servers,
+      // 公司机房 and 上海 (one at home in China), both used by 周末联机, share
+      // the devices half and half. He drags the line between them to 75 : 25;
+      // in 上海's card, "只当备用" takes it out of the bar (a dashed pill at
+      // its end), "多用" brings it back as it was.
+      const P = App.PEOPLE;
+      const app = new App({
+        title: '中转站',
+        sub: '',
+        side: WR.USER_SIDE,
+      });
+      Web.browser(app, { url: 'deneb.app/relays' });
+      app.win.dataset.k = 'win';
+      app.setTitle('中转站', '直接连不上时，自动经中转站，不用选', 'ok');
+
+      const MINE = [
+        { id: 'office', name: '公司机房', addr: '198.51.100.4', lans: ['weekend', 'team'], share: 50, users: ['mia', 'jie', 'lin'], devices: 5, up: '已经运行 12 天', busy: '不忙' },
+        { id: 'sh', name: '上海', addr: '101.132.40.17', lans: ['weekend'], share: 50, users: ['mia', 'jie'], devices: 3, up: '已经运行 3 天', busy: '不忙' },
+      ];
+      const api = WR.userPage(app, MINE);
+
+      const rest = [600, 660];
+      window.RECORDING = {
+        title: 'M4-11-调权重',
+        duration: 11400,
+        actions: [
+          { at: 600, shot: '中转站', clean: true },
+          { at: 900, glide: { sel: '.whandle' }, dur: 700 },
+          { at: 1800, down: true },
+          { at: 1900, glide: { sel: '.wbar', x: 276, y: 19 }, dur: 1000 },
+          { at: 3100, shot: '往公司机房多分一些' },
+          { at: 3300, up: true },
+          { at: 3700, glide: { sel: '.rcell[data-k="sh"] .orb' }, dur: 800 },
+          { at: 4600, down: true },
+          { at: 4680, up: true },
+          { at: 4900, glide: rest, dur: 500 },
+          { at: 5800, shot: '上海的卡片', clean: true },
+          { at: 6100, glide: { sel: '.sheet [data-act="spare"]' }, dur: 700 },
+          { at: 6900, down: true },
+          { at: 6980, up: true },
+          { at: 7200, glide: rest, dur: 500 },
+          { at: 8200, shot: '只当备用', clean: true },
+          { at: 8500, glide: { sel: '.sheet [data-act="more"]' }, dur: 700 },
+          { at: 9300, down: true },
+          { at: 9380, up: true },
+          { at: 9600, glide: rest, dur: 500 },
+          { at: 10800, shot: '又分到一些', clean: true },
+        ],
+      };
+      window.__ready = true;
+    </script>
+  </body>
+</html>

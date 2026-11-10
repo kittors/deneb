@@ -2,17 +2,22 @@ package client_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/kittors/deneb/client"
 	"github.com/kittors/deneb/client/fakeworld"
 	"github.com/kittors/deneb/client/model"
+	"github.com/kittors/deneb/engine/localapi/apitype"
+	"github.com/kittors/deneb/engine/localapi/fake"
 	"github.com/kittors/deneb/engine/localapi/localclient"
+	"github.com/kittors/deneb/proto"
 )
 
 // live starts a world, its fake engine on a socket of its own, and the live
@@ -254,4 +259,195 @@ func TestLiveWithoutEngine(t *testing.T) {
 	}
 	defer stop()
 	waitFor(t, l, "the engine to answer", func(s *model.Snapshot) bool { return s.Engine && len(s.LANs) == 2 })
+}
+
+// M2's fields come through as the server sends them: the LAN's switches,
+// who and what waits, the invites made out to people, the logins, the
+// invites made out to me. A server that names no features does none.
+func TestLiveM2View(t *testing.T) {
+	dir, err := os.MkdirTemp("", "dnb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	e := fake.New()
+	path := filepath.Join(dir, "d.sock")
+	stop, err := e.Listen(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(stop)
+	t0 := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	e.Update(func(s *apitype.State) { s.LoggedIn, s.User, s.SelfDeviceID = true, "me", "mac" })
+	raw, _ := json.Marshal(proto.UserView{Version: 3, Me: "me",
+		People: []proto.Person{{ID: "me", Name: "kittors"}, {ID: "jie", Name: "jie", DisplayName: "阿杰"}, {ID: "lin", Name: "lin", DisplayName: "小林"}},
+		LANs: []proto.LANView{{ID: "weekend", Name: "周末联机", Owner: "me", ApproveDevices: true,
+			Members: []proto.Member{{Person: "me", State: proto.MemberJoined}, {Person: "jie", State: proto.MemberJoined}, {Person: "lin", State: proto.MemberPending}},
+			Devices: []proto.LANDevice{{Device: "mac"}, {Device: "jpi", Pending: true}},
+			Invited: []proto.InvitedPerson{{Person: "leo", InvitedBy: "me", Invite: "inv1", ExpiresAt: t0}}}},
+		Devices: []proto.DeviceView{
+			{ID: "mac", Owner: "me", Name: "mac", DisplayName: "kittors 的 MacBook", Login: proto.LoginInfo{ExpiresAt: t0.Add(48 * time.Hour), RenewFrom: t0}},
+			{ID: "jpi", Owner: "jie", Name: "pi", DisplayName: "阿杰的树莓派", LastSeen: t0, Login: proto.LoginInfo{Expired: true}}},
+		Invitations: []proto.InvitePreview{{Invite: "inv9", LAN: "boardgame", LANName: "桌游夜",
+			Inviter: proto.Person{ID: "leo", Name: "leo", DisplayName: "Leo"}, State: proto.InvitePending, ExpiresAt: t0}},
+	})
+	e.SetUserView(raw, 3)
+	l := client.NewLive(localclient.New(path))
+	l.Start()
+	t.Cleanup(l.Close)
+	s := waitFor(t, l, "the M2 view", func(s *model.Snapshot) bool { return s.Loaded && len(s.LANs) == 1 })
+	w := s.LANs[0]
+	if !w.ApproveDevices || w.ApproveMembers || w.Waiting {
+		t.Errorf("周末联机's switches: devices %v, members %v; waiting %v", w.ApproveDevices, w.ApproveMembers, w.Waiting)
+	}
+	if !slices.Equal(w.Members, []model.PersonID{"me", "jie"}) || !slices.Equal(w.PendingMembers, []model.PersonID{"lin"}) {
+		t.Errorf("members %v, waiting %v", w.Members, w.PendingMembers)
+	}
+	if !slices.Equal(w.Devices, []model.DeviceID{"mac"}) || !slices.Equal(w.Pending, []model.DeviceID{"jpi"}) {
+		t.Errorf("devices %v, waiting %v", w.Devices, w.Pending)
+	}
+	if len(w.Invited) != 1 || w.Invited[0] != (model.Invited{Person: "leo", By: "me", Invite: "inv1", Expires: t0}) {
+		t.Errorf("invited %+v", w.Invited)
+	}
+	if m := s.Devices["mac"].Login; !m.Expires.Equal(t0.Add(48*time.Hour)) || !m.RenewFrom.Equal(t0) || m.Expired {
+		t.Errorf("this Mac's login %+v", m)
+	}
+	if pi := s.Devices["jpi"]; !pi.Login.Expired || !pi.LastSeen.Equal(t0) {
+		t.Errorf("the Pi's login %+v, last seen %v", pi.Login, pi.LastSeen)
+	}
+	if len(s.Invitations) != 1 || s.Invitations[0].ID != "inv9" || s.Invitations[0].LANName != "桌游夜" || s.Invitations[0].Inviter.Name != "Leo" {
+		t.Errorf("invitations %+v", s.Invitations)
+	}
+	if len(s.Features) > 0 {
+		t.Errorf("a view without features lists %v", s.Features)
+	}
+	// An M2 server lists what it does.
+	var v proto.UserView
+	json.Unmarshal(raw, &v)
+	v.Features = proto.M2Features
+	raw, _ = json.Marshal(v)
+	e.SetUserView(raw, 4)
+	s = waitFor(t, l, "the features", func(s *model.Snapshot) bool { return len(s.Features) > 0 })
+	if !s.Can(model.FeatureApprove) || !s.Can(model.FeatureInvitePerson) || !s.Can(model.FeatureRenew) || s.Can(model.FeatureAddRelay) {
+		t.Errorf("an M2 server does %v", s.Features)
+	}
+}
+
+// An op the server does not know is turned down in plain words, never by
+// its name.
+func TestLiveOldServerSaysPlainly(t *testing.T) {
+	w, l := live(t, fakeworld.Ready)
+	waitFor(t, l, "the world", func(s *model.Snapshot) bool { return len(s.LANs) == 2 })
+	w.E.HandleOps(func(op apitype.OpRequest) (*apitype.OpResult, *apitype.Error) {
+		return nil, &apitype.Error{Code: apitype.ErrInvalid, Message: "不认识的操作：" + op.Op}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := l.Do(ctx, model.Op{Kind: model.OpDeviceApprove, LAN: model.LANID(fakeworld.Weekend), Device: "x"})
+	var e *model.Error
+	if !errors.As(err, &e) || e.Message != "服务器还没更新，暂时用不了" {
+		t.Errorf("turned down as %v", err)
+	}
+}
+
+// Pausing a LAN goes to this computer's engine, as `deneb lan pause` does:
+// the LAN shows paused at once, the devices only it shares stop, and
+// resuming brings them back.
+func TestLivePause(t *testing.T) {
+	_, l := live(t, fakeworld.Ready)
+	waitFor(t, l, "the world", func(s *model.Snapshot) bool {
+		return len(s.LANs) == 2 && s.Path(model.DeviceID(fakeworld.JiePC)).Kind == model.PathDirect
+	})
+	weekend := model.LANID(fakeworld.Weekend)
+	if r := do(t, l, model.Op{Kind: model.OpLANPause, LAN: weekend, On: true}); r.Version != 0 {
+		t.Errorf("pausing answers version %d", r.Version)
+	}
+	if !l.Snapshot().LAN(weekend).Paused {
+		t.Fatal("周末联机 does not show paused at once")
+	}
+	waitFor(t, l, "阿杰's desktop paused", func(s *model.Snapshot) bool {
+		return s.LAN(weekend).Paused && s.Path(model.DeviceID(fakeworld.JiePC)).Kind == model.PathPaused
+	})
+	if s := l.Snapshot(); s.LAN(model.LANID(fakeworld.Studio)).Paused || s.Path(model.DeviceID(fakeworld.Build)).Kind == model.PathPaused {
+		t.Error("pausing 周末联机 paused 工作室 too")
+	}
+	do(t, l, model.Op{Kind: model.OpLANPause, LAN: weekend, On: false})
+	waitFor(t, l, "阿杰's desktop back", func(s *model.Snapshot) bool {
+		return !s.LAN(weekend).Paused && s.Path(model.DeviceID(fakeworld.JiePC)).Kind != model.PathPaused
+	})
+}
+
+// What this computer uses now comes through as since when, for the "已连接"
+// count, the oldest connection to each device; another program's tunnel
+// taking Deneb's connections comes through as the amber pill's notice, its
+// rule with it (DESIGN §6.7, §6.8).
+func TestLiveUsingAndProxy(t *testing.T) {
+	w, l := live(t, fakeworld.Ready)
+	waitFor(t, l, "the world", func(s *model.Snapshot) bool { return len(s.LANs) == 2 })
+	t0 := time.Date(2026, 11, 8, 18, 0, 0, 0, time.UTC)
+	build := apitype.DeviceID(fakeworld.Build)
+	w.E.Update(func(s *apitype.State) {
+		s.Using = []apitype.ServiceUse{
+			{DeviceID: build, Proto: "tcp", Port: 80, Conns: 1, Since: t0.Add(time.Minute)},
+			{DeviceID: build, Proto: "tcp", Port: 22, Conns: 2, Since: t0},
+		}
+		s.Engine.Problems = append(s.Engine.Problems, apitype.Problem{Code: apitype.ProblemProxy, Message: "别的程序的网卡 utun7 接走了…", Rule: "IP-CIDR,10.48.0.0/16,DIRECT"})
+	})
+	s := waitFor(t, l, "the using and the notice", func(s *model.Snapshot) bool { return len(s.Using) > 0 && len(s.Notices) > 0 })
+	if got := s.Using[model.DeviceID(build)]; !got.Equal(t0) {
+		t.Errorf("构建服务器 used since %v, want the oldest, %v", got, t0)
+	}
+	if n := s.Notices[0]; n.Code != "proxy" || n.Short != "Clash 可能挡住连接" || n.Rule != "IP-CIDR,10.48.0.0/16,DIRECT" || strings.Contains(n.Message, "utun") {
+		t.Errorf("the notice: %+v", n)
+	}
+	w.E.Update(func(s *apitype.State) { s.Using, s.Engine.Problems = nil, nil })
+	waitFor(t, l, "nothing used, nothing to tell", func(s *model.Snapshot) bool { return len(s.Using) == 0 && len(s.Notices) == 0 })
+}
+
+// This computer without a network comes through as the engine says it
+// (no-network), and goes as the engine takes it back; from an engine that
+// does not say it, as the control server and every device out of reach at
+// once, but never while anything connects (DESIGN §6.10).
+func TestLiveNoNetwork(t *testing.T) {
+	w, l := live(t, fakeworld.Ready)
+	waitFor(t, l, "the world", func(s *model.Snapshot) bool { return len(s.LANs) == 2 && !s.NoNetwork })
+	w.E.Update(func(s *apitype.State) {
+		s.Engine.Problems = append(s.Engine.Problems, apitype.Problem{Code: "no-network", Message: "这台电脑没联网"})
+	})
+	waitFor(t, l, "no network", func(s *model.Snapshot) bool { return s.NoNetwork })
+	w.E.Update(func(s *apitype.State) { s.Engine.Problems = nil })
+	waitFor(t, l, "the network back", func(s *model.Snapshot) bool { return !s.NoNetwork })
+
+	// An engine that does not say it: the server out of reach, and every
+	// device too.
+	w.E.Update(func(s *apitype.State) {
+		s.ControlConnected = false
+		for i := range s.Paths {
+			s.Paths[i].Kind = apitype.PathUnreachable
+		}
+	})
+	waitFor(t, l, "no network, as everything is out of reach", func(s *model.Snapshot) bool { return s.NoNetwork })
+	w.E.Update(func(s *apitype.State) { s.Paths[0].Kind = apitype.PathDirect })
+	waitFor(t, l, "a device connects: there is a network", func(s *model.Snapshot) bool { return !s.NoNetwork })
+	w.E.Update(func(s *apitype.State) {
+		s.ControlConnected = true
+		for i := range s.Paths {
+			s.Paths[i].Kind = apitype.PathUnreachable
+		}
+	})
+	waitFor(t, l, "the server answers: there is a network", func(s *model.Snapshot) bool { return !s.NoNetwork })
+	// As an engine starts: the server not yet reached, every device being
+	// connected to. That is no sign of a missing network.
+	w.E.Update(func(s *apitype.State) {
+		s.ControlConnected = false
+		for i := range s.Paths {
+			s.Paths[i].Kind = apitype.PathConnecting
+		}
+	})
+	waitFor(t, l, "every device being connected to", func(s *model.Snapshot) bool {
+		return s.Path(model.DeviceID(fakeworld.Build)).Kind == model.PathConnecting
+	})
+	if l.Snapshot().NoNetwork {
+		t.Error("an engine starting up shows no network")
+	}
 }

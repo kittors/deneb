@@ -1,0 +1,477 @@
+/* The invite page, the login card, the download card and the phone's dock
+   (DESIGN.md §14.5–§14.7), on the desktop's tokens (tokens.css). Values not
+   named in the desktop's code yet (shadows, radii, type sizes) are the
+   design's, as design/demos/v3/v3.css has them. */
+
+:root,
+[data-theme='light'] {
+  --shadow-sm: 0 1px 2px rgba(9, 9, 11, 0.06), 0 1px 1px rgba(9, 9, 11, 0.04);
+  --shadow-md: 0 10px 28px rgba(9, 9, 11, 0.09), 0 2px 6px rgba(9, 9, 11, 0.05);
+}
+[data-theme='dark'] {
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  --shadow-md: 0 14px 34px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+body {
+  background: var(--well);
+  color: var(--ink);
+  font: var(--font-size, 13px) / 1.4 -apple-system, 'SF Pro Text', 'PingFang SC', 'Microsoft YaHei UI', 'Noto Sans SC', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: 'tnum';
+}
+#app {
+  height: 100%;
+}
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Pill buttons and glossy balls, as the desktop's. */
+.join-page .btn,
+.dl-card .btn,
+.m-dock .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  transition: transform 0.18s cubic-bezier(0.3, 1.5, 0.5, 1), background 0.16s, box-shadow 0.16s, opacity 0.16s;
+}
+.join-page .btn:active,
+.dl-card .btn:active,
+.m-dock .btn:active {
+  transform: scale(0.96);
+}
+.join-page .btn.primary,
+.dl-card .btn.primary,
+.m-dock .btn.primary {
+  color: #fff;
+  background: var(--primary);
+  box-shadow: 0 1px 2px rgba(47, 107, 255, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+.join-page .btn.primary:hover,
+.dl-card .btn.primary:hover,
+.m-dock .btn.primary:hover {
+  background: var(--primary-2);
+}
+.join-page .btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+  transform: none;
+}
+.dl-card .btn.ghost {
+  color: var(--ink);
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+.join-page :focus-visible,
+.dl-card :focus-visible,
+.m-dock :focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.join-page .ball,
+.dl-card .ball {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  background: radial-gradient(circle at 34% 28%, color-mix(in oklab, var(--c) 55%, white) 0%, var(--c) 52%, color-mix(in oklab, var(--c) 82%, black) 100%);
+  box-shadow: inset 0 -1.5px 3px rgba(0, 0, 0, 0.14), 0 2px 6px color-mix(in srgb, var(--c) 30%, transparent);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.18);
+}
+
+/* ---- The invite page and the login (§14.5) ---- */
+.join-page {
+  position: relative;
+  min-height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 72px 16px 48px;
+  background: var(--well);
+}
+.join-page .brand {
+  position: absolute;
+  left: 28px;
+  top: 22px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.join-page .brand svg {
+  color: var(--primary);
+}
+.join-card {
+  position: relative;
+  width: 440px;
+  max-width: 100%;
+  box-sizing: border-box;
+  border-radius: 20px;
+  background: var(--bg);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+.jc-in {
+  padding: 22px 22px 20px;
+}
+.jc-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.jc-head .ball,
+.jc-mark {
+  width: 44px;
+  height: 44px;
+  font-size: 17px;
+  flex: none;
+}
+.jc-mark {
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--primary) 82%, #fff), color-mix(in srgb, var(--primary) 92%, #000));
+  box-shadow: 0 6px 14px color-mix(in srgb, var(--primary) 30%, transparent);
+}
+.jc-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.jc-sub {
+  margin: 3px 0 0;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.jc-form {
+  margin: 0;
+}
+.jc-foot {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  margin-top: 20px;
+}
+.jc-foot .hint {
+  margin-right: auto;
+  margin-left: 58px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.jc-foot .hint .link {
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  color: var(--primary);
+  cursor: pointer;
+}
+.jc-error {
+  min-height: 0;
+  margin: 8px 0 0 58px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.jc-error:empty {
+  display: none;
+}
+.join-note {
+  max-width: 440px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-2);
+  text-align: center;
+}
+.field {
+  display: flex;
+  align-items: center;
+  height: 44px;
+  margin: 18px 0 0 58px;
+  padding: 0 14px;
+  border-radius: 12px;
+  background: var(--well);
+  box-shadow: inset 0 0 0 1px transparent;
+  transition: box-shadow 0.16s ease-out, background-color 0.16s ease-out;
+}
+.field:focus-within {
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1.5px var(--primary), 0 0 0 4px color-mix(in srgb, var(--primary) 14%, transparent);
+}
+.field input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  padding: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 15px;
+  color: var(--ink);
+  caret-color: var(--primary);
+}
+.field input::placeholder {
+  color: var(--ink-3);
+}
+.join-page .field :focus-visible {
+  outline: 0;
+}
+.code-boxes {
+  display: flex;
+  gap: 8px;
+  margin: 18px 0 0 58px;
+}
+.code-boxes .cb {
+  width: 44px;
+  height: 52px;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: 12px;
+  background: var(--well);
+  box-shadow: inset 0 0 0 1px transparent;
+  text-align: center;
+  font: inherit;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--ink);
+  caret-color: transparent;
+  outline: 0;
+  transition: box-shadow 0.16s ease-out, background-color 0.16s ease-out;
+}
+.code-boxes .cb.at,
+.code-boxes .cb:focus {
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1.5px var(--primary), 0 0 0 4px color-mix(in srgb, var(--primary) 14%, transparent);
+}
+.jc-joined {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 26px 22px 24px;
+  text-align: center;
+}
+.jc-joined .pair {
+  display: flex;
+}
+.jc-joined .pair .ball {
+  font-size: 18px;
+  box-shadow: 0 0 0 3px var(--bg), inset 0 -2px 4px rgba(0, 0, 0, 0.14);
+}
+.jc-joined .pair .ball + .ball {
+  margin-left: -8px;
+}
+
+/* ---- The download card (§14.7), inside the device card's frame ---- */
+.dl-card .top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.dl-card .top b {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+}
+.dl-card .top span {
+  display: block;
+  margin-top: 1px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.dl-card .sheet-close {
+  margin-left: auto;
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--well);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.dl-mark {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--primary) 82%, #fff), color-mix(in srgb, var(--primary) 92%, #000));
+  box-shadow: 0 6px 14px color-mix(in srgb, var(--primary) 30%, transparent), 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+.dl-text {
+  margin: 14px 2px 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+.dl-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+}
+.dl-buttons .dl-btn {
+  width: 100%;
+  box-sizing: border-box;
+}
+.dl-more {
+  display: block;
+  margin: 2px auto 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.dl-after {
+  margin: 14px 2px 0;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: var(--well);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+/* ---- The phone's dock (§14.6) ---- */
+.m-dock {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 56px;
+  padding: 0 8px 0 18px;
+  border-radius: 999px;
+  background: var(--bg);
+  box-shadow: var(--shadow-md);
+  font-size: 13px;
+  color: var(--ink-2);
+  z-index: 20;
+}
+.m-dock-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.m-dock .btn {
+  flex: none;
+  min-width: 104px;
+}
+
+/* ---- Phones ---- */
+@media (max-width: 767px) {
+  .join-page {
+    justify-content: flex-start;
+    padding-top: 120px;
+  }
+  .join-page .brand {
+    left: 22px;
+    top: 18px;
+  }
+  .jc-in {
+    padding: 20px 18px 18px;
+  }
+  .field,
+  .code-boxes,
+  .jc-error {
+    margin-left: 0;
+  }
+  .jc-foot .hint {
+    margin-left: 0;
+  }
+  .code-boxes {
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .join-note {
+    max-width: 300px;
+  }
+}
+
+/* ---- The stand-in LAN page, until the canvas module registers its own ---- */
+.standin {
+  position: relative;
+  min-height: 100%;
+  box-sizing: border-box;
+  padding: 28px;
+  background: var(--bg);
+}
+.standin h1 {
+  margin: 0;
+  font-size: 20px;
+}
+.standin header p {
+  margin: 4px 0 0;
+  color: var(--ink-2);
+}
+.standin-devs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 24px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.standin-devs li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--well);
+}
+.standin-devs small {
+  color: var(--ink-2);
+}
+.standin-slot {
+  box-shadow: inset 0 0 0 1.5px var(--primary);
+}
+.standin-sheet {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  width: 300px;
+  padding: 16px;
+  border-radius: 20px;
+  background: var(--bg);
+  box-shadow: var(--shadow-md);
+}

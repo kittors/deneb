@@ -70,19 +70,56 @@
 
 **State 里界面要用的**：`selfDeviceID`（认出"这台电脑"）、`loggedIn`、`loginURL`、`user`、`controlConnected`、`mode`（`kernel` / `userspace`）、`version`、`paths`、`userView`（控制服务器的用户视图，原样转发，用 `proto/` 的类型解）。`engine.watchers` 是开着的 `/v1/watch` 流的条数：界面开着窗口时握着一条，脚本可以据此等界面连上（11-08 加）。`self`、`scopes`、`peers`、`relays` 是引擎的网络图，命令行用；界面以用户视图为准。
 
-**PeerPath**：`kind` 取 `direct`、`relay`、`connecting`、`unreachable`、`offline`、`paused`、`refused`；`relay` 是中转站 id；`endpoint` 是直连时对方的 ip:port；`rttMs`、`loss`（最近 10 秒）、`since`。引擎原样上报，不防抖，防抖只在 liveStore 里做（计划 §2.7 第 7 步）。
+**PeerPath**：`kind` 取 `direct`、`relay`、`connecting`、`unreachable`、`offline`、`paused`、`refused`；`relay` 是中转站 id；`endpoint` 是直连时对方的 ip:port；`rttMs`、`loss`、`since`。`loss` 从 11-08 下午起按最近 30 秒算，攒够 20 个心跳探测才报，之前一律是 0。额外加的快探测不算进去，原来那样一个刚起来的引擎，8 个里丢 1、2 个就显示成「12%」「25%」。家里到香港这条线 UDP 真的丢 13% 左右，所以构建服务器、NAS 那两条会稳定显示 10% 上下，这个数是真的。界面要不要显示、多少以上才显示，由界面决定。引擎原样上报，不防抖，防抖只在 liveStore 里做（计划 §2.7 第 7 步）。
 
 M2 起（11-08 加，都是可选字段，旧界面不受影响）：
 
 - `idle`：对端一阵子没流量了，引擎就不再探测它。这时 `kind` 是最后的样子，线可以照原样画；一有流量就会醒来。
 - `from`：上一个种类，不管它只持续了多久。拿到 `kind: direct` 加 `from: relay`，就可以放出「先经中转连上，打通后换直连」（场景 1）；中转那一段即使只有几毫秒，也照样能知道。
 - `reason`：直连明明有回应却走中转的原因。`lossy` 是直连在丢包，`slow` 是直连比中转慢很多。界面可以写成「网络不太好，改走中转」。
+- 直连短暂没回应的时候（11-08 下午起），线照旧是 `direct`：引擎这时同时经中转发一份，6.5 秒后还没回应才报 `relay`。界面不用为这个做什么。
+- `peers[].pausedScopes`（11-08 加，配合控制线的 `Peer.pausedScopes`）：对方在自己那边暂停了的、双方共有的局域网。`scopes` 为空、`pausedScopes` 不空，就是对方把和我共有的都暂停了：它的名字解析不到，路径报 `paused`，可以画成「对方暂停了」。引擎还留着它的密钥和路径，对方一恢复，两边马上就通。
 
 **谁在用这台设备的服务**（M2，场景 5）：
 
 - `State.usage` 是一个数组，每一项是一个对端正在用这台设备的某项服务：`deviceID`（谁在用）、`scopes`（经哪些局域网）、`kind`/`name`（这台设备开放时起的名字）、`proto`/`port`、`conns`（几条连接）、`since`、`lastSeen`。只算对方发起、还活着的连接；ping 不算服务，本机自己发起的连接也不算。
 - 事件 `{"type":"usage","usage":[…]}`：使用情况一有变化就推（每 2 秒最多一次）。数组可能是空的，表示现在没人在用。
 - 事件 `{"type":"cut","cut":[…]}`：这台设备把服务从某个局域网关掉、或拒绝某人的那一刻，被切断的那些使用。界面就在这些线上放一小段红光。
+- `State.using`（11-08 下午加，给「已连接」计时用）：这台电脑正在用别的设备的哪些服务，形状和 `usage` 一样：
+  - `deviceID` 是提供服务的那台；`scopes` 是双方都在、本机没暂停的局域网；`proto`/`port` 是对方的端口；`conns`；`since`（最早那条连接开始的时刻，「已连接 2:14」就从它算起）；`lastSeen`。
+  - 只算本机发起、还活着的连接。ping 不算，关掉了的连接（收到 FIN/RST）马上消失。
+  - `kind`、`name` 是空的：引擎不知道对方给服务起的名字，到用户视图里按设备和端口去找。
+  - TCP 连接没正常关、一直不说话的，最长要一小时才过期；UDP 是两分钟。所以「还在用」可以再看 `lastSeen`。
+- 事件 `usage` 里也带上了 `using`：两边哪个变了都推，每 2 秒最多一次。
+
+**分享范围**（M3，11-08 傍晚加）：
+- `scopes[]` 多了两个字段：
+  - `kind`：`lan` 或 `share`，只是给显示用。
+  - `noInbound`：为真时，这台设备在这个范围里只出不进，对端发起的什么都进不来，ping 也进不来。这是接收人那一侧。
+- 过滤层因此丢掉的包，在 `deneb debug drops` 里记作 `in:no-inbound`。
+- 规则以 `proto.Scope.NoInbound` 的注释为准：
+  - 只挡对端发起的；
+  - 按范围算、取并集；
+  - 为真时不看这个范围的 `Open`。
+
+**中转站**（M4，11-08 晚上加）：
+- `scopes[].relay`：这台设备为这个范围常驻连着的中转站，即范围列表里第一个能用的。它不是列表第一个时，说明自带的被拒或连不上，改走了后面的公共中转站，界面显示「改走公共中转站」。
+- `GET /v1/relay-usage`：转发控制服务器的 `proto.RelayUsage`（我的中转站这个月转了多少），中转站卡片打开时取，不推送。
+- `deneb debug paths` 还是按对端列出路径；这台设备连着哪些中转站，看 `State.relays`。
+
+**问题**（`State.engine.problems`，每项 `code`、`message`，11-08 下午起有的还带 `rule`）：
+
+- `control`、`datapath`、`bind`、`socks`：M1 就有的几种。
+- `proxy`（11-08 下午加，只在内核模式出现）：别的程序的网卡接走了去局域网设备的连接，比如 Clash、Surge、v2rayN 的增强模式（TUN），或者别的 VPN。
+  - `rule` 是要在那个程序里加的一行，例如 `IP-CIDR,10.48.0.0/16,DIRECT`，地址段就是部署的那一段。界面显示成琥珀色胶囊，带「复制规则」（DESIGN §6.8）。
+  - 怎么判断：引擎问系统，去往局域网解析器地址和一个对端地址时会从哪个地址发出。从本机的叠加地址发出，说明走的是 Deneb 的网卡；从另一块隧道网卡的地址发出，就是被它接走了。物理网卡接走的话，是和本地网络地址撞了，不算代理，也不报。
+  - 什么时候查：网卡起来后、换网时、每 30 秒查一次；恢复正常就把这条问题撤掉。
+  - 用户态从来不报：用户态下引擎自己的连接绑在物理网卡上，代理接不走（DESIGN §6.8「什么都不用提示」）。
+- `no-network`（11-08 晚上加）：这台电脑没联网。
+  - 怎么判断：没有默认路由；或者默认路由走的网卡没有地址（IPv4 或全局 IPv6）。默认路由是代理的 TUN 时，看引擎绑定的物理网卡：Clash、Surge 的增强模式在 Wi-Fi 断了以后常常还留着默认路由。
+  - 什么时候：系统每发一次网络变化通知就判断一次，启动时也判断一次。一断网就报，不等对端一台台超时；网回来就撤。撤的同时引擎已经在重连中转、探测对端。
+  - 界面看到它，写「这台电脑没联网，联网后会自动连上」，对端写"等这台电脑联网"，不写"连不上"。断网约 7 秒后，对端照旧会被报成 unreachable。
+  - 不去 ping 网关：有地址、网关却不通（比如连上了要先登录的 Wi-Fi）时不报，那时对端照常报连不上。
 
 **错误**：非 2xx 的回答都是 `{"error":{"code":…,"message":…}}`，`message` 是一句中文，可以直接放进提示条。`code` 取 `forbidden`（没权限）、`offline`（连不上控制服务器）、`refused`（对方拒绝）、`not_logged_in`、`not_found`、`ambiguous`、`invalid`、`conflict`、`timeout`、`internal`。按 `code` 判断，HTTP 状态码只是给 curl 看的。
 
@@ -111,7 +148,7 @@ M2 起（11-08 加，都是可选字段，旧界面不受影响）：
 
 **登录**：配置了控制服务器，引擎一启动就跑控制循环。没登录时它手里一直有一条当前有效的登录链接（`State.loginURL`、`deneb login`、`deneb status` 都能看到），链接 15 分钟过期后自动换新；有人在浏览器里登完，引擎立刻接上，不用再跑命令。登出（本机 `deneb logout`，或服务器那边把它登出）后同样马上备好下一条链接。
 
-测试构建（`-tags denebtest`）另有 `/v1/test/...`。M2 加了这几个：`deneb debug loss <设备> 20 [out|in]`（在引擎里按比例丢掉和这个对端之间的 UDP，模拟坏线路）、`deneb debug netchange`（当作网络变了来处理）、`deneb debug trace <端口>|off`（把这个端口的每个 TCP 包连同序号记进引擎日志）。M1 已有的：`POST /v1/test/shutdown`（`deneb debug shutdown`，让引擎像收到 SIGTERM 一样停下。内核引擎以 root 运行，有了它，它的用户不用 sudo 也能叫停，网卡也跟着撤掉）、模拟 UDP 全丢、借道路由、伪造来源注入、关过滤、长连接计时（带每次停顿的时刻）、连续通断探测（`deneb debug probe`，每次一行带毫秒时刻）、按地址 ping，以及叠加地址上的几个小服务（网页 :80、计时流 :7000、回显 udp/7、测速 :9000）。正式构建没有这些。
+测试构建（`-tags denebtest`）另有 `/v1/test/...`。11-08 下午加了 `deneb debug dup auto|on|off`：不重启就能切换「丢包的直连上小包发两份」（`denebd run -dup-small`，默认 auto）；`debug paths` 里的 `dup`、`txDup` 分别表示现在是否在发两份、已经多发了多少个包；11-09 加的 `hsBoth`、`txHSBoth`、`rxHSDupes` 分别表示对端是否声明了给握手消息去重（声明了，直连没确认时握手两路发）、已经两路发了几条握手消息、从这个对端扔掉了几条重复的握手消息。M2 加了这几个：`deneb debug loss <设备> 20 [out|in]`（在引擎里按比例丢掉和这个对端之间的 UDP，模拟坏线路）、`deneb debug netchange`（当作网络变了来处理）、`deneb debug trace <端口>|off`（把这个端口的每个 TCP 包连同序号记进引擎日志）。M1 已有的：`POST /v1/test/shutdown`（`deneb debug shutdown`，让引擎像收到 SIGTERM 一样停下。内核引擎以 root 运行，有了它，它的用户不用 sudo 也能叫停，网卡也跟着撤掉）、模拟 UDP 全丢、借道路由、伪造来源注入、关过滤、长连接计时（带每次停顿的时刻）、连续通断探测（`deneb debug probe`，每次一行带毫秒时刻）、按地址 ping，以及叠加地址上的几个小服务（网页 :80、计时流 :7000、回显 udp/7、测速 :9000）。正式构建没有这些。
 
 ## 怎么跑
 

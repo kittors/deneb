@@ -1,0 +1,489 @@
+diff -ruN -x .mygo -x *.png a/cmd/deneb/canvas.go b/cmd/deneb/canvas.go
+--- cmd/deneb/canvas.go	2026-11-08 18:05:04
++++ cmd/deneb/canvas.go	2026-11-08 20:40:53
+@@ -632,7 +632,7 @@
+ 		}
+ 		// Offline, it greys over 300 ms rather than at once.
+ 		gone := float32(0)
+-		if d.path == "offline" || d.path == "paused" {
++		if d.path == "offline" || d.path == "paused" || d.path == "nonet" {
+ 			// Paused, it greys as well (scene 3).
+ 			gone = 1
+ 		}
+diff -ruN -x .mygo -x *.png a/cmd/deneb/main.go b/cmd/deneb/main.go
+--- cmd/deneb/main.go	2026-11-08 15:16:20
++++ cmd/deneb/main.go	2026-11-08 20:40:53
+@@ -93,6 +93,8 @@
+ 			ui.KeyN: func(*ui.Context, *app) { d.Simulate("notice") },
+ 			ui.KeyU: func(*ui.Context, *app) { d.Simulate("using") },
+ 			ui.KeyW: func(*ui.Context, *app) { d.Simulate("waiting") },
++			// This computer loses its network, or gets it back (§6.10).
++			ui.KeyL: func(*ui.Context, *app) { d.Simulate("nonet") },
+ 		}, nil
+ 	}
+ 	if start := os.Getenv("DENEB_FAKE"); start != "" {
+diff -ruN -x .mygo -x *.png a/cmd/deneb/menubar.go b/cmd/deneb/menubar.go
+--- cmd/deneb/menubar.go	2026-11-08 19:29:41
++++ cmd/deneb/menubar.go	2026-11-08 20:40:53
+@@ -26,11 +26,11 @@
+ 
+ // trayState is the menu bar's mark for s: "hollow" while nothing connects
+ // here (the engine does not answer, no one logged in on this computer yet,
+-// or every LAN is paused), "dot" while something waits for me, "solid"
+-// otherwise.
++// it has no network, or every LAN is paused), "dot" while something waits
++// for me, "solid" otherwise.
+ func trayState(s *model.Snapshot, now time.Time) string {
+ 	switch {
+-	case !s.Engine || !s.LoggedIn || allPaused(s):
++	case !s.Engine || !s.LoggedIn || s.NoNetwork || allPaused(s):
+ 		return "hollow"
+ 	case len(choresOf(s, now)) > 0:
+ 		return "dot"
+@@ -104,7 +104,8 @@
+ 	}
+ 	seen := map[model.DeviceID]bool{}
+ 	for _, l := range s.LANs {
+-		if l.Waiting || l.Paused {
++		if l.Waiting || l.Paused || s.NoNetwork {
++			// No network here: nothing is out of reach over there (§6.10).
+ 			continue
+ 		}
+ 		for _, id := range l.Devices {
+@@ -250,6 +251,8 @@
+ 		return p.ink3, "还没登录"
+ 	case !s.Loaded:
+ 		return p.ink3, "正在连接…"
++	case s.NoNetwork:
++		return p.ink3, "这台电脑没联网"
+ 	case len(lans) == 0:
+ 		return p.ink3, "还没有局域网"
+ 	case allPaused(s):
+@@ -497,6 +500,8 @@
+ 		return say("等", owner, "同意你加入")
+ 	case l.Paused:
+ 		return "已暂停"
++	case s.NoNetwork:
++		return "等这台电脑联网"
+ 	case s.Self != "" && !l.Has(s.Self):
+ 		return "这台电脑还没加进来"
+ 	}
+diff -ruN -x .mygo -x *.png a/cmd/deneb/model.go b/cmd/deneb/model.go
+--- cmd/deneb/model.go	2026-11-08 19:29:41
++++ cmd/deneb/model.go	2026-11-08 20:40:53
+@@ -411,6 +411,8 @@
+ 		return "连不上"
+ 	case "offline":
+ 		return "不在线"
++	case "nonet":
++		return "等这台电脑联网"
+ 	case "paused":
+ 		return "已暂停"
+ 	case "refused":
+diff -ruN -x .mygo -x *.png a/cmd/deneb/nonet_test.go b/cmd/deneb/nonet_test.go
+--- cmd/deneb/nonet_test.go	1970-01-01 07:30:00
++++ cmd/deneb/nonet_test.go	2026-11-08 20:40:53
+@@ -0,0 +1,153 @@
++package main
++
++import (
++	"fmt"
++	"image/jpeg"
++	"image/png"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/egoist/mygo/ui"
++)
++
++// This computer without a network (DESIGN §6.10): the header says so
++// calmly, every other device waits for it, greyed, and nothing says 连不上;
++// the menu bar's mark is the outline, its panel says so too. Back, each
++// device is being connected to first, then connected, and 连不上 never
++// shows in between.
++func TestNoNetworkSaysSo(t *testing.T) {
++	a, d := newDemoApp()
++	d.Manual()
++	tt := ui.NewTester(a.view, 1180, 740)
++	frames := func(dt time.Duration) {
++		for end := tt.Now().Add(dt); tt.Now().Before(end); {
++			tt.Advance(16 * time.Millisecond)
++			tt.Frame()
++			if s := strings.Join(tt.Texts(), " "); strings.Contains(s, "连不上") {
++				t.Fatalf("连不上 shows: %q", tt.Texts())
++			}
++		}
++	}
++	frames(800 * time.Millisecond)
++	d.Simulate("nonet")
++	frames(time.Second)
++	if _, line := a.summary(&lightPalette); line != "这台电脑没联网，联网后会自动连上" {
++		t.Errorf("the header says %q", line)
++	}
++	for _, dv := range a.devices {
++		want := "等这台电脑联网"
++		if dv.id == a.self {
++			want = "你正在用"
++		}
++		if got := a.status(dv); got != want {
++			t.Errorf("%s says %q, want %q", dv.name, got, want)
++		}
++	}
++	if st := trayState(a.snap, time.Now()); st != "hollow" {
++		t.Errorf("the mark is %q", st)
++	}
++	if _, head := a.panelSummary(&lightPalette); head != "这台电脑没联网" {
++		t.Errorf("the panel's head says %q", head)
++	}
++	if l := a.snap.LAN("weekend"); a.lanLine(l) != "等这台电脑联网" {
++		t.Errorf("the panel's 周末联机 says %q", a.lanLine(l))
++	}
++	d.Simulate("unreachable")
++	frames(500 * time.Millisecond)
++	if ch := choresOf(a.snap, time.Now()); len(ch) > 0 {
++		t.Errorf("chores without a network: %+v", ch)
++	}
++	d.Simulate("nonet")
++	frames(500 * time.Millisecond)
++	if jd := a.device("jdesk"); a.status(jd) != "正在连接…" {
++		t.Errorf("back, 阿杰的台式机 says %q", a.status(jd))
++	}
++	d.Simulate("nonet-back")
++	frames(2500 * time.Millisecond)
++	if jd := a.device("jdesk"); a.status(jd) != "直接连上" {
++		t.Errorf("connected again, 阿杰的台式机 says %q", a.status(jd))
++	}
++}
++
++// TestM2NoNetworkFrames records §6.10 in the demo, both themes, the window
++// and the menu bar's panel, for review, when DENEB_M2 names a folder.
++func TestM2NoNetworkFrames(t *testing.T) {
++	root := os.Getenv("DENEB_M2")
++	if root == "" {
++		t.Skip("set DENEB_M2 to a folder to record M2's demo")
++	}
++	for _, dark := range []bool{false, true} {
++		theme := map[bool]string{false: "light", true: "dark"}[dark]
++		recorder := func(tt *ui.Tester, name string) (func(time.Duration), func(string)) {
++			dir := filepath.Join(root, theme+"-"+name)
++			os.MkdirAll(dir, 0o755)
++			n := 0
++			rec := func(dt time.Duration) {
++				for end := tt.Now().Add(dt); tt.Now().Before(end); n++ {
++					tt.Advance(time.Second / 60)
++					tt.Frame()
++					f, _ := os.Create(filepath.Join(dir, fmt.Sprintf("%04d.jpg", n)))
++					jpeg.Encode(f, tt.Image(), &jpeg.Options{Quality: 88})
++					f.Close()
++				}
++			}
++			shot := func(state string) {
++				tt.SetScale(2)
++				tt.Frame()
++				f, _ := os.Create(filepath.Join(root, theme+"-"+name+"_"+state+".png"))
++				png.Encode(f, tt.Image())
++				f.Close()
++				tt.SetScale(1)
++				tt.Frame()
++			}
++			return rec, shot
++		}
++		// The window: off, a device's card, back, connected.
++		a, d := newDemoApp()
++		d.Manual()
++		tt := ui.NewTester(a.view, 1180, 740)
++		tt.SetDark(dark)
++		rec, shot := recorder(tt, "nonet")
++		rec(time.Second)
++		d.Simulate("nonet")
++		rec(2500 * time.Millisecond)
++		shot("没联网")
++		p := a.device("jdesk").at()
++		tt.Move(a.origin.X+p.X, a.origin.Y+p.Y)
++		rec(300 * time.Millisecond)
++		tt.ClickAt(a.origin.X+p.X, a.origin.Y+p.Y)
++		rec(900 * time.Millisecond)
++		shot("卡片")
++		tt.Move(a.origin.X+300, a.origin.Y+40)
++		rec(300 * time.Millisecond)
++		tt.ClickAt(a.origin.X+300, a.origin.Y+40)
++		rec(800 * time.Millisecond)
++		d.Simulate("nonet")
++		rec(1200 * time.Millisecond)
++		shot("正在连接")
++		d.Simulate("nonet-back")
++		rec(3 * time.Second)
++		shot("连上了")
++
++		// The menu bar's panel: off and back.
++		pa, pd := newDemoApp()
++		pd.Manual()
++		m := &menubarScreen{a: pa, open: true}
++		pa.panelShown = true
++		pt := ui.NewTester(m.view, screenW, screenH)
++		pt.SetDark(dark)
++		prec, pshot := recorder(pt, "nonet-panel")
++		prec(800 * time.Millisecond)
++		pd.Simulate("nonet")
++		prec(1500 * time.Millisecond)
++		pshot("面板没联网")
++		pd.Simulate("nonet")
++		prec(1000 * time.Millisecond)
++		pd.Simulate("nonet-back")
++		prec(2000 * time.Millisecond)
++		pshot("面板连上了")
++	}
++}
+diff -ruN -x .mygo -x *.png a/cmd/deneb/panels.go b/cmd/deneb/panels.go
+--- cmd/deneb/panels.go	2026-11-08 18:05:04
++++ cmd/deneb/panels.go	2026-11-08 20:40:53
+@@ -809,6 +809,8 @@
+ 		return "bolt", "连不上", "对方在线，但现在连不上", grey
+ 	case "offline":
+ 		return "bolt", "不在线", "对方开机联网后会自动连上", grey
++	case "nonet":
++		return "bolt", "等这台电脑联网", "这台电脑没联网，联网后会自动连上", grey
+ 	case "paused":
+ 		return "bolt", "已暂停", "这个局域网在这台电脑上暂停了", grey
+ 	case "refused":
+diff -ruN -x .mygo -x *.png a/cmd/deneb/realwatch_test.go b/cmd/deneb/realwatch_test.go
+--- cmd/deneb/realwatch_test.go	2026-11-08 19:44:45
++++ cmd/deneb/realwatch_test.go	2026-11-08 20:40:53
+@@ -11,6 +11,7 @@
+ 	"sync"
+ 	"time"
+ 
++	"github.com/egoist/mygo/ui"
+ 	"github.com/kittors/deneb/engine/localapi/apitype"
+ )
+ 
+@@ -143,9 +144,18 @@
+ 			jump := fmt.Sprintf("%s 起 %s（睡眠，或进程被冻住）", last.Format("15:04:05.000"), gap.Round(time.Millisecond))
+ 			jumps = append(jumps, jump)
+ 			logAt(now, "墙上时钟跳了：%s", jump)
++			// A tester plays every frame of the time it is moved on, one by
++			// one: ten minutes of a sleep took it half a minute, the log
++			// standing still meanwhile (the test Mac, 20:30). A new one
++			// starts at the wall clock, as a window's next frame after a
++			// sleep is simply the next one.
++			r.tt = ui.NewTester(r.a.view, 1180, 740)
++			r.tt.SetDark(os.Getenv("DENEB_DARK") != "")
++			r.tt.SetScale(0.5)
++		} else {
++			// The view's clock goes with the wall clock.
++			r.tt.Advance(max(now.Sub(last), 0))
+ 		}
+-		// The view's clock goes with the wall clock, across a sleep too.
+-		r.tt.Advance(max(now.Sub(last), 0))
+ 		r.tt.Frame()
+ 		last = now
+ 		for _, d := range r.a.devices {
+diff -ruN -x .mygo -x *.png a/cmd/deneb/sync.go b/cmd/deneb/sync.go
+--- cmd/deneb/sync.go	2026-11-08 19:29:41
++++ cmd/deneb/sync.go	2026-11-08 20:40:53
+@@ -185,6 +185,11 @@
+ 		// and the same device in another LAN goes on as it was (scene 3).
+ 		d.path, d.relayID = "paused", ""
+ 	}
++	if s.NoNetwork && d.id != a.self && d.path != "paused" && d.path != "apart" {
++		// This computer has no network: every other device waits for it,
++		// rather than seem out of reach (DESIGN §6.10).
++		d.path, d.relayID = "nonet", ""
++	}
+ 	if in {
+ 		svcs := l.Services[m.ID]
+ 		out := make([]service, len(svcs), len(svcs)+len(s.Local))
+diff -ruN -x .mygo -x *.png a/cmd/deneb/view.go b/cmd/deneb/view.go
+--- cmd/deneb/view.go	2026-11-08 14:01:59
++++ cmd/deneb/view.go	2026-11-08 20:40:53
+@@ -380,6 +380,10 @@
+ // summary is the line under the LAN's name and the color of its dot: how
+ // many people and devices, and whether all of them are connected.
+ func (a *app) summary(p *palette) (ui.Color, string) {
++	if a.snap.NoNetwork && a.snap.Engine {
++		// The trouble is here, not over there (DESIGN §6.10).
++		return p.ink3, "这台电脑没联网，联网后会自动连上"
++	}
+ 	if a.all() {
+ 		return a.allSummary(p)
+ 	}
+diff -ruN a/client/demo.go b/client/demo.go
+--- client/demo.go	2026-11-08 19:29:41
++++ client/demo.go	2026-11-08 20:40:53
+@@ -18,11 +18,14 @@
+ // ids are the prototype's too, as the light on each link and the bend of
+ // each link are worked out from them. Simulate plays a few outside events.
+ type Demo struct {
+-	mu     sync.Mutex
+-	snap   *model.Snapshot
+-	subs   map[int]func(*model.Snapshot)
+-	next   int
+-	manual bool // events play only as Simulate is called: for recordings
++	// netPaths are the paths this computer had before it lost its network
++	// ("nonet"), to come back to.
++	netPaths map[model.DeviceID]model.Path
++	mu       sync.Mutex
++	snap     *model.Snapshot
++	subs     map[int]func(*model.Snapshot)
++	next     int
++	manual   bool // events play only as Simulate is called: for recordings
+ }
+ 
+ // Manual makes the demo's events play only as Simulate is called, never on
+@@ -245,6 +248,34 @@
+ 			if !d.manual {
+ 				time.AfterFunc(2400*time.Millisecond, func() { d.Simulate("connected") })
+ 			}
++		case "nonet":
++			// This computer loses its network, or gets it back (DESIGN
++			// §6.10): the engine finds no device then; back, they connect
++			// again, and are there 2 s later ("nonet-back").
++			if !s.NoNetwork {
++				n.NoNetwork = true
++				d.netPaths = maps(s.Paths)
++				for id := range s.Paths {
++					n.Paths[id] = model.Path{Kind: model.PathUnreachable, Since: now}
++				}
++				break
++			}
++			n.NoNetwork = false
++			for id := range d.netPaths {
++				n.Paths[id] = model.Path{Kind: model.PathConnecting, Since: now}
++			}
++			if !d.manual {
++				time.AfterFunc(2*time.Second, func() { d.Simulate("nonet-back") })
++			}
++		case "nonet-back":
++			if s.NoNetwork || d.netPaths == nil {
++				return s
++			}
++			for id, p := range d.netPaths {
++				p.Since = now
++				n.Paths[id] = p
++			}
++			d.netPaths = nil
+ 		case "connected":
+ 			n.Paths["jdesk"] = model.Path{Kind: model.PathDirect, RTT: 11 * time.Millisecond, Since: now}
+ 		case "offline":
+diff -ruN a/client/live.go b/client/live.go
+--- client/live.go	2026-11-08 19:29:41
++++ client/live.go	2026-11-08 20:41:38
+@@ -381,6 +381,7 @@
+ 	}
+ 	paths, next := l.deb.at(now)
+ 	s.Paths = paths
++	s.NoNetwork = noNetwork(st, s)
+ 	// The uses just cut, each service named as the card names it.
+ 	for _, c := range l.cuts {
+ 		if until := c.at.Add(cutKeep); now.Before(until) {
+@@ -392,6 +393,38 @@
+ 	}
+ 	l.wakeAtLocked(next)
+ 	return s
++}
++
++// problemNoNetwork is the engine's problem for a computer without a
++// network of its own (DESIGN §6.10).
++const problemNoNetwork = "no-network"
++
++// noNetwork reports whether this computer has no network: as its engine
++// says it outright; or, from an engine that does not, as the control server
++// and every device it shares a LAN with go out of reach at once, which no
++// trouble over there does. A device that connects says there is a network;
++// one being connected to, as all are as the engine starts, says nothing,
++// and neither does one that is just off.
++func noNetwork(st *apitype.State, s *model.Snapshot) bool {
++	for _, p := range st.Engine.Problems {
++		if p.Code == problemNoNetwork {
++			return true
++		}
++	}
++	if st.ControlConnected || !st.LoggedIn {
++		return false
++	}
++	out := 0
++	for id, p := range s.Paths {
++		switch {
++		case id == s.Self:
++		case p.Kind.Connected():
++			return false
++		case p.Kind == model.PathUnreachable:
++			out++
++		}
++	}
++	return out > 0
+ }
+ 
+ // cutService is the name of this computer's service a cut use was of: as
+diff -ruN a/client/live_test.go b/client/live_test.go
+--- client/live_test.go	2026-11-08 19:29:41
++++ client/live_test.go	2026-11-08 20:41:38
+@@ -403,3 +403,51 @@
+ 	w.E.Update(func(s *apitype.State) { s.Using, s.Engine.Problems = nil, nil })
+ 	waitFor(t, l, "nothing used, nothing to tell", func(s *model.Snapshot) bool { return len(s.Using) == 0 && len(s.Notices) == 0 })
+ }
++
++// This computer without a network comes through as the engine says it
++// (no-network), and goes as the engine takes it back; from an engine that
++// does not say it, as the control server and every device out of reach at
++// once, but never while anything connects (DESIGN §6.10).
++func TestLiveNoNetwork(t *testing.T) {
++	w, l := live(t, fakeworld.Ready)
++	waitFor(t, l, "the world", func(s *model.Snapshot) bool { return len(s.LANs) == 2 && !s.NoNetwork })
++	w.E.Update(func(s *apitype.State) {
++		s.Engine.Problems = append(s.Engine.Problems, apitype.Problem{Code: "no-network", Message: "这台电脑没联网"})
++	})
++	waitFor(t, l, "no network", func(s *model.Snapshot) bool { return s.NoNetwork })
++	w.E.Update(func(s *apitype.State) { s.Engine.Problems = nil })
++	waitFor(t, l, "the network back", func(s *model.Snapshot) bool { return !s.NoNetwork })
++
++	// An engine that does not say it: the server out of reach, and every
++	// device too.
++	w.E.Update(func(s *apitype.State) {
++		s.ControlConnected = false
++		for i := range s.Paths {
++			s.Paths[i].Kind = apitype.PathUnreachable
++		}
++	})
++	waitFor(t, l, "no network, as everything is out of reach", func(s *model.Snapshot) bool { return s.NoNetwork })
++	w.E.Update(func(s *apitype.State) { s.Paths[0].Kind = apitype.PathDirect })
++	waitFor(t, l, "a device connects: there is a network", func(s *model.Snapshot) bool { return !s.NoNetwork })
++	w.E.Update(func(s *apitype.State) {
++		s.ControlConnected = true
++		for i := range s.Paths {
++			s.Paths[i].Kind = apitype.PathUnreachable
++		}
++	})
++	waitFor(t, l, "the server answers: there is a network", func(s *model.Snapshot) bool { return !s.NoNetwork })
++	// As an engine starts: the server not yet reached, every device being
++	// connected to. That is no sign of a missing network.
++	w.E.Update(func(s *apitype.State) {
++		s.ControlConnected = false
++		for i := range s.Paths {
++			s.Paths[i].Kind = apitype.PathConnecting
++		}
++	})
++	waitFor(t, l, "every device being connected to", func(s *model.Snapshot) bool {
++		return s.Path(model.DeviceID(fakeworld.Build)).Kind == model.PathConnecting
++	})
++	if l.Snapshot().NoNetwork {
++		t.Error("an engine starting up shows no network")
++	}
++}
+diff -ruN a/client/model/model.go b/client/model/model.go
+--- client/model/model.go	2026-11-08 19:29:41
++++ client/model/model.go	2026-11-08 20:40:53
+@@ -74,6 +74,10 @@
+ 	// Using is since when this computer has used a service of each device it
+ 	// uses one of now, for the "已连接" count (DESIGN §6.7).
+ 	Using map[DeviceID]time.Time
++	// NoNetwork: this computer has no network of its own (Wi-Fi off, the
++	// cable out), as its engine finds: the view says so, calmly, rather
++	// than that every device cannot be reached (DESIGN §6.10).
++	NoNetwork bool
+ 	// Cuts are the uses of this computer's services it cut just now, a
+ 	// service closed or a person refused while they used it (scene 5): each
+ 	// plays a short red light on that device's link, and its second line

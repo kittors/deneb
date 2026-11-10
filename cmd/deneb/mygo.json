@@ -2,8 +2,28 @@
   "name": "Deneb",
   "identifier": "dev.deneb.app",
   "version": "0.1.0",
+  "copyright": "Copyright (c) 2026 kittors",
   "out": "build",
   "urlSchemes": [
     "deneb"
-  ]
+  ],
+  "icon": "resources/icon.png",
+  "macos": {
+    "icon": "resources/Deneb.icns"
+  },
+  "windows": {
+    "installerInclude": "../../deploy/windows/installer.nsh"
+  },
+  "linux": {
+    "maintainer": "Deneb <packages@deneb.invalid>",
+    "comment": "把你的设备连成一个局域网",
+    "categories": [
+      "Network"
+    ],
+    "depends": [
+      "denebd",
+      "libayatana-appindicator3-1"
+    ],
+    "webview": false
+  }
 }

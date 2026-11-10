@@ -5,9 +5,14 @@ package socket
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
 )
+
+// ErrNotOurs: the endpoint is there but is not this user's to talk to (on
+// Windows, a pipe someone else owns where this user's engine would be).
+var ErrNotOurs = errors.New("the engine's endpoint here belongs to someone else")
 
 // EnvPath overrides every default. The client's tests and the dev window
 // use it so that a fake engine never touches the real path.
@@ -73,6 +78,10 @@ type ListenOptions struct {
 	// AllowUID lets one more Unix user in: a kernel-mode engine runs as
 	// root on behalf of the person logged in to the desktop. -1 for none.
 	AllowUID int
+	// AllowUser is the same on Windows, where the Deneb service runs as
+	// SYSTEM: a SID ("S-1-5-21-…") or an account name ("PC\jie"). Empty
+	// for none.
+	AllowUser string
 }
 
 // Listen creates the endpoint, replacing a stale socket file left by a
@@ -84,9 +93,4 @@ func Listen(path string, opts ListenOptions) (net.Listener, error) {
 // Dial connects to the endpoint.
 func Dial(ctx context.Context, path string) (net.Conn, error) {
 	return dial(ctx, path)
-}
-
-func exists(p string) bool {
-	_, err := os.Stat(p)
-	return err == nil
 }

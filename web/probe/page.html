@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>probe</title>
+    <style>
+      :root { color-scheme: light dark; }
+      html, body { margin: 0; height: 100%; }
+      body { display: flex; align-items: center; justify-content: center; color: #8e8e93; font: 13px system-ui, sans-serif; }
+    </style>
+    <script src="../probe.js"></script>
+  </head>
+  <body>
+    <p id="loading">…</p>
+    <script src="../wasm_exec.js"></script>
+    <script>
+      const q = new URLSearchParams(location.search);
+      const go = new Go();
+      go.env = {};
+      if (q.get('demo')) go.env.DENEB_DEMO = '1';
+      if (q.get('fake')) go.env.DENEB_FAKE = q.get('fake');
+      __t.script = performance.now();
+      WebAssembly.instantiateStreaming(fetch('app.wasm'), go.importObject)
+        .then((r) => { __t.instantiated = performance.now(); go.run(r.instance); __t.ran = performance.now(); })
+        .catch((e) => { __t.error = String(e); document.body.textContent = 'did not load: ' + e; });
+    </script>
+  </body>
+</html>

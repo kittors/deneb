@@ -15,7 +15,7 @@ import (
 // address it answers with: a remote desktop in the remote desktop app, a
 // shared folder in the file manager, a website in the browser.
 func (a *app) openService(c *ui.Context, d *device, s service) {
-	run(a, c, func(ctx context.Context) (string, error) { return a.store.Open(ctx, model.DeviceID(d.id), s.svc) },
+	run(a, c, func(ctx context.Context) (string, error) { return a.store.Open(ctx, d.dev, s.svc) },
 		func(c *ui.Context, addr string, err error) {
 			if err != nil {
 				a.problem(c, err)

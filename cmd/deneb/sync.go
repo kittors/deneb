@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"math"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
 
@@ -31,6 +33,9 @@ import (
 // prototype changed its state there and then, and the demo's frames are the
 // same as the prototype's.
 func (a *app) sync(c *ui.Context) {
+	if c != nil {
+		a.clock = c.Now()
+	}
 	base := a.store.Snapshot()
 	if base != a.base || a.gen != a.synced {
 		a.pend = slices.DeleteFunc(a.pend, func(p *pending) bool {
@@ -73,11 +78,23 @@ func (a *app) refresh() {
 		}
 	}
 	a.members = members
+	a.respot()
 	for _, d := range a.devices {
-		a.facts(d, l)
+		a.facts(d, a.lanOf(d))
 	}
 	for _, d := range a.tray {
 		a.facts(d, l)
+	}
+	a.twins()
+	// An invite sent to me by name shows its card as it comes, once.
+	for _, inv := range s.Invitations {
+		if a.seenInvitations == nil {
+			a.seenInvitations = map[string]bool{}
+		}
+		if !a.seenInvitations[inv.ID] && a.invite == nil && s.Loaded {
+			a.seenInvitations[inv.ID] = true
+			a.showInvitation(inv)
+		}
 	}
 	// Whoever the view shows has a ball, the owner of a device that stayed
 	// after its owner left too: grey, without an initial.
@@ -130,7 +147,7 @@ func (a *app) somebody(id string) {
 // is in it again, so that its words do not change as it leaves.
 func (a *app) facts(d *device, l *model.LAN) {
 	s := a.snap
-	m := s.Device(model.DeviceID(d.id))
+	m := s.Device(d.dev)
 	if m == nil {
 		return
 	}
@@ -142,6 +159,15 @@ func (a *app) facts(d *device, l *model.LAN) {
 		d.name = "这台电脑"
 	}
 	d.online, d.refusesMe, d.addr, d.fqdn = m.Online, m.RefusesMe, m.Addr, m.FQDN
+	d.login, d.lastSeen, d.using = m.Login, m.LastSeen, s.Using[m.ID]
+	for _, c := range s.Cuts {
+		if c.Device == m.ID && c.At.After(d.closedSeen) {
+			// Cut just now: its red light and its sentence start as the
+			// view learns of it.
+			d.closed, d.closedSeen, d.closedAt = c.Service, c.At, a.now()
+		}
+	}
+	d.pending = l != nil && l.HasPending(m.ID)
 	refused := make(map[string]bool, len(m.Refused))
 	for who, on := range m.Refused {
 		if on {
@@ -149,10 +175,20 @@ func (a *app) facts(d *device, l *model.LAN) {
 		}
 	}
 	d.refused = refused
-	in := l != nil && l.Has(m.ID)
+	in := l != nil && (l.Has(m.ID) || l.HasPending(m.ID))
 	if in || d.path == "" {
 		p := s.Path(m.ID)
 		d.path, d.relayID, d.rtt = string(p.Kind), p.Relay, p.RTT
+	}
+	if in && l.Paused && d.id != a.self {
+		// The LAN is paused on this computer: nothing of it connects here,
+		// and the same device in another LAN goes on as it was (scene 3).
+		d.path, d.relayID = "paused", ""
+	}
+	if s.NoNetwork && d.id != a.self && d.path != "paused" && d.path != "apart" {
+		// This computer has no network: every other device waits for it,
+		// rather than seem out of reach (DESIGN §6.10).
+		d.path, d.relayID = "nonet", ""
 	}
 	if in {
 		svcs := l.Services[m.ID]
@@ -180,6 +216,8 @@ func glyphFor(kind string) string {
 		return kind
 	case "tablet":
 		return "phone"
+	case "other":
+		return "mini"
 	}
 	return "desktop"
 }
@@ -226,16 +264,23 @@ func (a *app) load() {
 	a.devices, a.tray = nil, nil
 	a.trayOff, a.slots = map[string]*ui.Point{}, map[string]ui.Point{}
 	a.beams, a.geos = map[string]*beamRun{}, map[string]*linkGeo{}
+	if t := a.toast; t != nil && t.commit != nil {
+		// What a toast held back goes as the canvas changes.
+		a.post(t.commit)
+	}
 	a.landing, a.held, a.toast = nil, nil, nil
+	a.regionRects, a.regionPaints, a.regionsLaid, a.regionHeld = nil, nil, false, ""
+	a.focus, a.dropOver, a.dropNext, a.edgeNote, a.edgeNext = "", "", "", nil, nil
 	a.relay = &relayStop{sub: "中转站"}
 	if at, ok := a.places.get(a.lan, relayKey); ok {
 		a.relay.base = at
+		_, a.relay.byHand = a.places.get(a.lan, relayHandKey)
 	} else {
 		a.relay.unplaced = true
 	}
-	if l != nil {
-		for _, id := range l.Devices {
-			d := &device{facts: facts{id: string(id)}}
+	if l != nil || a.all() {
+		for _, sp := range a.spots() {
+			d := &device{facts: facts{id: sp.key, dev: sp.dev, lan: sp.lan}}
 			if at, ok := a.places.get(a.lan, d.id); ok {
 				d.base, d.rest = at, at
 			} else {
@@ -245,15 +290,15 @@ func (a *app) load() {
 		}
 	}
 	if l != nil {
-		for _, id := range a.snap.Tray(a.lan) {
-			d := &device{facts: facts{id: string(id)}}
+		for _, id := range a.trayIDs() {
+			d := &device{facts: facts{id: string(id), dev: id, lan: a.lan}}
 			a.tray = append(a.tray, d)
 			a.trayOff[d.id] = &ui.Point{}
 		}
 	}
 	a.refresh()
 	for _, d := range a.devices {
-		d.lastPath = d.path
+		d.lastPath, d.waited = d.path, d.pending
 	}
 	// A relay there as the LAN shows is there: it does not pop in.
 	a.relay.shown = a.relayLinked()
@@ -264,7 +309,7 @@ func (a *app) load() {
 // joined here comes in (pop): its devices pop in one after the other, their
 // tracks growing out from this computer (scene 3's 加入).
 func (a *app) show(c *ui.Context, id model.LANID, pop bool) {
-	if id == a.lan || a.snap.LAN(id) == nil {
+	if id == a.lan || id != allLANs && a.snap.LAN(id) == nil {
 		return
 	}
 	a.keepPlaces()
@@ -273,7 +318,11 @@ func (a *app) show(c *ui.Context, id model.LANID, pop bool) {
 	a.load()
 	// When the canvas switched, to the millisecond, against the engine's
 	// timing of the connections it must not touch (acceptance step 4).
-	log.Printf("deneb: canvas shows %s (%s) at %s", a.snap.LAN(id).Name, id, time.Now().Format("15:04:05.000"))
+	name := "全部"
+	if l := a.snap.LAN(id); l != nil {
+		name = l.Name
+	}
+	log.Printf("deneb: canvas shows %s (%s) at %s", name, id, time.Now().Format("15:04:05.000"))
 	if !pop {
 		return
 	}
@@ -308,11 +357,22 @@ func (a *app) reconcile(c *ui.Context) {
 		a.wantLAN = ""
 		a.show(c, id, true)
 	}
+	if ls := a.shownLANs(); a.all() && len(ls) < 2 {
+		// Down to one LAN, or none: "全部" goes from the sidebar, and the
+		// canvas shows the one there is.
+		a.lan = ""
+		if len(ls) == 1 {
+			a.lan = ls[0].ID
+		}
+		a.selected, a.more = "", false
+		a.load()
+		return
+	}
 	l := a.snap.LAN(a.lan)
 	if l == nil && a.lan == "" && len(a.snap.LANs) == 0 {
 		return
 	}
-	if l == nil {
+	if l == nil && !a.all() {
 		// The LAN is gone, left or deleted: the canvas shows the first one
 		// there is.
 		a.lan = ""
@@ -324,11 +384,12 @@ func (a *app) reconcile(c *ui.Context) {
 		return
 	}
 	in := map[string]bool{}
-	for _, id := range l.Devices {
-		in[string(id)] = true
+	spots := a.spots()
+	for _, sp := range spots {
+		in[sp.key] = true
 	}
 	tray := map[string]bool{}
-	for _, id := range a.snap.Tray(a.lan) {
+	for _, id := range a.trayIDs() {
 		tray[string(id)] = true
 	}
 	shown := map[string]bool{}
@@ -352,8 +413,14 @@ func (a *app) reconcile(c *ui.Context) {
 		case in[d.id]:
 		case tray[d.id]:
 			// Mine, taken out elsewhere, or its joining turned down.
+			if d.waited {
+				a.turnedAway(c, d)
+			}
 			a.startLeave(c, d, false, false)
 		default:
+			if d.waited && d.mine {
+				a.turnedAway(c, d)
+			}
 			a.vanish(c, d)
 		}
 	}
@@ -378,14 +445,23 @@ func (a *app) reconcile(c *ui.Context) {
 			a.tray = slices.DeleteFunc(slices.Clone(a.tray), func(x *device) bool { return x == d })
 		}
 	}
-	for _, id := range l.Devices {
-		if !shown[string(id)] {
-			a.appear(c, string(id))
+	fresh := map[model.LANID]int{}
+	for _, sp := range spots {
+		if shown[sp.key] {
+			continue
 		}
+		delay := time.Duration(0)
+		if _, ok := a.regionRects[sp.lan]; a.all() && sp.lan != "" && !ok {
+			// A LAN joined just now comes in as a region of its own, its
+			// devices popping in one after the other (scene 3's 加入).
+			delay = time.Duration(120+90*fresh[sp.lan]) * time.Millisecond
+			fresh[sp.lan]++
+		}
+		a.appear(c, sp, delay)
 	}
-	for _, id := range a.snap.Tray(a.lan) {
+	for _, id := range a.trayIDs() {
 		if !shown[string(id)] {
-			d := &device{facts: facts{id: string(id)}}
+			d := &device{facts: facts{id: string(id), dev: id, lan: a.lan}}
 			a.facts(d, l)
 			a.somebody(d.owner)
 			a.tray = append(slices.Clone(a.tray), d)
@@ -393,12 +469,32 @@ func (a *app) reconcile(c *ui.Context) {
 		}
 	}
 	for _, d := range a.devices {
+		switch {
+		case d.waited && !d.pending && d.gone.IsZero() && a.landing != d && !d.turnedDown:
+			// Let in: it springs up full, and its track grows out from this
+			// computer as a joining device's does (DESIGN §6.7). One turned
+			// away is on its way back to the tray instead.
+			d.approved, d.joined, d.leaving = c.Now(), c.Now(), time.Time{}
+			delete(a.beams, d.id)
+			c.AnimationFrame()
+		case !d.waited && d.pending && d.gone.IsZero() && !d.joined.IsZero():
+			// Back to waiting, its letting in undone: its track draws back.
+			d.approved, d.leaving = time.Time{}, c.Now()
+			c.AnimationFrame()
+		}
+		d.waited = d.pending
+		if a.watching[string(d.dev)] && d.lastPath == "offline" && d.path != "offline" && d.path != "" {
+			// Asked to be told: it came online (DESIGN §6.8).
+			delete(a.watching, string(d.dev))
+			a.notify(c, d, short(d.name)+"上线了", nil)
+		}
 		if d.lastPath == "" {
 			d.lastPath = d.path
 		} else if d.path != d.lastPath {
 			a.repath(c, d)
 		}
-	}
+	} // Those that came onto the canvas just now are numbered too.
+	a.twins()
 }
 
 // turnBack sends a device on its way into the tray back to where it rested.
@@ -409,11 +505,17 @@ func (a *app) turnBack(d *device) {
 }
 
 // appear puts a device that joined the LAN elsewhere on the canvas: where
-// it rested here before, or at a free spot. It pops in there as its track
-// grows out from this computer.
-func (a *app) appear(c *ui.Context, id string) {
-	d := &device{facts: facts{id: id}}
-	a.facts(d, a.snap.LAN(a.lan))
+// it rested here before, or at a free spot. It pops in there, after delay,
+// as its track grows out from this computer.
+func (a *app) appear(c *ui.Context, sp spot, delay time.Duration) {
+	id := sp.key
+	d := &device{facts: facts{id: id, dev: sp.dev, lan: sp.lan}}
+	if slices.ContainsFunc(a.devices, func(o *device) bool { return o.key() == id }) {
+		// Its key is taken by one that moved here from another region and
+		// kept its old element's: this one's element is keyed apart.
+		d.elem = id + "\x00" + strconv.Itoa(len(a.devices))
+	}
+	a.facts(d, a.lanOf(d))
 	a.somebody(d.owner)
 	if a.cw == 0 {
 		d.unplaced = true
@@ -422,10 +524,10 @@ func (a *app) appear(c *ui.Context, id string) {
 		if !ok {
 			want = a.placeNew(d)
 		}
-		spot := a.freeSpot(want, d, footprint, a.cw, a.ch)
+		spot := a.freeSpot(want, d, a.footOf(d), a.cw, a.ch)
 		d.base, d.rest, d.live = spot, spot, spot
 	}
-	now := c.Now()
+	now := c.Now().Add(delay)
 	d.joined, d.popped, d.popFirst = now, now, true
 	delete(a.beams, id)
 	delete(a.geos, id)
@@ -438,6 +540,17 @@ const vanishFor = 360 * time.Millisecond
 
 // vanish takes a device that left the LAN elsewhere off the canvas: it
 // shrinks and fades where it is, as its track is drawn back in.
+// turnedAway says that the owner did not let my device in, as it goes back
+// (DESIGN §6.7): never without a word. It stays dashed on its way.
+func (a *app) turnedAway(c *ui.Context, d *device) {
+	l := a.snap.LAN(d.lan)
+	if l == nil {
+		return
+	}
+	d.turnedDown = true
+	a.notify(c, d, say(a.personName(l.Owner), "没有同意", short(d.name), "加入「"+short(l.Name)+"」"), nil)
+}
+
 func (a *app) vanish(c *ui.Context, d *device) {
 	now := c.Now()
 	d.gone, d.leaving = now, now
@@ -477,6 +590,9 @@ func linked(path string) bool { return path == "direct" || path == "relay" }
 // go out to the corners (DESIGN §4), then wherever there is room.
 func (a *app) placeNew(d *device) ui.Point {
 	w, h := a.cw, a.ch
+	if a.all() {
+		return a.freeSpot(a.allPlace(d), d, a.footOf(d), w, h)
+	}
 	ar := a.restArea(w, h)
 	mid := ui.Point{X: min(max((w-cardWidth-20)/2, ar.X), ar.X+ar.W), Y: ar.Y + ar.H/2}
 	me := a.device(a.self)
@@ -516,24 +632,114 @@ func (a *app) place() {
 			d.base, d.rest, d.off, d.unplaced = spot, spot, ui.Point{}, false
 		}
 	}
-	if r := a.relay; r.unplaced && a.hasRelayLink() {
-		me := a.device(a.self)
-		var far *device
-		for _, d := range a.devices {
-			if d.path == "relay" {
-				far = d
-				break
-			}
-		}
-		want := ui.Point{X: a.cw / 2, Y: a.ch / 2}
-		if me != nil && far != nil {
-			// Between the two, a little below, as scene 1 shows it.
-			p, q := me.at(), far.at()
-			want = ui.Point{X: (p.X + q.X) / 2, Y: (p.Y+q.Y)/2 + 30}
-		}
-		r.base = a.freeSpot(want, r, a.relayFootprint, a.cw, a.ch)
+	r := a.relay
+	if !a.hasRelayLink() {
+		return
+	}
+	// As it comes to show, or as the LAN does with it there: a place it took
+	// by itself is looked at again, the devices perhaps moved since.
+	if r.unplaced || !r.dragging && (!r.shown || !r.checked) && !r.byHand && !a.relayClear(r.base) {
+		r.base = a.relaySpot()
 		r.off, r.unplaced = ui.Point{}, false
 	}
+	r.checked = true
+}
+
+// relaySpot is where the relay goes by itself: between this computer and
+// the first device that goes through it, a little below, as scene 1 shows
+// it; or, if a track through it would cross a name or a tile there, the
+// nearest spot around that where none does (DESIGN: lines and pills never
+// cover names). With no such spot, the first.
+func (a *app) relaySpot() ui.Point {
+	r := a.relay
+	me := a.device(a.self)
+	var far *device
+	for _, d := range a.devices {
+		if d.path == "relay" {
+			far = d
+			break
+		}
+	}
+	want := ui.Point{X: a.cw / 2, Y: a.ch / 2}
+	if me != nil && far != nil {
+		p, q := me.at(), far.at()
+		want = ui.Point{X: (p.X + q.X) / 2, Y: (p.Y+q.Y)/2 + 30}
+	}
+	first := a.freeSpot(want, r, a.relayFootprint, a.cw, a.ch)
+	if a.relayClear(first) {
+		return first
+	}
+	for _, rad := range []float64{40, 80, 120, 160, 200} {
+		for deg := 90.0; deg < 450; deg += 30 {
+			at := ui.Point{X: want.X + float32(rad*math.Cos(deg*math.Pi/180)), Y: want.Y + float32(rad*math.Sin(deg*math.Pi/180))}
+			if spot := a.freeSpot(at, r, a.relayFootprint, a.cw, a.ch); dist(spot, at) < 24 && a.relayClear(spot) {
+				return spot
+			}
+		}
+	}
+	return first
+}
+
+// relayClear reports whether the tracks through a relay at at, as they are
+// drawn, keep off every device's name, and off every tile but those at
+// their ends.
+func (a *app) relayClear(at ui.Point) bool {
+	me := a.device(a.self)
+	if me == nil || me.unplaced {
+		return true
+	}
+	for _, d := range a.devices {
+		if d.path != "relay" || d.unplaced || !d.gone.IsZero() {
+			continue
+		}
+		cv := newCurve(me.at(), d.at(), &at, bendFor(d.id))
+		for _, o := range a.devices {
+			if o.unplaced || !o.gone.IsZero() || a.landing == o {
+				continue
+			}
+			name, tile := a.nameBox(o), ui.Rect{X: o.at().X - tileSize/2 - 4, Y: o.at().Y - tileSize/2 - 4, W: tileSize + 8, H: tileSize + 8}
+			for _, pt := range cv.pts {
+				// With some air: a track that grazes a name looks as if it
+				// touched it. The sample's relay leaves this computer's
+				// name about 9 apart, at its corner.
+				if rectDist(name, pt) < 6 || o != me && o != d && inRect(tile, pt) {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
+// nameBox is about where d's name and the line under it show, under its
+// tile: the text itself, as wide as the longer of the two, up to
+// nameWidth.
+func (a *app) nameBox(d *device) ui.Rect {
+	width := func(s string, size float32) float32 {
+		w := float32(0)
+		for _, r := range s {
+			if r < 0x80 {
+				w += size * 0.58
+			} else {
+				w += size
+			}
+		}
+		return w
+	}
+	at := d.at()
+	w := min(max(width(d.name, 13), width(a.status(d), 12)), nameWidth)
+	return ui.Rect{X: at.X - w/2, Y: at.Y + tileSize/2 + 8, W: w, H: 38}
+}
+
+func inRect(r ui.Rect, p ui.Point) bool {
+	return p.X >= r.X && p.X <= r.X+r.W && p.Y >= r.Y && p.Y <= r.Y+r.H
+}
+
+// rectDist is how far p is from r: 0 inside it.
+func rectDist(r ui.Rect, p ui.Point) float32 {
+	dx := max(r.X-p.X, 0, p.X-(r.X+r.W))
+	dy := max(r.Y-p.Y, 0, p.Y-(r.Y+r.H))
+	return float32(math.Hypot(float64(dx), float64(dy)))
 }
 
 func boolInt(b bool) int {
@@ -565,7 +771,36 @@ func (a *app) send(c *ui.Context, op model.Op) {
 	p := &pending{op: op}
 	a.pend = append(a.pend, p)
 	a.gen++
-	run(a, c, func(ctx context.Context) (model.Result, error) { return a.store.Do(ctx, op) },
+	a.commit(c, p)
+	a.sync(nil)
+}
+
+// sendAfter sends first, and then second once the store took first: both
+// show at once, and second goes only after first went through, or not at
+// all if first was turned down. A move between LANs is into the new one,
+// then out of the old, so that a device is never left in neither.
+func (a *app) sendAfter(c *ui.Context, first, second model.Op) {
+	p1, p2 := &pending{op: first}, &pending{op: second, held: true}
+	a.pend = append(a.pend, p1, p2)
+	a.gen++
+	run(a, c, func(ctx context.Context) (model.Result, error) { return a.store.Do(ctx, p1.op) },
+		func(c *ui.Context, r model.Result, err error) {
+			p1.done, p1.ver, p1.err = true, r.Version, err
+			a.gen++
+			if err != nil {
+				a.pend = slices.DeleteFunc(a.pend, func(x *pending) bool { return x == p2 })
+				a.problem(c, err)
+				return
+			}
+			a.commit(c, p2)
+		})
+	a.sync(nil)
+}
+
+// commit hands a pending op to the store.
+func (a *app) commit(c *ui.Context, p *pending) {
+	p.held = false
+	run(a, c, func(ctx context.Context) (model.Result, error) { return a.store.Do(ctx, p.op) },
 		func(c *ui.Context, r model.Result, err error) {
 			p.done, p.ver, p.err = true, r.Version, err
 			a.gen++
@@ -573,14 +808,38 @@ func (a *app) send(c *ui.Context, op model.Op) {
 				a.problem(c, err)
 			}
 		})
-	a.sync(nil)
 }
+
+// hold shows op at once, with a toast that offers undo, and sends it only
+// as the toast goes: for what the server cannot take back, as letting a
+// device in or turning it away (DESIGN §6.7). Undo drops it unsent.
+func (a *app) hold(c *ui.Context, op model.Op, d *device, text string) {
+	p := &pending{op: op, held: true}
+	a.pend = append(a.pend, p)
+	a.gen++
+	a.sync(nil)
+	a.notify(c, d, text, func() {
+		a.pend = slices.DeleteFunc(a.pend, func(x *pending) bool { return x == p })
+		a.gen++
+	})
+	a.toast.commit = func(c *ui.Context) {
+		if p.held {
+			a.commit(c, p)
+		}
+	}
+}
+
+// holdFor is hold for an op about no device on the canvas, as letting a
+// person in.
+func (a *app) holdFor(c *ui.Context, op model.Op, text string) { a.hold(c, op, nil, text) }
 
 // run does work off the main thread and hands its result to done on it; a
 // store that answers at once (the demo's) is asked in place, so that what it
-// answers shows in the same frame.
+// answers shows in the same frame. Without a frame to answer in (c nil: a
+// window going away sends what it held), the work goes off the main thread
+// all the same, and its answer to the next frame.
 func run[T any](a *app, c *ui.Context, work func(context.Context) (T, error), done func(*ui.Context, T, error)) {
-	if _, ok := a.store.(client.Immediate); ok {
+	if _, ok := a.store.(client.Immediate); ok && c != nil {
 		v, err := work(context.Background())
 		done(c, v, err)
 		return
@@ -605,6 +864,10 @@ func (a *app) problem(c *ui.Context, err error) {
 		msg = "等了太久，没办成"
 	}
 	a.notify(c, nil, msg, nil)
+	if a.panelShown {
+		// The menu bar's panel says it too: the window may be out of sight.
+		a.panelNote = panelNote{text: msg, until: c.Now().Add(4 * time.Second)}
+	}
 }
 
 // post hands fn to the main thread, where the next frame runs it first.
@@ -647,7 +910,11 @@ func (a *app) drain(c *ui.Context) {
 // ---- Places ----------------------------------------------------------------------------
 
 // relayKey is the relay's key among a LAN's places: never a device's id.
-const relayKey = "\x00relay"
+// relayHandKey is there once the person put the relay somewhere by hand.
+const (
+	relayKey     = "\x00relay"
+	relayHandKey = "\x00relay-by-hand"
+)
 
 // places is where things rest on each LAN's canvas, as the person left them
 // (DESIGN §6.2): by LAN and device, so that the next time the window opens
@@ -723,3 +990,129 @@ func placesFile() string {
 	}
 	return filepath.Join(dir, "layout.json")
 }
+
+// onCanvas are the devices a LAN's canvas shows: those in it, and those that
+// wait for its owner to let them in (DESIGN §6.7), in the order they came.
+func onCanvas(l *model.LAN) []model.DeviceID {
+	if len(l.Pending) == 0 {
+		return l.Devices
+	}
+	return append(slices.Clone(l.Devices), l.Pending...)
+}
+
+// twins numbers the devices on the canvas named as one before them, 2, 3…,
+// and marks an old one of mine among them, gone for 30 days (DESIGN §6.8).
+func (a *app) twins() {
+	// Numbered by device, not by tile: one device in two regions of the
+	// "全部" view is one device, not two of a name.
+	devs := map[string][]model.DeviceID{}
+	mine := map[string]map[model.DeviceID]bool{}
+	for _, d := range a.devices {
+		if d.id == a.self {
+			continue
+		}
+		i := slices.Index(devs[d.name], d.dev)
+		if i < 0 {
+			devs[d.name] = append(devs[d.name], d.dev)
+			i = len(devs[d.name]) - 1
+		}
+		d.twin = 0
+		if i > 0 {
+			d.twin = i + 1
+		}
+		if d.mine {
+			if mine[d.name] == nil {
+				mine[d.name] = map[model.DeviceID]bool{}
+			}
+			mine[d.name][d.dev] = true
+		}
+	}
+	for _, d := range a.devices {
+		d.stale = d.mine && len(mine[d.name]) > 1 && !d.online && !d.lastSeen.IsZero() && a.now().Sub(d.lastSeen) > 30*24*time.Hour
+	}
+}
+
+// now is the view's clock as the frame being built has it: what the timers
+// and the login's dates are counted against.
+func (a *app) now() time.Time {
+	if a.clock.IsZero() {
+		return time.Now()
+	}
+	return a.clock
+}
+
+// personName is what a person is called here, as their ball says: their
+// name, or 拥有者 when the snapshot does not have them.
+func (a *app) personName(id model.PersonID) string {
+	if p := a.people[string(id)]; p != nil {
+		return p.name
+	}
+	return "拥有者"
+}
+
+// ownerName is the name of the owner of the LAN on the canvas.
+func (a *app) ownerName() string {
+	if l := a.snap.LAN(a.lan); l != nil {
+		if p := a.people[string(l.Owner)]; p != nil {
+			return p.name
+		}
+	}
+	return ""
+}
+
+// clock is a count of hours, minutes and seconds: "2:14:08".
+func clock(d time.Duration) string {
+	d = max(d, 0).Truncate(time.Second)
+	return fmt.Sprintf("%d:%02d:%02d", int(d.Hours()), int(d.Minutes())%60, int(d.Seconds())%60)
+}
+
+// spot is where a device shows on the canvas: under which key, and in which
+// LAN's region.
+type spot struct {
+	key string
+	dev model.DeviceID
+	lan model.LANID
+}
+
+// spots are the devices the canvas shows: those in the LAN on it, and those
+// that wait to be let in (DESIGN §6.7).
+func (a *app) spots() []spot {
+	if a.all() {
+		return a.allSpots()
+	}
+	l := a.snap.LAN(a.lan)
+	if l == nil {
+		return nil
+	}
+	var out []spot
+	for _, id := range onCanvas(l) {
+		out = append(out, spot{key: string(id), dev: id, lan: l.ID})
+	}
+	return out
+}
+
+// respot moves each device on the canvas to the region it is in now, as
+// the snapshot has it.
+func (a *app) respot() {
+	at := map[string]model.LANID{}
+	for _, sp := range a.spots() {
+		at[sp.key] = sp.lan
+	}
+	for _, d := range a.devices {
+		if lan, ok := at[d.id]; ok {
+			d.lan = lan
+		}
+	}
+}
+
+// trayIDs are my devices the tray holds: those not in the LAN on the
+// canvas; none in the "全部" view, which has no tray.
+func (a *app) trayIDs() []model.DeviceID {
+	if a.all() {
+		return nil
+	}
+	return a.snap.Tray(a.lan)
+}
+
+// lanOf is the LAN a device on the canvas shows in, as the snapshot has it.
+func (a *app) lanOf(d *device) *model.LAN { return a.snap.LAN(d.lan) }

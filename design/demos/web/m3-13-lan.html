@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>M3-13 · 网页上的局域网 · Deneb</title>
+    <link rel="stylesheet" href="../v3/v3.css" />
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="web.css" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script src="../shared/motion.js"></script>
+    <script src="../shared/demo.js"></script>
+    <script src="../v3/glyphs.js"></script>
+    <script src="../v3/links.js"></script>
+    <script src="../v3/app.js"></script>
+    <script src="web.js"></script>
+    <script src="weblan.js"></script>
+    <script>
+      // M3-13 (DESIGN.md §14.4): kittors opens the web version on someone
+      // else's computer. 周末联机 has no "this computer": my MacBook is in
+      // the middle, the others around it, and 阿杰's NAS is offline. He looks
+      // at 阿杰's desktop, turns off remote desktop on his MacBook, drags his
+      // NAS in from the tray, then opens 工作室 from the sidebar.
+      const app = new App({
+        title: '周末联机',
+        sub: '',
+        stack: ['me', 'mia', 'jie', 'leo'],
+        action: '邀请朋友',
+        side: [
+          { group: '局域网' },
+          { id: 'all', icon: 'people', label: '全部' },
+          { id: 'weekend', dots: ['me', 'mia', 'jie'], label: '周末联机', on: true },
+          { id: 'team', dots: ['me', 'lin'], label: '工作室' },
+          { id: 'new', icon: 'plus', label: '新建局域网' },
+          { gap: true },
+          { group: '设备' },
+          { id: 'mine', icon: 'home', label: '我的设备', count: 4 },
+          { id: 'shared', icon: 'inbox', label: '共享给我', count: 2 },
+          { id: 'relays', icon: 'relayLine', label: '中转站' },
+          { gap: true },
+          { group: '管理工作室' },
+          { id: 'share', icon: 'share', label: '设备共享' },
+        ],
+      });
+      const br = Web.browser(app, { url: 'deneb.app/#/周末联机' });
+      app.win.dataset.k = 'win';
+      const SPARE = {
+        studio: { type: 'mini', owner: 'me', name: '工作室主机' },
+        mynas: { type: 'nas', owner: 'me', name: '我的 NAS' },
+        game: { type: 'console', owner: 'me', name: '我的游戏主机' },
+      };
+      const LANS = {
+        weekend: () => ({
+          lan: '周末联机',
+          people: ['me', 'mia', 'jie', 'leo'],
+          stack: ['me', 'mia', 'jie', 'leo'],
+          devs: {
+            mac: { type: 'laptop', owner: 'me', name: '我的 MacBook', x: 300, y: 278 },
+            mia: { type: 'laptop', owner: 'mia', name: 'Mia 的 MacBook', x: 136, y: 128 },
+            jdesk: { type: 'desktop', owner: 'jie', name: '阿杰的台式机', x: 468, y: 128 },
+            game: { type: 'console', owner: 'me', name: '我的游戏主机', x: 136, y: 430 },
+            jnas: { type: 'nas', owner: 'jie', name: '阿杰的 NAS', x: 520, y: 462, off: '2 小时前在线' },
+          },
+          spare: { studio: SPARE.studio, mynas: SPARE.mynas },
+          tray: ['studio', 'mynas'],
+        }),
+        team: () => ({
+          lan: '工作室',
+          people: ['me', 'lin'],
+          stack: ['me', 'lin'],
+          // Ids of their own: what fades in here is another LAN's picture,
+          // not the same tile blinking (the frame log keys by id).
+          devs: {
+            tmac: { type: 'laptop', owner: 'me', name: '我的 MacBook', x: 300, y: 278 },
+            studio: { type: 'mini', owner: 'me', name: '工作室主机', x: 136, y: 128 },
+            lindb: { type: 'database', owner: 'lin', name: 'dev-db', x: 468, y: 128 },
+            linci: { type: 'server', owner: 'lin', name: 'CI 构建机', x: 136, y: 430 },
+          },
+          spare: { game: SPARE.game, mynas: SPARE.mynas },
+          tray: ['game', 'mynas'],
+        }),
+      };
+      let lan = null, cur = null;
+      // Another LAN from the sidebar: the canvas's contents fade over to
+      // it (DESIGN.md §5 Fade), as on the desktop.
+      function showLan(id, first) {
+        if (cur === id || !LANS[id]) return;
+        cur = id;
+        for (const nav of app.win.querySelectorAll('.nav')) nav.classList.toggle('on', nav.dataset.id === id);
+        const build = () => {
+          if (lan) lan.destroy();
+          const cfg = LANS[id]();
+          app.setStack(cfg.stack);
+          lan = WebLan(app, cfg);
+          br.url('deneb.app/#/' + cfg.lan);
+        };
+        if (first) return build();
+        if (app.toastEl) app.dropToast(app.toastEl);
+        // Each piece fades on its own, so that the frame log sees the fade.
+        const parts = () => [...app.canvas.querySelectorAll(':scope > .dev, :scope > .tray, :scope > .relay'), document.querySelector('.head')];
+        for (const el of parts()) el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 160, easing: 'ease-in', fill: 'forwards' });
+        D.after(170, () => {
+          build();
+          for (const el of parts()) {
+            for (const a of el.getAnimations()) if (a.effect && a.effect.getKeyframes().some((k) => k.opacity != null)) a.cancel();
+            el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160, easing: 'ease-out' });
+          }
+        });
+      }
+      for (const nav of app.win.querySelectorAll('.nav[data-id]')) nav.addEventListener('click', () => showLan(nav.dataset.id));
+      showLan('weekend', true);
+
+      window.RECORDING = {
+        title: 'M3-13-网页上的局域网',
+        duration: 13800,
+        actions: [
+          { at: 600, shot: '网页上的周末联机', clean: true },
+          { at: 800, glide: { sel: '.dev[data-id="jdesk"] .tile' }, dur: 700 },
+          { at: 1600, down: true },
+          { at: 1680, up: true },
+          { at: 1900, glide: [760, 640], dur: 500 },
+          { at: 2700, shot: '阿杰的台式机', clean: true },
+          { at: 3000, glide: { sel: '.dev[data-id="mac"] .tile' }, dur: 700 },
+          { at: 3800, down: true },
+          { at: 3880, up: true },
+          { at: 4300, glide: { sel: '.sheet .rows .row:first-child .sw' }, dur: 600 },
+          { at: 5000, down: true },
+          { at: 5080, up: true },
+          { at: 5300, glide: [760, 660], dur: 500 },
+          { at: 5900, shot: '关掉远程桌面', clean: true },
+          { at: 6200, glide: [640, 300], dur: 500 },
+          { at: 6800, down: true },
+          { at: 6880, up: true },
+          { at: 7200, glide: { sel: '.tray .mini[data-id="mynas"]' }, dur: 700 },
+          { at: 8000, down: true },
+          { at: 8100, glide: [700, 420], dur: 1000, arc: 24 },
+          { at: 9000, shot: '把我的NAS拖进来' },
+          { at: 9300, up: true },
+          { at: 9700, glide: [880, 300], dur: 500 },
+          { at: 10300, shot: '加进来了', clean: true },
+          { at: 10700, glide: { sel: '.nav[data-id="team"]' }, dur: 800 },
+          { at: 11600, down: true },
+          { at: 11680, up: true },
+          { at: 12000, glide: [700, 330], dur: 500 },
+          { at: 12900, shot: '工作室', clean: true },
+        ],
+      };
+      window.__ready = true;
+    </script>
+  </body>
+</html>

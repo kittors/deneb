@@ -30,8 +30,10 @@ type Rule struct {
 // Peer is what the filter knows about one visible peer.
 type Peer struct {
 	Label string // "nas.jie", for logs
-	// Scopes are the active scopes shared with the peer: neither paused
-	// here nor by the peer.
+	// Scopes are the scopes shared with the peer that are not paused here.
+	// Those the peer paused on itself stay: it keeps to its pause on its
+	// own, and its first packet after resuming gets through at once (M2,
+	// engine/datapath.go).
 	Scopes []string
 	// RefusedByMe: this device's owner does not let the peer's owner use
 	// it, so nothing the peer starts gets in (not even ping).
@@ -48,6 +50,11 @@ type Policy struct {
 	Self  netip.Addr
 	Peers map[netip.Addr]*Peer // every visible peer, by overlay address
 	Open  map[string][]Rule    // scope -> what this device opens to it
+	// NoInbound are the scopes this device only connects out of (M3: the
+	// receiving side of a share): nothing a peer starts comes in through
+	// them, not even a ping, whatever Open says. Replies to what this
+	// device started pass, and a peer's other scopes still count.
+	NoInbound map[string]bool
 
 	// Test builds only (engine/testhooks): let this device send to
 	// addresses that are not peers, or turn the filter off, to stage the
@@ -58,10 +65,24 @@ type Policy struct {
 
 func (p *Policy) allows(peer *Peer, proto uint8, port uint16) bool {
 	for _, s := range peer.Scopes {
+		if p.NoInbound[s] {
+			continue
+		}
 		for _, r := range p.Open[s] {
 			if r.Proto == proto && r.First <= port && port <= r.Last {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// pingable: a peer may ping this device through any scope they share that
+// is not NoInbound (DESIGN §12: every peer of a scope may ping).
+func (p *Policy) pingable(peer *Peer) bool {
+	for _, s := range peer.Scopes {
+		if !p.NoInbound[s] {
+			return true
 		}
 	}
 	return false
@@ -75,9 +96,17 @@ const (
 	tcpClosing = 30 * time.Second
 	udpIdle    = 2 * time.Minute
 	icmpIdle   = 30 * time.Second
-	fragIdle   = 30 * time.Second
-	maxFlows   = 1 << 16
-	maxFrags   = 1 << 12
+	// A datagram's pieces travel together: its head admits the rest for a
+	// few seconds, which also keeps the table small under a steady stream
+	// of large datagrams (30 s filled it from about 140 a second).
+	fragIdle = 5 * time.Second
+	maxFlows = 1 << 16
+	maxFrags = 1 << 12
+	// One peer cannot fill either table, which would refuse every new
+	// connection, this device's own included (a ping with a new identifier
+	// is a new flow): what a peer starts is capped well below the total.
+	maxPeerFlows = maxFlows / 16
+	maxPeerFrags = maxFrags / 4
 )
 
 // flowKey is written from this device's point of view, so both directions
@@ -94,7 +123,31 @@ type flow struct {
 	inbound  bool  // the peer started it
 	port     uint16
 	closing  bool
+	// TCP: the sequence number each end expects next, as far as the
+	// segments seen tell (inEnd: this device's stack, from the peer's
+	// segments; outEnd: the peer, from ours). A reset of a cut connection
+	// carries them (cutResetsLocked).
+	inEnd, outEnd uint32
+	inSet, outSet bool
 }
+
+// noteSeq records the sequence number after h, a segment in or out.
+func (fl *flow) noteSeq(h Packet, out bool) {
+	if h.Proto != ProtoTCP || h.TCPRst || h.Fragment || h.FirstFragment {
+		return
+	}
+	if out {
+		if !fl.outSet || int32(h.TCPEnd-fl.outEnd) > 0 {
+			fl.outEnd, fl.outSet = h.TCPEnd, true
+		}
+	} else if !fl.inSet || int32(h.TCPEnd-fl.inEnd) > 0 {
+		fl.inEnd, fl.inSet = h.TCPEnd, true
+	}
+}
+
+// cutMemory is how long a connection cut by a policy change is remembered:
+// a segment of it, either way, draws a reset (CutTCP, CutTCPOut).
+const cutMemory = 30 * time.Second
 
 // Use is a service of this device in use by a peer right now: the
 // connections a peer started to one local port (M2, scene 5: closing a
@@ -122,9 +175,23 @@ type Filter struct {
 	mu    sync.Mutex
 	flows map[flowKey]*flow
 	frags map[fragKey]int64
-	drops map[string]uint64
-	seen  map[string]time.Time // rate-limits drop logging
-	logf  func(format string, args ...any)
+	// Of flows and frags, how many each peer started (by its address):
+	// what maxPeerFlows and maxPeerFrags count.
+	peerFlows map[netip.Addr]int
+	peerFrags map[netip.Addr]int
+	cut       map[flowKey]int64 // TCP connections a policy change cut, until when they are remembered
+	// cutUntil is the latest expiry ever put in cut: past it, nothing in
+	// cut is live, and wasCut answers without the lock (every TCP segment
+	// asks it; most of the time nothing was cut lately).
+	cutUntil atomic.Int64
+	drops    map[string]uint64
+	seen     map[string]time.Time // rate-limits drop logging
+	logf     func(format string, args ...any)
+
+	// OnReset gets the TCP resets of the connections a policy change cut:
+	// toStack for this device's own stack, toPeers for WireGuard. Set
+	// once, before the first SetPolicy (NewTUN does).
+	OnReset func(toStack, toPeers [][]byte)
 }
 
 // New returns a filter that drops everything until SetPolicy.
@@ -136,9 +203,13 @@ func New(logf func(format string, args ...any)) *Filter {
 		now:   time.Now,
 		flows: map[flowKey]*flow{},
 		frags: map[fragKey]int64{},
-		drops: map[string]uint64{},
-		seen:  map[string]time.Time{},
-		logf:  logf,
+
+		peerFlows: map[netip.Addr]int{},
+		peerFrags: map[netip.Addr]int{},
+		cut:       map[flowKey]int64{},
+		drops:     map[string]uint64{},
+		seen:      map[string]time.Time{},
+		logf:      logf,
 	}
 	f.pol.Store(&Policy{Peers: map[netip.Addr]*Peer{}})
 	return f
@@ -159,8 +230,14 @@ func (f *Filter) SetPolicy(p *Policy) []Use {
 	}
 	f.pol.Store(p)
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	now := f.now().UnixNano()
+	var toStack, toPeers [][]byte
+	defer func() {
+		f.mu.Unlock()
+		if f.OnReset != nil && (len(toStack) > 0 || len(toPeers) > 0) {
+			f.OnReset(toStack, toPeers)
+		}
+	}()
 	var cut []flowEntry
 	for k, fl := range f.flows {
 		if p.Off {
@@ -182,10 +259,50 @@ func (f *Filter) SetPolicy(p *Policy) []Use {
 			if fl.inbound && k.proto != ProtoICMP && !fl.closing && fl.expires >= now {
 				cut = append(cut, flowEntry{k, *fl})
 			}
-			delete(f.flows, k)
+			// A live TCP connection, either way: both ends are told at
+			// once, rather than hanging until their own timeouts (an SSH
+			// session that froze instead of closing, 11-09).
+			if k.proto == ProtoTCP && !fl.closing && fl.expires >= now {
+				if fl.inSet {
+					if r := resetWith(k.remote, k.local, fl.inEnd); r != nil {
+						toStack = append(toStack, r)
+					}
+				}
+				if fl.outSet {
+					if r := resetWith(k.local, k.remote, fl.outEnd); r != nil {
+						toPeers = append(toPeers, r)
+					}
+				}
+				if len(f.cut) < maxFlows {
+					f.cut[k] = now + int64(cutMemory)
+					f.noteCutUntil(now + int64(cutMemory))
+				}
+			}
+			f.dropFlowLocked(k, fl)
 		}
 	}
 	return uses(cut)
+}
+
+// wasCut: key is a TCP connection a policy change cut lately.
+func (f *Filter) wasCut(key flowKey, now time.Time) bool {
+	if now.UnixNano() > f.cutUntil.Load() {
+		return false // nothing cut is still remembered: no lock
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	exp, ok := f.cut[key]
+	return ok && exp >= now.UnixNano()
+}
+
+// noteCutUntil raises cutUntil to exp.
+func (f *Filter) noteCutUntil(exp int64) {
+	for {
+		cur := f.cutUntil.Load()
+		if exp <= cur || f.cutUntil.CompareAndSwap(cur, exp) {
+			return
+		}
+	}
 }
 
 type flowEntry struct {
@@ -202,6 +319,24 @@ func (f *Filter) Usage() []Use {
 	for k, fl := range f.flows {
 		if fl.inbound && k.proto != ProtoICMP && !fl.closing && fl.expires >= now {
 			live = append(live, flowEntry{k, *fl})
+		}
+	}
+	f.mu.Unlock()
+	return uses(live)
+}
+
+// Using lists the peers' services this device is using: live connections
+// this device started to a peer (pings are not a service), one entry per
+// peer and remote port (M2: "已连接 2:14" on the line to that device).
+func (f *Filter) Using() []Use {
+	f.mu.Lock()
+	now := f.now().UnixNano()
+	var live []flowEntry
+	for k, fl := range f.flows {
+		if !fl.inbound && k.proto != ProtoICMP && !fl.closing && fl.expires >= now {
+			e := flowEntry{k, *fl}
+			e.fl.port = k.remote.Port()
+			live = append(live, e)
 		}
 	}
 	f.mu.Unlock()
@@ -249,6 +384,20 @@ func uses(es []flowEntry) []Use {
 	return out
 }
 
+// StaleTCP is In's reason for a segment of a connection this side does not
+// know, from a peer that may open one now: the TUN answers it with a
+// reset.
+const StaleTCP = "tcp-stale"
+
+// CutTCP and CutTCPOut are In's and Out's reasons for a segment of a
+// connection a policy change cut (the share taken back, the service
+// closed, the person refused, the LAN paused): the TUN answers the peer,
+// or this device's stack, with a reset.
+const (
+	CutTCP    = "tcp-cut"
+	CutTCPOut = "tcp-cut-out"
+)
+
 // In judges a packet from WireGuard on its way to the local stack.
 // WireGuard has already checked that the source address belongs to the
 // peer that sent it (layer 4).
@@ -266,6 +415,14 @@ func (f *Filter) In(b []byte) (bool, string) {
 	if h.Dst != pol.Self {
 		return f.drop("in", "transit-in", h)
 	}
+	now := f.now()
+	if h.Proto == ProtoTCP && !h.TCPSYN && !h.TCPRst && !h.Fragment &&
+		f.wasCut(flowKey{h.Proto, netip.AddrPortFrom(h.Dst, h.DPort), netip.AddrPortFrom(h.Src, h.SPort)}, now) {
+		// More of a connection a policy change cut, the peer visible or
+		// not: answered with a reset carrying the ACK it gave, which it
+		// takes for certain (the one sent at the cut may have been off).
+		return f.drop("in", CutTCP, h)
+	}
 	peer := pol.Peers[h.Src]
 	if peer == nil {
 		return f.drop("in", "not-a-visible-peer", h)
@@ -273,7 +430,6 @@ func (f *Filter) In(b []byte) (bool, string) {
 	if h.Fragment {
 		return f.fragment("in", h)
 	}
-	now := f.now()
 	key := flowKey{h.Proto, netip.AddrPortFrom(h.Dst, h.DPort), netip.AddrPortFrom(h.Src, h.SPort)}
 	if h.Proto == ProtoICMP {
 		switch h.ICMPType {
@@ -281,9 +437,13 @@ func (f *Filter) In(b []byte) (bool, string) {
 			if peer.RefusedByMe {
 				return f.drop("in", "refused", h)
 			}
-			return f.accept(key, &flow{inbound: true}, h, now)
+			if !pol.pingable(peer) {
+				return f.drop("in", "no-inbound", h)
+			}
+			return f.accept(key, &flow{inbound: true}, h, now, false)
 		case icmpEchoReply:
-			if f.touch(key, h, now) {
+			if f.touch(key, h, now, false) {
+				f.noteFrag(h, now) // a reply to a large ping comes in pieces
 				return true, ""
 			}
 			return f.drop("in", "icmp-reply-without-flow", h)
@@ -297,20 +457,33 @@ func (f *Filter) In(b []byte) (bool, string) {
 		}
 		return f.drop("in", "icmp-type", h)
 	}
-	if f.touch(key, h, now) {
+	if f.touch(key, h, now, false) {
 		f.noteFrag(h, now)
 		return true, "" // a reply, or more of an accepted flow
 	}
 	if h.Proto == ProtoTCP && !h.TCPSYN {
+		// A connection this side does not know: its flow was cut when the
+		// service closed or the share was taken back, or it expired. If
+		// the peer may open it anew now, it is told with a reset (the TUN
+		// sends ResetFor): its end gives the old connection up at once and
+		// connects again, instead of sending into silence until its own
+		// timeout (a share given back after it was taken: about 12 s,
+		// 11-09). Anyone else, and any reset, still meets silence.
+		if !h.TCPRst && !peer.RefusedByMe && pol.pingable(peer) && pol.allows(peer, h.Proto, h.DPort) {
+			return f.drop("in", StaleTCP, h)
+		}
 		return f.drop("in", "tcp-without-flow", h)
 	}
 	if peer.RefusedByMe {
 		return f.drop("in", "refused", h)
 	}
+	if !pol.pingable(peer) { // every scope with this peer is NoInbound
+		return f.drop("in", "no-inbound", h)
+	}
 	if !pol.allows(peer, h.Proto, h.DPort) {
 		return f.drop("in", "service-not-open", h)
 	}
-	return f.accept(key, &flow{inbound: true, port: h.DPort}, h, now)
+	return f.accept(key, &flow{inbound: true, port: h.DPort}, h, now, false)
 }
 
 // Out judges a packet from the local stack (or the engine itself) on its
@@ -336,6 +509,12 @@ func (f *Filter) Out(b []byte) (bool, string) {
 	now := f.now()
 	peer := pol.Peers[h.Dst]
 	key := flowKey{h.Proto, netip.AddrPortFrom(h.Src, h.SPort), netip.AddrPortFrom(h.Dst, h.DPort)}
+	if h.Proto == ProtoTCP && !h.TCPSYN && !h.TCPRst && f.wasCut(key, now) {
+		// This device's stack goes on with a connection a policy change
+		// cut (the reset at the cut did not reach it, or was off): it gets
+		// one now, with the ACK it just sent, and the segment goes nowhere.
+		return f.drop("out", CutTCPOut, h)
+	}
 	if peer == nil {
 		for _, p := range pol.ExtraOut {
 			if p.Contains(h.Dst) {
@@ -350,9 +529,10 @@ func (f *Filter) Out(b []byte) (bool, string) {
 			if peer.RefusedByPeer {
 				return f.drop("out", "refused-by-peer", h)
 			}
-			return f.accept(key, &flow{}, h, now)
+			return f.accept(key, &flow{}, h, now, true)
 		case icmpEchoReply:
-			if f.touch(key, h, now) {
+			if f.touch(key, h, now, true) {
+				f.noteFrag(h, now)
 				return true, ""
 			}
 			return f.drop("out", "icmp-reply-without-flow", h)
@@ -365,29 +545,42 @@ func (f *Filter) Out(b []byte) (bool, string) {
 		}
 		return f.drop("out", "icmp-type", h)
 	}
-	if f.touch(key, h, now) {
+	if f.touch(key, h, now, true) {
 		f.noteFrag(h, now)
 		return true, ""
 	}
 	if peer.RefusedByPeer {
 		return f.drop("out", "refused-by-peer", h)
 	}
-	return f.accept(key, &flow{}, h, now)
+	return f.accept(key, &flow{}, h, now, true)
 }
 
-func (f *Filter) accept(key flowKey, fl *flow, h Packet, now time.Time) (bool, string) {
+func (f *Filter) accept(key flowKey, fl *flow, h Packet, now time.Time, out bool) (bool, string) {
 	f.mu.Lock()
-	if len(f.flows) >= maxFlows {
+	peer := key.remote.Addr()
+	if len(f.flows) >= maxFlows || fl.inbound && f.peerFlows[peer] >= maxPeerFlows {
 		f.gcLocked(now)
 	}
 	if len(f.flows) >= maxFlows {
 		f.mu.Unlock()
 		return f.drop("both", "flow-table-full", h)
 	}
+	if old := f.flows[key]; old != nil {
+		f.dropFlowLocked(key, old) // the same ports again: a new connection
+	}
+	if fl.inbound {
+		if f.peerFlows[peer] >= maxPeerFlows {
+			f.mu.Unlock()
+			return f.drop("in", "peer-flows-full", h)
+		}
+		f.peerFlows[peer]++
+	}
 	fl.expires = now.Add(idleFor(h.Proto, h.TCPFinRst)).UnixNano()
 	fl.since, fl.lastSeen = now.UnixNano(), now.UnixNano()
 	fl.closing = h.TCPFinRst
+	fl.noteSeq(h, out)
 	f.flows[key] = fl
+	delete(f.cut, key) // a new connection on the same ports
 	f.mu.Unlock()
 	f.noteFrag(h, now)
 	return true, ""
@@ -407,7 +600,7 @@ func idleFor(proto uint8, closing bool) time.Duration {
 }
 
 // touch reports whether key is a live flow and extends it.
-func (f *Filter) touch(key flowKey, h Packet, now time.Time) bool {
+func (f *Filter) touch(key flowKey, h Packet, now time.Time, out bool) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	fl := f.flows[key]
@@ -417,6 +610,7 @@ func (f *Filter) touch(key flowKey, h Packet, now time.Time) bool {
 	if h.TCPFinRst {
 		fl.closing = true
 	}
+	fl.noteSeq(h, out)
 	fl.expires = now.Add(idleFor(key.proto, fl.closing)).UnixNano()
 	fl.lastSeen = now.UnixNano()
 	return true
@@ -436,18 +630,29 @@ func (f *Filter) noteFrag(h Packet, now time.Time) {
 	if !h.FirstFragment {
 		return
 	}
+	self := f.pol.Load().Self
+	k := fragKey{h.Src, h.Dst, h.Proto, h.ID}
 	f.mu.Lock()
-	if len(f.frags) >= maxFrags {
+	defer f.mu.Unlock()
+	if _, ok := f.frags[k]; ok {
+		f.frags[k] = now.Add(fragIdle).UnixNano()
+		return
+	}
+	full := func() bool {
+		return len(f.frags) >= maxFrags || h.Src != self && f.peerFrags[h.Src] >= maxPeerFrags
+	}
+	if full() {
 		for k, exp := range f.frags {
 			if exp < now.UnixNano() {
-				delete(f.frags, k)
+				f.dropFragLocked(k)
 			}
 		}
 	}
-	if len(f.frags) < maxFrags {
-		f.frags[fragKey{h.Src, h.Dst, h.Proto, h.ID}] = now.Add(fragIdle).UnixNano()
+	if full() {
+		return // its pieces are dropped: fragment-without-head
 	}
-	f.mu.Unlock()
+	f.frags[k] = now.Add(fragIdle).UnixNano()
+	f.peerFrags[h.Src]++
 }
 
 func (f *Filter) fragment(dir string, h Packet) (bool, string) {
@@ -474,16 +679,43 @@ func (f *Filter) GC() {
 }
 
 func (f *Filter) gcLocked(now time.Time) {
+	for k, exp := range f.cut {
+		if exp < now.UnixNano() {
+			delete(f.cut, k)
+		}
+	}
 	n := now.UnixNano()
 	for k, fl := range f.flows {
 		if fl.expires < n {
-			delete(f.flows, k)
+			f.dropFlowLocked(k, fl)
 		}
 	}
 	for k, exp := range f.frags {
 		if exp < n {
-			delete(f.frags, k)
+			f.dropFragLocked(k)
 		}
+	}
+}
+
+// dropFlowLocked forgets a flow, and its count against the peer that
+// started it.
+func (f *Filter) dropFlowLocked(k flowKey, fl *flow) {
+	delete(f.flows, k)
+	if fl.inbound {
+		countDown(f.peerFlows, k.remote.Addr())
+	}
+}
+
+func (f *Filter) dropFragLocked(k fragKey) {
+	delete(f.frags, k)
+	countDown(f.peerFrags, k.src)
+}
+
+func countDown(m map[netip.Addr]int, a netip.Addr) {
+	if m[a] <= 1 {
+		delete(m, a)
+	} else {
+		m[a]--
 	}
 }
 

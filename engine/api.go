@@ -21,6 +21,27 @@ var _ localapi.Backend = (*Engine)(nil)
 
 func (e *Engine) EngineVersion() string { return e.opts.Version }
 
+// Shutdown stops a user-space engine (POST /v1/shutdown): the window's,
+// when the system service takes its place. A kernel-mode engine is the
+// system's to stop: the service manager, launchd or systemd.
+func (e *Engine) Shutdown(ctx context.Context) error {
+	if e.opts.Mode == apitype.ModeKernel {
+		return &apitype.Error{Code: apitype.ErrInvalid, Message: "系统服务里的引擎由系统来停"}
+	}
+	e.logf("stop asked for through the local API")
+	e.requestStop()
+	return nil
+}
+
+// UpdateEngine replaces the engine with the executable at path, when it
+// runs as a system service that can (Options.SelfUpdate).
+func (e *Engine) UpdateEngine(ctx context.Context, path string) apitype.UpdateResult {
+	if e.opts.SelfUpdate == nil {
+		return apitype.UpdateResult{Result: apitype.UpdateNotService, Message: "这个引擎不是系统服务：重启它就是更新"}
+	}
+	return e.opts.SelfUpdate(ctx, path)
+}
+
 // State builds a snapshot for the local API.
 func (e *Engine) State() *apitype.State {
 	e.mu.Lock()
@@ -43,6 +64,7 @@ func (e *Engine) stateLocked() *apitype.State {
 		Relays:           []apitype.Relay{},
 		Paths:            []apitype.PeerPath{},
 		Usage:            usesFor(e.nm, e.f.Usage()),
+		Using:            usingFor(e.nm, e.f.Using(), e.pausedLocked),
 		UserView:         e.userView,
 	}
 	bound, _ := e.ms.BoundInterface()
@@ -63,8 +85,13 @@ func (e *Engine) stateLocked() *apitype.State {
 	}
 	self := deviceOf(nm.Self)
 	s.Self = &self
+	var chosen map[proto.ScopeID]proto.RelayID
+	if e.ms != nil {
+		chosen = e.ms.ChosenRelays()
+	}
 	for _, sc := range nm.Scopes {
-		as := apitype.Scope{ID: apitype.ScopeID(sc.ID), Name: sc.Name, Paused: e.pausedLocked(sc), Open: []apitype.Service{}}
+		as := apitype.Scope{ID: apitype.ScopeID(sc.ID), Name: sc.Name, Paused: e.pausedLocked(sc), Open: []apitype.Service{},
+			Kind: string(sc.Kind), NoInbound: sc.NoInbound, Relay: apitype.RelayID(chosen[sc.ID])}
 		for _, svc := range sc.Open {
 			for _, pr := range svc.Ports {
 				for port := uint32(pr.First); port <= uint32(pr.Last) && port-uint32(pr.First) < 64; port++ {
@@ -81,6 +108,9 @@ func (e *Engine) stateLocked() *apitype.State {
 		ap := apitype.Peer{Device: deviceOf(p.Node), Online: p.Online, RefusedByPeer: p.RefusedByPeer, RefusedByMe: p.RefusedByMe}
 		for _, id := range p.Scopes {
 			ap.Scopes = append(ap.Scopes, apitype.ScopeID(id))
+		}
+		for _, id := range p.PausedScopes {
+			ap.PausedScopes = append(ap.PausedScopes, apitype.ScopeID(id))
 		}
 		s.Peers = append(s.Peers, ap)
 		s.Paths = append(s.Paths, e.pathLocked(p))
@@ -251,11 +281,11 @@ func (e *Engine) pathLoop() {
 				}
 			}
 		}
-		var usage []apitype.ServiceUse
+		var usage, using []apitype.ServiceUse
 		if full {
-			u := usesFor(e.nm, e.f.Usage())
-			if k := usageKey(u); k != e.lastUsage {
-				e.lastUsage, usage = k, u
+			u, g := usesFor(e.nm, e.f.Usage()), usingFor(e.nm, e.f.Using(), e.pausedLocked)
+			if k := usageKey(u) + "|" + usageKey(g); k != e.lastUsage {
+				e.lastUsage, usage, using = k, u, g
 			}
 		}
 		e.mu.Unlock()
@@ -263,7 +293,7 @@ func (e *Engine) pathLoop() {
 			e.publish(apitype.Event{Type: apitype.EventPaths, Paths: changed})
 		}
 		if usage != nil {
-			e.publish(apitype.Event{Type: apitype.EventUsage, Usage: usage})
+			e.publish(apitype.Event{Type: apitype.EventUsage, Usage: usage, Using: using})
 		}
 	}
 }
@@ -515,6 +545,17 @@ func (e *Engine) UserView(ctx context.Context) (json.RawMessage, error) {
 		return nil, err
 	}
 	raw, err := cc.UserView(ctx)
+	return raw, apiErr(err)
+}
+
+// RelayUsage passes the control server's proto.RelayUsage on: the client
+// never talks to the control server itself (M4, the relay cards).
+func (e *Engine) RelayUsage(ctx context.Context) (json.RawMessage, error) {
+	cc, err := e.loggedInClient()
+	if err != nil {
+		return nil, err
+	}
+	raw, err := cc.RelayUsage(ctx)
 	return raw, apiErr(err)
 }
 

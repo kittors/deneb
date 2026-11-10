@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"slices"
 	"testing"
+	"time"
 )
 
 func world() *Snapshot {
@@ -138,5 +139,118 @@ func TestColorFor(t *testing.T) {
 		if c == 0 || c >= NumColors || c != ColorFor("someone", id) {
 			t.Errorf("%s gets color %d", id, c)
 		}
+	}
+}
+
+// M2's ops show on a copy as they will be once in effect (DESIGN §6.7–§6.9).
+func TestWithM2(t *testing.T) {
+	s := world()
+	s.People = map[PersonID]*Person{"me": {ID: "me"}, "jie": {ID: "jie"}, "lin": {ID: "lin"}}
+	l := s.LANs[0]
+	l.Pending = []DeviceID{"pi"}
+	l.PendingMembers = []PersonID{"lin"}
+	s.Devices["pi"] = &Device{ID: "pi", Owner: "jie", Catalog: []Service{{Key: "tcp/22", Kind: "shell", On: true}}}
+	s.Invitations = []Invitation{{ID: "inv", LAN: "games", LANName: "桌游夜"}}
+	s.Devices["game"].Login = Login{Expires: time.Now().Add(10 * 24 * time.Hour), RenewFrom: time.Now().Add(-time.Hour)}
+
+	n := s.With(Op{Kind: OpDeviceApprove, LAN: "weekend", Device: "pi"})
+	if nl := n.LAN("weekend"); !nl.Has("pi") || nl.HasPending("pi") || len(nl.Services["pi"]) != 1 {
+		t.Errorf("approved, pi is in %v, waits in %v, opens %v", nl.Devices, nl.Pending, nl.Services["pi"])
+	}
+	n = s.With(Op{Kind: OpDeviceReject, LAN: "weekend", Device: "pi"})
+	if nl := n.LAN("weekend"); nl.Has("pi") || nl.HasPending("pi") {
+		t.Errorf("turned away, pi is in %v, waits in %v", nl.Devices, nl.Pending)
+	}
+	n = s.With(Op{Kind: OpLANRemoveDevice, LAN: "weekend", Device: "pi"})
+	if nl := n.LAN("weekend"); nl.HasPending("pi") {
+		t.Error("taken back while it waited, pi still waits")
+	}
+	n = s.With(Op{Kind: OpMemberApprove, LAN: "weekend", Person: "lin"})
+	if nl := n.LAN("weekend"); !slices.Contains(nl.Members, "lin") || len(nl.PendingMembers) != 0 {
+		t.Errorf("let in, members %v, waiting %v", nl.Members, nl.PendingMembers)
+	}
+	n = s.With(Op{Kind: OpMemberReject, LAN: "weekend", Person: "lin"})
+	if nl := n.LAN("weekend"); slices.Contains(nl.Members, "lin") || len(nl.PendingMembers) != 0 {
+		t.Errorf("turned away, members %v, waiting %v", nl.Members, nl.PendingMembers)
+	}
+	n = s.With(Op{Kind: OpLANInvite, LAN: "weekend", Person: "lin"})
+	if nl := n.LAN("weekend"); len(nl.Invited) != 1 || nl.Invited[0].Person != "lin" || nl.Invited[0].By != "me" {
+		t.Errorf("invited by name: %v", nl.Invited)
+	}
+	if back := n.With(Op{Kind: OpInviteRevoke, LAN: "weekend", Person: "lin"}); len(back.LAN("weekend").Invited) != 0 {
+		t.Error("the invite taken back stays")
+	}
+	if n := s.With(Op{Kind: OpLANInvite, LAN: "weekend", Person: "jie"}); n != s {
+		t.Error("a member was invited again")
+	}
+	if n := s.With(Op{Kind: OpInviteDecline, Invitation: "inv"}); len(n.Invitations) != 0 {
+		t.Error("the invitation declined stays")
+	}
+	if n := s.With(Op{Kind: OpDeviceRenew, Device: "game"}); n.Devices["game"].Login.Due(time.Now()) {
+		t.Error("renewed, the login still asks to be renewed")
+	}
+	if n := s.With(Op{Kind: OpDeviceRename, Device: "game", Name: "客厅的游戏机"}); n.Devices["game"].Name != "客厅的游戏机" {
+		t.Error("not renamed")
+	}
+	if n := s.With(Op{Kind: OpDeviceSetKind, Device: "game", DevKind: "desktop"}); n.Devices["game"].Kind != "desktop" {
+		t.Error("its kind did not change")
+	}
+	n = s.With(Op{Kind: OpLANSetApproveDevices, LAN: "weekend", On: true})
+	if !n.LAN("weekend").ApproveDevices || n.LAN("weekend").ApproveMembers {
+		t.Error("the switches did not change as asked")
+	}
+	if !reflect.DeepEqual(s.LAN("weekend").Pending, []DeviceID{"pi"}) {
+		t.Error("an op changed the snapshot it was laid over")
+	}
+}
+
+// A login asks to be renewed from RenewFrom on, and once it ran out.
+func TestLoginDue(t *testing.T) {
+	now := time.Now()
+	for _, c := range []struct {
+		l   Login
+		due bool
+	}{
+		{Login{}, false},
+		{Login{RenewFrom: now.Add(time.Hour)}, false},
+		{Login{RenewFrom: now.Add(-time.Hour)}, true},
+		{Login{Expired: true}, true},
+	} {
+		if got := c.l.Due(now); got != c.due {
+			t.Errorf("%+v: due %v", c.l, got)
+		}
+	}
+}
+
+// A device brought into a LAN whose owner lets new devices in waits for the
+// owner, as the server has it, unless it is the owner's own; one brought in
+// by someone who waits to be let in waits too.
+func TestAddDeviceWaitsForTheOwner(t *testing.T) {
+	s := &Snapshot{Me: "me", Devices: map[DeviceID]*Device{
+		"mine": {ID: "mine", Owner: "me"}, "leos": {ID: "leos", Owner: "leo"},
+	}, LANs: []*LAN{
+		{ID: "books", Owner: "leo", ApproveDevices: true, Services: map[DeviceID][]Service{}},
+		{ID: "open", Owner: "leo", Services: map[DeviceID][]Service{}},
+		{ID: "waits", Owner: "leo", Waiting: true, Services: map[DeviceID][]Service{}},
+	}}
+	add := func(lan LANID, dev DeviceID) *LAN {
+		return s.With(Op{Kind: OpLANAddDevice, LAN: lan, Device: dev}).LAN(lan)
+	}
+	if l := add("books", "mine"); !l.HasPending("mine") || l.Has("mine") {
+		t.Errorf("mine into Leo's books: devices %v, waiting %v", l.Devices, l.Pending)
+	}
+	if l := add("books", "leos"); !l.Has("leos") || l.HasPending("leos") {
+		t.Errorf("Leo's own into his books: devices %v, waiting %v", l.Devices, l.Pending)
+	}
+	if l := add("open", "mine"); !l.Has("mine") {
+		t.Errorf("mine into a LAN that lets anything in: devices %v, waiting %v", l.Devices, l.Pending)
+	}
+	if l := add("waits", "mine"); !l.HasPending("mine") {
+		t.Errorf("mine into a LAN I wait for: devices %v, waiting %v", l.Devices, l.Pending)
+	}
+	// Asked once, asking again changes nothing.
+	n := s.With(Op{Kind: OpLANAddDevice, LAN: "books", Device: "mine"})
+	if again := n.With(Op{Kind: OpLANAddDevice, LAN: "books", Device: "mine"}); len(again.LAN("books").Pending) != 1 {
+		t.Errorf("asked twice: waiting %v", again.LAN("books").Pending)
 	}
 }

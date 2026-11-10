@@ -381,3 +381,123 @@ func TestLiveTurnedDown(t *testing.T) {
 		t.Error("构建服务器 did not go back into the tray")
 	}
 }
+
+// A control server of M1 does none of what M2 adds, and its user view lists
+// none of it: the window offers none of it, rather than send what the
+// server would turn down — no switches in the LAN's card, no member's ball
+// to drag onto a LAN. A device's name and kind change in place on any
+// server, M1's too (DESIGN §6.7, §6.9).
+func TestLiveOldServerHidesM2(t *testing.T) {
+	r := newLiveRig(t, fakeworld.Ready, "m1-server")
+	r.until("the canvas", func() bool { return r.a.device(build) != nil && r.a.device(r.a.self) != nil })
+	r.settle(600 * time.Millisecond)
+	if s := r.store(); len(s.Features) > 0 {
+		t.Fatalf("the M1 world lists features: %v", s.Features)
+	}
+	p := r.at(r.a.device(build))
+	r.tt.ClickAt(p.X, p.Y)
+	r.settle(500 * time.Millisecond)
+	if r.a.selected != build || r.a.cardAt.W == 0 {
+		t.Fatalf("构建服务器's card did not open: %q", r.a.selected)
+	}
+	card := ui.Point{X: r.a.origin.X + r.a.cardAt.X, Y: r.a.origin.Y + r.a.cardAt.Y}
+	r.tt.ClickAt(card.X+16+40+12+30, card.Y+16+9) // its name
+	r.settle(300 * time.Millisecond)
+	if r.a.renaming == nil {
+		t.Fatal("构建服务器's name does not change in place")
+	}
+	r.tt.Key(0, ui.KeyBackspace)
+	r.tt.Type("编译机")
+	r.tt.Key(0, ui.KeyEnter)
+	r.until("the new name", func() bool { return r.store().Devices[model.DeviceID(build)].Name == "编译机" })
+	r.tt.ClickAt(sidebarWidth+60, 36) // the LAN's name
+	r.settle(500 * time.Millisecond)
+	if r.a.selected != lanCard {
+		t.Fatalf("the LAN's card did not open: %q", r.a.selected)
+	}
+	if r.tt.HasText("新设备要我同意") || r.tt.HasText("新成员要我同意") {
+		t.Error("the LAN's card offers switches the server cannot keep")
+	}
+	r.tt.ClickAt(sidebarWidth+300, headerHeight+600)
+	r.settle(400 * time.Millisecond)
+	r.click("周末联机")
+	r.settle(600 * time.Millisecond)
+	jie := r.a.people[string(fakeworld.Jie)]
+	b, ok := r.tt.Find(jie.ch)
+	if !ok {
+		t.Fatalf("no ball of 阿杰's in the header: %q", r.tt.Texts())
+	}
+	row := r.a.rowAt(model.LANID(fakeworld.Studio))
+	from := ui.Point{X: b.X + b.W/2, Y: b.Y + b.H/2}
+	r.tt.Press(from.X, from.Y)
+	for i := 1; i <= 20; i++ {
+		k := float32(i) / 20
+		r.tt.Move(from.X+(row.X+30-from.X)*k, from.Y+(row.Y+row.H/2-from.Y)*k)
+		r.tt.Frame()
+		r.tt.Advance(16 * time.Millisecond)
+		if r.a.person != nil {
+			t.Fatal("a member's ball drags to invite on a server that cannot invite by name")
+		}
+	}
+	r.tt.Release(row.X+30, row.Y+row.H/2)
+	r.settle(300 * time.Millisecond)
+}
+
+// The "全部" view on the live store, in the fake world (DESIGN §9 scene 3):
+// every LAN in its region; the sidebar's switch pauses a LAN on this
+// computer's engine and resumes it; one of my devices let go in another
+// region moves there, into it first, and undo moves it back.
+func TestLiveAllView(t *testing.T) {
+	r := newLiveRig(t, fakeworld.Ready, "all-view")
+	r.until("the canvas", func() bool { return r.a.device(build) != nil })
+	r.click("全部")
+	r.until("the regions", func() bool {
+		return r.a.all() && r.a.device("studio/"+build) != nil && r.a.device("weekend/"+jiePC) != nil && len(r.a.regionRects) == 2
+	})
+	r.settle(600 * time.Millisecond)
+	r.shot("all")
+	// 周末联机's switch: paused on this computer, 阿杰's devices with it.
+	r.click("暂停周末联机")
+	r.until("周末联机 paused", func() bool {
+		l := r.store().LAN(weekend)
+		return l.Paused && r.store().Path(model.DeviceID(jiePC)).Kind == model.PathPaused
+	})
+	r.tt.Move(700, 700)
+	r.settle(800 * time.Millisecond)
+	r.shot("paused")
+	if !r.tt.HasText("周末联机已暂停，其他照常") || r.a.device("weekend/"+jiePC).path != "paused" {
+		t.Errorf("paused, the window shows %q", r.tt.Texts())
+	}
+	r.click("暂停周末联机")
+	r.until("周末联机 back", func() bool { return !r.store().LAN(weekend).Paused })
+	r.settle(800 * time.Millisecond)
+	// 构建服务器, from 工作室's region into 周末联机's.
+	d := r.a.device("studio/" + build)
+	from := r.at(d)
+	wk := r.a.regionRects[weekend]
+	to := ui.Point{X: sidebarWidth + wk.X + wk.W/2, Y: headerHeight + wk.Y + wk.H - 90}
+	r.tt.Press(from.X, from.Y)
+	for i := 1; i <= 30; i++ {
+		k := float32(i) / 30
+		r.tt.Move(from.X+(to.X-from.X)*k, from.Y+(to.Y-from.Y)*k)
+		r.tt.Frame()
+		r.tt.Advance(16 * time.Millisecond)
+	}
+	r.tt.Release(to.X, to.Y)
+	r.until("构建服务器 in 周末联机", func() bool {
+		s := r.store()
+		return s.LAN(weekend).Has(model.DeviceID(build)) && !s.LAN(model.LANID("studio")).Has(model.DeviceID(build))
+	})
+	r.settle(800 * time.Millisecond)
+	r.shot("moved")
+	if r.a.device("weekend/"+build) == nil {
+		t.Fatal("构建服务器 is not in 周末联机's region")
+	}
+	r.click("撤销")
+	r.until("构建服务器 back in 工作室", func() bool {
+		s := r.store()
+		return s.LAN(model.LANID("studio")).Has(model.DeviceID(build)) && !s.LAN(weekend).Has(model.DeviceID(build))
+	})
+	r.settle(800 * time.Millisecond)
+	r.shot("undone")
+}

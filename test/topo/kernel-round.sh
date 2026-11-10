@@ -96,6 +96,11 @@ except OSError:
     pass' "$1"; }
 # --noproxy: a Clash proxy in the environment must not get the request.
 web() { curl -s --noproxy '*' --connect-timeout 1 --max-time 2 "http://$1/"; }
+# web_quick: for timing "opened again". A SYN the peer's filter still drops
+# makes curl wait out its connect timeout, so with 1 s every reopening read
+# as over a second (round 3: 1354ms); 0.3 s is still several round trips.
+# Not for "closed": on a lossy line a lost SYN would read as closed.
+web_quick() { curl -s --noproxy '*' --connect-timeout 0.3 --max-time 1 "http://$1/"; }
 pings() { ping -c 1 -W 700 "$1" >/dev/null 2>&1; }
 works() { "$@" >/dev/null 2>&1; }
 fails() { ! "$@" >/dev/null 2>&1; }
@@ -337,6 +342,25 @@ checks() {
 	no_name "nobody-$$.$DOMAIN" && ok "不存在的 .$DOMAIN 名字查无此名" || bad "不存在的名字居然解析出来了"
 	[ -n "$(resolve www.baidu.com)" ] && ok "普通域名照旧能解析" || bad "普通域名解析不了"
 
+	# M2 item 7: the engine warns ("proxy", with the rule to add) only when
+	# another program's tunnel wins the route to Deneb's addresses, so that
+	# ordinary programs' connections to LAN devices would go into it. On this
+	# Mac Clash's TUN holds the default route but Deneb's /16 is more
+	# specific and wins, so the right answer here is no warning: a false
+	# alarm would scare people for nothing. The other case (a proxy that does
+	# take the route) cannot be staged here without touching Clash or the
+	# route table, so the in-process tests cover it.
+	say "第 M2-7 条：Clash 这类软件开着时的提示"
+	local px peer_if
+	px=$(k status --json 2>/dev/null | jq -c '[.engine.problems[]? | select(.code == "proxy")] | first // empty')
+	peer_if=$(via "$BUILD_ADDR")
+	echo "     默认路由在 $(via 1.1.1.1)；去构建服务器（$BUILD_ADDR）走 $peer_if"
+	if [ "$peer_if" = "${UTUN:-}" ]; then
+		[ -z "$px" ] && ok "Deneb 的路由没被抢，引擎没有乱报 Clash 提示" || bad "Deneb 的路由没被抢，引擎却报了 proxy：$px"
+	else
+		[ -n "$px" ] && ok "去 Deneb 设备的路由被 $peer_if 抢了，引擎报了 proxy：$(jq -r '.rule // .message' <<<"$px")" || bad "去 Deneb 设备的路由被 $peer_if 抢了，引擎却没报 proxy"
+	fi
+
 	say "第 8 条：服务按局域网开放，普通程序直接访问"
 	ensure build service "$WORK" web tcp/80 on
 	local out t
@@ -349,7 +373,7 @@ checks() {
 	t=$(poll 4000 fails web "$BUILD_FQDN") && ok "在工作室关掉网页后 ${t}ms 打不开" || bad "关掉 4 秒后还能打开"
 	r build service "$WORK" web tcp/80 on >/dev/null
 	mark WEB_OFF 0
-	t=$(poll 4000 works web "$BUILD_FQDN") && ok "重新开放后 ${t}ms 又能打开" || bad "重新开放 4 秒后还打不开"
+	t=$(poll 4000 works web_quick "$BUILD_FQDN") && ok "重新开放后 ${t}ms 又能打开" || bad "重新开放 4 秒后还打不开"
 
 	say "第 4 条：同时在两个局域网，三条长连接各 ${TICK_SECS} 秒（这时可以在窗口里来回切侧边栏）"
 	ensure build service "$WORK" other tcp/7000 on --name 计时流

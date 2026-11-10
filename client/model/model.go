@@ -64,7 +64,45 @@ type Snapshot struct {
 	// Local are the common services this computer listens on, off: what
 	// its card offers to open besides those it has opened before.
 	Local []Service
+
+	// Invitations are the invites sent to me by name that wait for my
+	// answer: the card shows one as it does a link's (DESIGN §6.7).
+	Invitations []Invitation
+	// Notices are what this computer's engine found that the person should
+	// know, as another program taking Deneb's connections (DESIGN §6.8).
+	Notices []Notice
+	// Using is since when this computer has used a service of each device it
+	// uses one of now, for the "已连接" count (DESIGN §6.7).
+	Using map[DeviceID]time.Time
+	// NoNetwork: this computer has no network of its own (Wi-Fi off, the
+	// cable out), as its engine finds: the view says so, calmly, rather
+	// than that every device cannot be reached (DESIGN §6.10).
+	NoNetwork bool
+	// Cuts are the uses of this computer's services it cut just now, a
+	// service closed or a person refused while they used it (scene 5): each
+	// plays a short red light on that device's link, and its second line
+	// says so for a moment. The store keeps them a few seconds.
+	Cuts []Cut
+	// Features are what the control server does beyond M1 (Feature…), as
+	// its user view lists them: the view shows a control only where the
+	// server takes what it sends. An M1 server lists none, and neither does
+	// an M1 engine, which drops what it does not know as it passes the view
+	// on.
+	Features map[string]bool
 }
+
+// What a control server does beyond M1, by the names its user view gives
+// them (proto.Feature…). Renaming a device and changing its kind need
+// none: every server takes them, M1's too.
+const (
+	FeatureApprove      = "approve"      // a LAN's two switches; letting devices and people in, or not
+	FeatureInvitePerson = "invitePerson" // an invite made out to a person: their ball dropped on a LAN
+	FeatureRenew        = "renew"        // a device's login renewed from another of its owner's
+	FeatureAddRelay     = "addRelay"     // a relay added to a LAN in a click: M4's, no server lists it yet
+)
+
+// Can reports whether the control server does what feature names.
+func (s *Snapshot) Can(feature string) bool { return s.Features[feature] }
 
 // Person is someone in my LANs, me too.
 type Person struct {
@@ -89,7 +127,77 @@ type LAN struct {
 	Services map[DeviceID][]Service
 	// Relays are the relays the LAN uses, the one it prefers first.
 	Relays []RelayID
+
+	// ApproveDevices and ApproveMembers are the owner's two switches: new
+	// devices, new members wait until the owner lets them in (DESIGN §6.7).
+	ApproveDevices, ApproveMembers bool
+	// Waiting is set when I am the one who waits for the owner: the LAN shows
+	// only its name and its owner until they let me in.
+	Waiting bool
+	// Pending are devices that wait for the owner, not in Devices yet: all
+	// of them for the owner, my own for me.
+	Pending []DeviceID
+	// PendingMembers are people who wait for the owner; only the owner sees
+	// them.
+	PendingMembers []PersonID
+	// Invited are people invited by name who have not answered: all of them
+	// for the owner, the ones I invited for a member.
+	Invited []Invited
+	// Paused is set while the LAN is paused on this computer: its links are
+	// down here, and only here (DESIGN §9 scene 3).
+	Paused bool
 }
+
+// Invited is someone asked into a LAN by name, who has not answered yet.
+type Invited struct {
+	Person  PersonID
+	By      PersonID
+	Invite  string // its id: what takes it back
+	Expires time.Time
+}
+
+// Invitation is an invite sent to me by name (DESIGN §6.7).
+type Invitation struct {
+	ID      string
+	LAN     LANID
+	LANName string
+	Inviter Person
+	Expires time.Time
+}
+
+// Cut is a use of one of this computer's services cut off: who used it,
+// the service as the card names it, and when.
+type Cut struct {
+	Device  DeviceID
+	Service string
+	At      time.Time
+}
+
+// Notice is something the engine found that the person should know: the
+// sentence to show, and the rule to add to the other program, if any.
+type Notice struct {
+	Code    string
+	Short   string // a few words, for the header's pill: "Clash 可能挡住连接"
+	Message string
+	Rule    string
+}
+
+// Login is when a device's login runs out. Only my own devices tell the
+// dates; another's tells only whether it has run out.
+type Login struct {
+	Expires   time.Time
+	RenewFrom time.Time // from when it asks to be renewed
+	Expired   bool
+}
+
+// Due reports whether the login asks to be renewed at now: it runs out
+// soon, or has.
+func (l Login) Due(now time.Time) bool {
+	return l.Expired || !l.RenewFrom.IsZero() && !now.Before(l.RenewFrom)
+}
+
+// HasPending reports whether dev waits to be let into the LAN.
+func (l *LAN) HasPending(dev DeviceID) bool { return slices.Contains(l.Pending, dev) }
 
 // Has reports whether dev is in the LAN.
 func (l *LAN) Has(dev DeviceID) bool { return slices.Contains(l.Devices, dev) }
@@ -115,6 +223,10 @@ type Device struct {
 	Refused map[PersonID]bool
 	// RefusesMe is set on another's device whose owner does not let me use it.
 	RefusesMe bool
+	// Login is when its login runs out (DESIGN §6.8).
+	Login Login
+	// LastSeen is when the control server last heard from it, while offline.
+	LastSeen time.Time
 }
 
 // Service is something a device opens to others, in everyday words.

@@ -24,6 +24,8 @@ func (e *Engine) newControlClientLocked() (*controlclient.Client, error) {
 		Machine:       e.machine,
 		BindInterface: e.bindIf,
 		Logf:          e.logf,
+		// A release build talks plain http to this machine only.
+		PlainHTTPAnywhere: TestBuild,
 	})
 }
 
@@ -64,6 +66,9 @@ func (e *Engine) loginRequest() proto.LoginRequest {
 		DisplayName:   e.opts.DisplayName,
 		Kind:          e.opts.Kind,
 		EngineVersion: e.opts.Version,
+		// What peers may rely on (proto.Cap*): this engine drops repeated
+		// handshake messages, so a peer may send them both ways.
+		Caps: []string{proto.CapHandshakeDedupe},
 	}
 }
 
@@ -92,10 +97,17 @@ func (e *Engine) controlLoop(ctx context.Context, cc *controlclient.Client, gen 
 		}
 	}()
 	backoff := time.Second
+	// A network change ends the wait at once: the attempts while the
+	// network was gone grew the back-off, and the control server would
+	// otherwise wait for its end (test Mac, 20:10: connected 8.4 s after
+	// Wi-Fi had its address again).
 	sleep := func() bool {
 		select {
 		case <-ctx.Done():
 			return false
+		case <-e.ctlWake:
+			backoff = time.Second
+			return true
 		case <-time.After(backoff):
 		}
 		backoff = min(backoff*2, 30*time.Second)
@@ -295,7 +307,7 @@ func (e *Engine) reportLoop() {
 		if !ok || cc == nil {
 			continue
 		}
-		r := proto.Report{Endpoints: e.ms.Endpoints(), HomeRelay: e.ms.HomeRelay(), Paused: paused}
+		r := proto.Report{Endpoints: e.ms.Endpoints(), HomeRelay: e.ms.HomeRelay(), Relays: e.ms.ResidentRelays(), Paused: paused}
 		if r.Paused == nil {
 			r.Paused = []proto.ScopeID{}
 		}

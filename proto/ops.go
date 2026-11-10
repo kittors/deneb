@@ -31,6 +31,26 @@ type OpArgs struct {
 	// Invitation names an invite made out to the asker, from
 	// UserView.Invitations, for invite.accept and invite.decline. (M2)
 	Invitation InviteID `json:"invitation,omitempty"`
+	// Share names a share, for share.revoke and service.set. (M3)
+	Share ShareID `json:"share,omitempty"`
+	// Services are what share.create opens: keys from the device's
+	// catalog. (M3)
+	Services []ServiceKey `json:"services,omitempty"`
+	// Mode is lan.setMode's new mode. (M3)
+	Mode LANMode `json:"mode,omitempty"`
+	// Relay is the relay a relay op is about. (M4)
+	Relay RelayID `json:"relay,omitempty"`
+	// Join is the join code relay.revokeJoin takes back: its id. (M4)
+	Join string `json:"join,omitempty"`
+	// Weight and Capacity are relay.setWeight's and relay.setCapacity's.
+	// (M4)
+	Weight   *int `json:"weight,omitempty"`
+	Capacity *int `json:"capacity,omitempty"`
+	// Kick is the kick relay.unkick lifts. (M4)
+	Kick string `json:"kick,omitempty"`
+	// Public: relay.join makes a code for a new public relay rather than
+	// one of the asker's own. The deployment's operators only. (M4)
+	Public bool `json:"public,omitempty"`
 }
 
 // OpType names an operation. Next to each: the args it reads, then what it
@@ -72,6 +92,7 @@ const (
 	// the LAN. A service set up for the first time joins the device's
 	// catalog. Turning it off keeps it in the catalog, and taking the device
 	// out of a LAN keeps what it opened there, so undo brings it all back.
+	// From M3, Share instead of LAN switches the service in a share.
 	OpServiceSet OpType = "service.set"
 	// Device, Person, Refuse (false lets them back). The device's owner.
 	OpDeviceRefuse OpType = "device.refuse"
@@ -91,6 +112,17 @@ const (
 	// Device. The device's owner, from any of their devices: the login
 	// starts a new lifetime, and an expired device comes back ("点一下就续上").
 	OpDeviceRenew OpType = "device.renew"
+	// Device. The device's owner (a public device's: its LAN's owner), from
+	// any of their devices or a browser, logged in or logged out
+	// (UserView.LoggedOutDevices): the device goes for good. Its place in
+	// its LANs, its shares, what it opened, whom it refused and its kicks go
+	// with it; its address cools down 30 days before anyone gets it. One
+	// online is logged out at once, as when someone else logs in on its
+	// machine: its stream ends with StreamFrame.LoggedOut, its calls get
+	// ErrNotLoggedIn, and logging in there again makes a new device with a
+	// new address. There is no undo: a client that offers one holds the op
+	// back until its toast goes. (M7)
+	OpDeviceDelete OpType = "device.delete"
 	// LAN, Person. The owner; the person's devices leave the LAN with them.
 	// It also turns down a person waiting to join.
 	OpMemberRemove OpType = "member.remove"
@@ -108,7 +140,90 @@ const (
 	// devices waiting with them go too.
 	OpMemberReject OpType = "member.reject"
 
-	// Later: share.create, share.revoke (M3); relay.add, relay.remove (M4).
+	// M3.
+
+	// Device, Person, optionally Services → Share. The device's owner; for
+	// a public device, its LAN's owner. The person's devices see this one
+	// device and nothing else of the giver's; they reach it, it does not
+	// reach them. Giving it to someone who has it is refused ("已经有了");
+	// giving it again after share.revoke brings the share back as it was,
+	// which is undo. A person new to the giver's seats needs a free seat
+	// (seats_full otherwise). Giving it cancels a refusal of the person on
+	// the device.
+	OpShareCreate OpType = "share.create"
+	// Share. Whoever gave it, or manages the device now. The person keeps
+	// their seat while the toast offers undo, so undo (share.create) cannot
+	// find it taken (pricing-and-relays §1.5 item 7): until share.release,
+	// or ten seconds at most.
+	OpShareRevoke OpType = "share.revoke"
+	// Share. Whoever revoked it, when the toast "已收回 · 撤销" goes without
+	// undo: the seat it kept comes free at once.
+	OpShareRelease OpType = "share.release"
+	// Share. The person it was given to, who does not want it any more. The
+	// giver hears nothing beyond the share going from their view; the seat
+	// comes free (if nothing else keeps the person there).
+	OpShareLeave OpType = "share.leave"
+	// LAN, Mode. The owner. To "share", members' devices leave the LAN
+	// (their shares stay) and no member's device comes in after; back to
+	// "lan", members add their devices again themselves.
+	OpLANSetMode OpType = "lan.setMode"
+	// Device, LAN (empty: a person's device again). The device's owner, who
+	// must own the LAN: it becomes the LAN's public device, managed by the
+	// LAN's owner, in that LAN only.
+	OpDeviceSetPublic OpType = "device.setPublic"
+
+	// Relays (M4): "我的服务器", a relay on the person's own server.
+	//
+	// Name. Anyone: a new relay of theirs (ten at most), and a
+	// registration token for the relay program, in Result.RelayToken, shown
+	// this once. It works once, within a week; the relay is on no list
+	// until its program registers with it.
+	OpRelayCreate OpType = "relay.create"
+	// Relay. The owner: a new registration token, to set the relay up
+	// again (on a new machine, say). When it is used, the old program's
+	// secret stops working.
+	OpRelayToken OpType = "relay.token"
+	// Relay, Name. The owner.
+	OpRelayRename OpType = "relay.rename"
+	// Relay. The owner: it leaves every LAN and share it was on.
+	OpRelayDelete OpType = "relay.delete"
+	// LAN, Relay. The relay's owner, in a LAN they are in (dragged in,
+	// scene 2): the LAN's devices try it before the fallback.
+	OpRelayAdd OpType = "relay.add"
+	// LAN, Relay. The relay's owner or the LAN's owner: dragged back to the
+	// tray. Undo is relay.add again.
+	OpRelayRemove OpType = "relay.remove"
+	// "用我自己的服务器", with no form to fill (M4): a join code and the
+	// one-line install command that carries it, in Result.RelayJoin. It
+	// works once, within an hour; the relay comes into being when the
+	// command runs and registers with it, named after the region it
+	// reports. Relay (optional): the owner's existing relay, to set it up
+	// again on a new machine; it stays the same relay, LANs and all.
+	// Name (optional): a name rather than the region's. Public: a code for
+	// a new public relay, for the deployment's operators (the ops page);
+	// it starts as a standby, each connection limited to 2 MB/s.
+	//
+	// On a public relay, the deployment's operators run relay.join (to set
+	// it up again), relay.revokeJoin, relay.rename, relay.setWeight,
+	// relay.setCapacity, relay.kick and relay.unkick as owners do on their
+	// own; on one the seed file lists, only the kicks. No one drags a
+	// public relay into a LAN or deletes it.
+	OpRelayJoin OpType = "relay.join"
+	// Join. The code's owner (an operator, for a public relay's): the code
+	// no longer works.
+	OpRelayRevokeJoin OpType = "relay.revokeJoin"
+	// Relay, Weight (0–100; 1 by default). The owner: in a LAN with several
+	// relays, each device's list puts one first, chosen by weight; 0 is a
+	// standby, used only when the others cannot be.
+	OpRelaySetWeight OpType = "relay.setWeight"
+	// Relay, Capacity (devices at once; 0 is no limit). The owner: at
+	// capacity the relay counts as full and is put last on lists.
+	OpRelaySetCapacity OpType = "relay.setCapacity"
+	// Relay, and Person or Device. The owner: off the relay at once and
+	// from then on; recorded with who and when. Result.Kick.
+	OpRelayKick OpType = "relay.kick"
+	// Kick. The relay's owner: the kick is lifted, and recorded so.
+	OpRelayUnkick OpType = "relay.unkick"
 )
 
 // OpResult is the answer to an op that went through. One that did not
@@ -125,6 +240,14 @@ type OpResult struct {
 type OpOutput struct {
 	LAN    LANID       `json:"lan,omitempty"`
 	Invite *InviteView `json:"invite,omitempty"`
+	Share  ShareID     `json:"share,omitempty"` // share.create (M3)
+	Relay  RelayID     `json:"relay,omitempty"` // relay.create (M4)
+	// RelayToken is the relay program's registration token, from
+	// relay.create and relay.token: shown once, never again. (M4)
+	RelayToken string `json:"relayToken,omitempty"`
+	// RelayJoin is relay.join's code and install command. (M4)
+	RelayJoin *RelayJoin `json:"relayJoin,omitempty"`
+	Kick      string     `json:"kick,omitempty"` // relay.kick (M4)
 }
 
 // Error is how the control server says no. Code is for programs; Message is

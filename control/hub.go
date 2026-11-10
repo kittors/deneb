@@ -3,6 +3,7 @@ package control
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"net/http"
 	"sync"
 	"time"
 
@@ -17,10 +18,22 @@ type hub struct {
 	mu      sync.Mutex
 	subs    map[*sub]bool
 	streams map[proto.DeviceID]int         // open streams per device
+	views   map[proto.PersonID]int         // open browser streams per person
 	online  map[proto.DeviceID]bool        // as last published
 	offline map[proto.DeviceID]*time.Timer // pending offline marks, for the grace period
 	now     func() time.Time
 }
+
+// One device, or one person's browsers, may hold only so many streams at
+// once: each costs a map or a view on every change (M7 review). An engine
+// holds one, two for a moment while it reconnects; a person has a few tabs.
+const (
+	maxStreamsPerDevice = 8
+	maxStreamsPerPerson = 32
+)
+
+// errTooManyStreams turns away a stream over the limit.
+var errTooManyStreams = newErr(http.StatusTooManyRequests, proto.ErrConflict, "同时开着的连接太多了，请关掉一些再试")
 
 // offlineGrace is how long a device that dropped its stream still shows
 // online, so a reconnect does not flicker every peer's screen.
@@ -30,6 +43,7 @@ func newHub(now func() time.Time) *hub {
 	return &hub{
 		subs:    map[*sub]bool{},
 		streams: map[proto.DeviceID]int{},
+		views:   map[proto.PersonID]int{},
 		online:  map[proto.DeviceID]bool{},
 		offline: map[proto.DeviceID]*time.Timer{},
 		now:     now,
@@ -41,6 +55,9 @@ func newHub(now func() time.Time) *hub {
 type sub struct {
 	device proto.DeviceID
 	view   bool // the stream asked for the user view too
+	// person is a browser's stream (/api/v1/stream): the person's view
+	// alone, no device and no network map.
+	person proto.PersonID
 
 	mu       sync.Mutex
 	pending  []byte
@@ -79,9 +96,23 @@ func (h *hub) onlineSnapshot() online {
 }
 
 // add registers a stream and reports whether its device just came online.
-func (h *hub) add(s *sub) (cameOnline bool) {
+// add takes a stream in, unless its device or person is at the limit (ok
+// false; then it must not be removed).
+func (h *hub) add(s *sub) (cameOnline, ok bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if s.person != "" {
+		// A browser is not a device: nothing comes online.
+		if h.views[s.person] >= maxStreamsPerPerson {
+			return false, false
+		}
+		h.views[s.person]++
+		h.subs[s] = true
+		return false, true
+	}
+	if h.streams[s.device] >= maxStreamsPerDevice {
+		return false, false
+	}
 	h.subs[s] = true
 	h.streams[s.device]++
 	if t := h.offline[s.device]; t != nil {
@@ -90,9 +121,9 @@ func (h *hub) add(s *sub) (cameOnline bool) {
 	}
 	if !h.online[s.device] {
 		h.online[s.device] = true
-		return true
+		return true, true
 	}
-	return false
+	return false, true
 }
 
 // remove drops a stream. When it was the device's last, goOffline runs
@@ -101,6 +132,12 @@ func (h *hub) remove(s *sub, goOffline func(proto.DeviceID)) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	delete(h.subs, s)
+	if s.person != "" {
+		if h.views[s.person]--; h.views[s.person] <= 0 {
+			delete(h.views, s.person)
+		}
+		return
+	}
 	h.streams[s.device]--
 	if h.streams[s.device] > 0 {
 		return
@@ -144,7 +181,12 @@ func (h *hub) prime(s *sub, w *World, v uint64) {
 }
 
 func (h *hub) deliver(s *sub, w *World, v uint64, isOnline online, now time.Time, views map[proto.PersonID]*proto.UserView, force bool) {
-	f := frameFor(w, s.device, s.view, v, isOnline, now, views)
+	var f *proto.StreamFrame
+	if s.person != "" {
+		f = viewFrameFor(w, s.person, v, isOnline, now, views)
+	} else {
+		f = frameFor(w, s.device, s.view, v, isOnline, now, views)
+	}
 	if f == nil {
 		s.mu.Lock()
 		if !s.ended {
@@ -157,13 +199,19 @@ func (h *hub) deliver(s *sub, w *World, v uint64, isOnline online, now time.Time
 	}
 	// The hash leaves the version out, so a frame that only moved to a
 	// newer version is not news.
-	f.Version, f.NetMap.Version = 0, 0
+	f.Version = 0
+	if f.NetMap != nil {
+		f.NetMap.Version = 0
+	}
 	if f.UserView != nil {
 		f.UserView.Version = 0
 	}
 	plain, _ := json.Marshal(f)
 	sum := sha256.Sum256(plain)
-	f.Version, f.NetMap.Version = v, v
+	f.Version = v
+	if f.NetMap != nil {
+		f.NetMap.Version = v
+	}
 	if f.UserView != nil {
 		f.UserView.Version = v
 	}
@@ -187,6 +235,21 @@ func (s *sub) signal() {
 	case s.notify <- struct{}{}:
 	default:
 	}
+}
+
+// viewFrameFor builds a browser's frame: the person's view alone, or nil
+// if there is no such person any more.
+func viewFrameFor(w *World, p proto.PersonID, v uint64, isOnline online, now time.Time, views map[proto.PersonID]*proto.UserView) *proto.StreamFrame {
+	uv, ok := views[p]
+	if !ok {
+		uv = w.userView(p, v, isOnline, now)
+		views[p] = uv
+	}
+	if uv == nil {
+		return nil
+	}
+	c := *uv
+	return &proto.StreamFrame{Version: v, UserView: &c}
 }
 
 // frameFor builds a device's frame, or nil if no one is logged in on it.

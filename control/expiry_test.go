@@ -220,14 +220,14 @@ func TestPauseLeavesOtherLANAlone(t *testing.T) {
 	mac.report(proto.Report{Endpoints: ep, Paused: []proto.ScopeID{proto.LANScope(weekend)}})
 	f := nst.next(t)
 	took := time.Since(t0)
-	if peerOf(f.NetMap, mac.id) != nil {
-		t.Fatal("the NAS still sees the paused Mac")
+	if p := peerOf(f.NetMap, mac.id); p == nil || len(p.Scopes) != 0 || len(p.PausedScopes) != 1 || p.PausedScopes[0] != proto.LANScope(weekend) {
+		t.Fatalf("the NAS sees the paused Mac as %+v", p)
 	}
 	if f := mst.next(t); !scopeOf(f.NetMap, weekend).Paused || peerOf(f.NetMap, build.id) == nil {
 		t.Fatalf("the Mac's own map after pausing: %+v", f.NetMap.Scopes)
 	}
 	mac.report(proto.Report{Endpoints: ep})
-	if f := nst.next(t); peerOf(f.NetMap, mac.id) == nil {
+	if f := nst.next(t); peerOf(f.NetMap, mac.id) == nil || len(peerOf(f.NetMap, mac.id).Scopes) != 1 || len(peerOf(f.NetMap, mac.id).PausedScopes) != 0 {
 		t.Fatal("the NAS did not get the Mac back")
 	}
 	select {

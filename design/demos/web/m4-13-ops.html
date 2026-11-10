@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>M4-13 · 运营页 · Deneb</title>
+    <link rel="stylesheet" href="../v3/v3.css" />
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="web.css" />
+    <link rel="stylesheet" href="webrelays.css" />
+    <style>
+      /* 运营 sits at the sidebar's foot, over "me" (DESIGN.md §14.3). */
+      .side-list {
+        flex: 1;
+      }
+      .side-list .group.deploy {
+        margin-top: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script src="../shared/motion.js"></script>
+    <script src="../shared/demo.js"></script>
+    <script src="../v3/glyphs.js"></script>
+    <script src="../v3/links.js"></script>
+    <script src="../v3/app.js"></script>
+    <script src="web.js"></script>
+    <script src="webrelays.js"></script>
+    <script>
+      // M4-13 (DESIGN.md §14.12): the deployment's page, for its admin only
+      // (运营, at the sidebar's foot). The public relays (the same three as on
+      // everyone's relays page) as my own ones look: 香港 is a bit busy; its
+      // card (people, devices, bandwidth, this month, who uses it most); the
+      // share bar dragged a little from 香港 to 东京; the narrow 10% shows
+      // its name on hover; Leo turned away and back; a new one added with one
+      // line, which comes in as standby until "多用".
+      const P = App.PEOPLE;
+      Object.assign(P, {
+        u1: { name: '王磊', ch: '王', c: '#06B6D4' },
+        u2: { name: 'Alex', ch: 'A', c: '#22C55E' },
+        u3: { name: '陈晨', ch: '陈', c: '#8B5CF6' },
+      });
+      const side = WR.USER_SIDE.map((it) => (it.id === 'relays' ? { ...it, on: false } : it)).concat([{ group: '部署' }, { id: 'ops', icon: 'ops', label: '运营', on: true }]);
+      const app = new App({ title: '运营', sub: '', side });
+      Web.browser(app, { url: 'deneb.app/ops' });
+      [...app.win.querySelectorAll('.side .group')].find((g) => g.textContent === '部署').classList.add('deploy');
+      app.win.dataset.k = 'win';
+      const PUB = [
+        { id: 'hk', name: '香港', addr: '103.42.31.155', share: 60, users: 86, devices: 210, rate: '48 MB/s', busy: '有点忙', up: '已经运行 30 天', month: '1.2 TB', top: [['leo', '120 GB'], ['u1', '86 GB'], ['u2', '64 GB'], ['mia', '40 GB'], ['u3', '31 GB']] },
+        { id: 'tokyo', name: '东京', addr: '45.32.12.66', share: 30, users: 30, devices: 92, rate: '21 MB/s', busy: '不忙', up: '已经运行 30 天', month: '460 GB', top: [['jie', '52 GB'], ['u2', '30 GB'], ['lin', '22 GB']] },
+        { id: 'fra', name: '法兰克福', addr: '95.179.140.20', share: 10, users: 12, devices: 40, rate: '6 MB/s', busy: '不忙', up: '已经运行 9 天', month: '120 GB', top: [['u3', '41 GB'], ['mia', '12 GB']] },
+      ];
+      const total = () => ({ people: PUB.reduce((a, r) => a + r.users, 0), devices: PUB.reduce((a, r) => a + r.devices, 0) });
+      const headline = () => {
+        const t = total();
+        app.setTitle('运营', `${PUB.length} 个公共中转站都在线 · 现在 ${t.people} 个人、${t.devices} 台设备经它们中转`, 'ok');
+      };
+      headline();
+      const said = WR.said;
+      const chev = G.ui('chevron', 14);
+      const api = WR.page(app, {
+        lans: {},
+        sub: (r) => (r.users ? `${r.users} 个人在用` : r.up),
+        barSay: (act, spare) => {
+          let s = '直接连不上、自己的中转站又用不了时：' + act.map((r, i) => (i ? `${r.share}% 先经${said(r)}` : `${r.share}% 的设备先经${said(r)}`)).join('，');
+          if (spare.length) s += `；${spare.map(said).join('、')}只当备用，别的都用不了时才用`;
+          return s + '。';
+        },
+        wells: [{ key: 'pub', label: '公共中转站', x: 28, w: 592, cols: 4, relays: PUB, bar: true, add: { label: '加一台公共中转站', sub: '一行命令装好' } }],
+        card: (r, W) => {
+          const kicked = r.kicked || {};
+          const say = r.share > 0 ? `大约 ${r.share}% 的设备先经它` : '只当备用：别的都用不了时才用它';
+          const busy = r.busy !== '不忙';
+          const chips = r.top.map(([k, gb]) => `<button class="chip ${kicked[k] ? 'blocked' : ''}" data-k="${k}">${App.ball(k, kicked[k] ? 'off' : '')}${P[k].name}<span class="gb">${gb}</span></button>`).join('');
+          const others = r.users - r.top.length;
+          return (
+            WR.head(WR.orb(busy), r.name, '公共中转站') +
+            WR.status(busy ? r.busy : '在线', r.up, busy ? '#F59E0B' : '#22C55E') +
+            WR.seg(r, W.relays.length, say) +
+            `<div class="label">现在</div>` +
+            WR.rows([
+              [G.ui('people', 18), '在用', r.users ? `${r.users} 个人 · ${r.devices} 台设备` : '还没有'],
+              [G.ui('bolt', 18), '带宽', r.rate],
+              [G.ui('screen', 18), '这个月转了', r.month],
+            ]) +
+            (r.top.length ? `<div class="label">用得最多的</div><div class="people">${chips}</div><div class="hint">${others > 0 ? `还有 ${others} 个人。` : ''}点一下，就不让他用这个中转站</div>` : '') +
+            `<div class="card-foot"><button class="more">更多${chev}</button></div><div class="detail"><p>地址 ${r.addr} · 端口 47445<br />每条连接限速 2 MB/s · 同时最多几台设备：不限</p></div>`
+          );
+        },
+        openAdd: (W, api) => api.command(W, { title: '加一台公共中转站', sub: '装好后，它自己出现在这里', cmd: 'docker run -d --name deneb-relay --restart unless-stopped --network host -v deneb-relay:/data deneb-relay:v0 --join deneb-join-P3vX8mQa2L --public', foot: '刚装好的先当备用，点"多用"才分到设备，免得一下子接满流量' }),
+      });
+      // The command ran: 新加坡 comes in, as standby (a dashed pill easing in
+      // at the bar's end), its card in place of the command's.
+      window.OPS = {
+        installed() {
+          const W = api.wells.pub;
+          const r = { id: 'sg', name: '新加坡', addr: '139.180.140.7', share: 0, spareT: 0, users: 0, devices: 0, rate: '0 KB/s', busy: '不忙', up: '刚上线', month: '0 GB', top: [] };
+          api.installed(W, r, { toast: '新加坡上线了，先当备用' });
+          api.shares(W, { sg: 0 });
+          headline();
+        },
+      };
+
+      const rest = [600, 660];
+      window.RECORDING = {
+        title: 'M4-13-运营页',
+        duration: 18500,
+        actions: [
+          { at: 600, shot: '运营', clean: true },
+          { at: 900, glide: { sel: '.rcell[data-k="hk"] .orb' }, dur: 700 },
+          { at: 1800, down: true },
+          { at: 1880, up: true },
+          { at: 2100, glide: rest, dur: 500 },
+          { at: 2900, shot: '香港', clean: true },
+          { at: 3200, glide: { sel: '.whandle' }, dur: 700 },
+          { at: 4000, down: true },
+          { at: 4100, glide: { sel: '.wbar', x: 252, y: 19 }, dur: 900 },
+          { at: 5200, shot: '少分给香港' },
+          { at: 5400, up: true },
+          { at: 5800, glide: { sel: '.wseg.act[data-r="fra"]' }, dur: 600 },
+          { at: 6700, shot: '指上去出名字' },
+          { at: 6900, glide: { sel: '.sheet .chip[data-k="leo"] .ball' }, dur: 700 },
+          { at: 7700, down: true },
+          { at: 7780, up: true },
+          { at: 8000, glide: rest, dur: 500 },
+          { at: 8800, shot: '不让 Leo 用', clean: true },
+          { at: 9100, glide: { sel: '.toast button' }, dur: 700 },
+          { at: 9900, down: true },
+          { at: 9980, up: true },
+          { at: 10200, glide: rest, dur: 400 },
+          { at: 10700, glide: { sel: '.rcell[data-k="add"] .orb' }, dur: 700 },
+          { at: 11500, down: true },
+          { at: 11580, up: true },
+          { at: 11900, glide: { sel: '.sheet [data-act="copy"]' }, dur: 700 },
+          { at: 12700, down: true },
+          { at: 12780, up: true },
+          { at: 13000, glide: rest, dur: 500 },
+          { at: 13800, shot: '一行命令', clean: true },
+          { at: 14300, js: 'OPS.installed()' },
+          { at: 15500, shot: '新加坡上线了', clean: true },
+          { at: 15800, glide: { sel: '.sheet [data-act="more"]' }, dur: 700 },
+          { at: 16600, down: true },
+          { at: 16680, up: true },
+          { at: 16900, glide: rest, dur: 500 },
+          { at: 18000, shot: '新加坡分到设备', clean: true },
+        ],
+      };
+      window.__ready = true;
+    </script>
+  </body>
+</html>

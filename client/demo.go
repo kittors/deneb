@@ -18,16 +18,32 @@ import (
 // ids are the prototype's too, as the light on each link and the bend of
 // each link are worked out from them. Simulate plays a few outside events.
 type Demo struct {
-	mu     sync.Mutex
-	snap   *model.Snapshot
-	subs   map[int]func(*model.Snapshot)
-	next   int
-	manual bool // events play only as Simulate is called: for recordings
+	// netPaths are the paths this computer had before it lost its network
+	// ("nonet"), to come back to.
+	netPaths map[model.DeviceID]model.Path
+	mu       sync.Mutex
+	snap     *model.Snapshot
+	subs     map[int]func(*model.Snapshot)
+	next     int
+	manual   bool // events play only as Simulate is called: for recordings
 }
 
 // Manual makes the demo's events play only as Simulate is called, never on
 // a timer, so that a recording knows when each comes.
 func (d *Demo) Manual() { d.manual = true }
+
+// demoUses are who uses which of this computer's services in the demo's
+// world: 阿杰's desktop, its 远程桌面.
+var demoUses = []struct {
+	by  model.DeviceID
+	key string
+}{{"jdesk", "tcp/3389"}}
+
+// recentCuts are the cuts of the last few seconds (cutKeep, as the live
+// store keeps them): the view has played the others.
+func recentCuts(cuts []model.Cut) []model.Cut {
+	return slices.DeleteFunc(slices.Clone(cuts), func(c model.Cut) bool { return time.Since(c.At) > cutKeep })
+}
 
 // NewDemo returns the demo's store, as the design's sample shows it.
 func NewDemo() *Demo { return &Demo{snap: demoSnapshot(), subs: map[int]func(*model.Snapshot){}} }
@@ -83,6 +99,9 @@ func (d *Demo) Do(_ context.Context, op model.Op) (model.Result, error) {
 	n := d.update(func(s *model.Snapshot) *model.Snapshot {
 		switch op.Kind {
 		case model.OpLANInvite:
+			if op.Person != "" {
+				return s.With(op)
+			}
 			res.Link = "https://deneb.example/i/demo-" + string(op.LAN)
 			return s
 		case model.OpLANCreate:
@@ -91,12 +110,65 @@ func (d *Demo) Do(_ context.Context, op model.Op) (model.Result, error) {
 			return n
 		case model.OpInviteAccept:
 			res.LAN = demoInviteLAN
-			if s.LAN(demoInviteLAN) != nil {
+			n := s.With(op)
+			if n.LAN(demoInviteLAN) != nil {
+				return n
+			}
+			return withInvitedLAN(n)
+		case model.OpInviteDecline:
+			return s.With(op)
+		case model.OpDeviceRenew:
+			// Renewed for the demo's 180 days, asked again two weeks before.
+			d := s.Devices[op.Device]
+			if d == nil || !d.Login.Due(time.Now()) {
 				return s
 			}
-			return withInvitedLAN(s)
-		case model.OpInviteDecline:
-			return s
+			n := *s
+			n.Devices = maps(s.Devices)
+			nd := *d
+			nd.Login = model.Login{Expires: time.Now().Add(180 * 24 * time.Hour), RenewFrom: time.Now().Add(166 * 24 * time.Hour)}
+			n.Devices[op.Device] = &nd
+			if nd.Online {
+				n.Paths = maps(s.Paths)
+				n.Paths[op.Device] = model.Path{Kind: model.PathDirect, RTT: 4 * time.Millisecond, Since: time.Now()}
+			}
+			return &n
+		case model.OpServiceSet:
+			// 阿杰's desktop uses this computer's 远程桌面 (scene 5): closing
+			// it to 周末联机 cuts him off, a red light on his link.
+			n := s.With(op)
+			if n == s || op.On || op.Device != s.Self {
+				return n
+			}
+			l := s.LAN(op.LAN)
+			for _, use := range demoUses {
+				i := slices.IndexFunc(l.Services[s.Self], func(v model.Service) bool { return v.Key == op.Service })
+				if use.key == op.Service && i >= 0 && l.Has(use.by) {
+					c := *n
+					c.Cuts = append(recentCuts(s.Cuts), model.Cut{Device: use.by, Service: l.Services[s.Self][i].Name, At: time.Now()})
+					n = &c
+				}
+			}
+			return n
+		case model.OpLANAddRelay:
+			// The LAN's devices that nothing reaches go through 香港.
+			l := s.LAN(op.LAN)
+			if l == nil {
+				return s
+			}
+			n := *s
+			n.Paths = maps(s.Paths)
+			changed := false
+			for _, id := range l.Devices {
+				if s.Paths[id].Kind == model.PathUnreachable {
+					n.Paths[id] = model.Path{Kind: model.PathRelay, Relay: "hk", RTT: 52 * time.Millisecond, Since: time.Now()}
+					changed = true
+				}
+			}
+			if !changed {
+				return s
+			}
+			return &n
 		}
 		return s.With(op)
 	})
@@ -131,6 +203,24 @@ const demoInviteLAN model.LANID = "boardgame"
 //   - "connect": 阿杰的台式机 is connected to anew: 正在连接… for 2.4 s,
 //     then direct ("connected"), unless the demo is Manual.
 //   - "offline": 阿杰的台式机 goes offline, or comes back.
+//
+// And M2's (DESIGN §6.7–§6.8), each played on the sample as it is:
+//
+//   - "pending-device": 阿杰 adds his new 阿杰的树莓派 to 周末联机, which waits
+//     for me to let it in.
+//   - "pending-member": 小林 comes into 周末联机 on Mia's invite, and waits.
+//   - "login-due": 我的游戏主机's login runs out in 12 days.
+//   - "login-expired": 工作室主机's login ran out.
+//   - "others-expired": 阿杰的 NAS's login ran out.
+//   - "unreachable": nothing reaches Mia's MacBook, not even through a relay.
+//   - "twin": Mia adds her new MacBook, named as her old one.
+//   - "stale": my old 我的游戏主机, gone for 40 days, is in 周末联机 too.
+//   - "notice": Clash takes Deneb's connections.
+//   - "invitation": Leo invites me into 桌游夜 by name.
+//   - "using": this computer has used dev-db's database for 2:14:08.
+//   - "waiting": I asked into Leo's 读书会 on a member's invite, and wait
+//     for Leo.
+//   - "engine": this computer's Deneb stops answering, or answers again.
 func (d *Demo) Simulate(event string) {
 	now := time.Now()
 	d.update(func(s *model.Snapshot) *model.Snapshot {
@@ -158,6 +248,34 @@ func (d *Demo) Simulate(event string) {
 			if !d.manual {
 				time.AfterFunc(2400*time.Millisecond, func() { d.Simulate("connected") })
 			}
+		case "nonet":
+			// This computer loses its network, or gets it back (DESIGN
+			// §6.10): the engine finds no device then; back, they connect
+			// again, and are there 2 s later ("nonet-back").
+			if !s.NoNetwork {
+				n.NoNetwork = true
+				d.netPaths = maps(s.Paths)
+				for id := range s.Paths {
+					n.Paths[id] = model.Path{Kind: model.PathUnreachable, Since: now}
+				}
+				break
+			}
+			n.NoNetwork = false
+			for id := range d.netPaths {
+				n.Paths[id] = model.Path{Kind: model.PathConnecting, Since: now}
+			}
+			if !d.manual {
+				time.AfterFunc(2*time.Second, func() { d.Simulate("nonet-back") })
+			}
+		case "nonet-back":
+			if s.NoNetwork || d.netPaths == nil {
+				return s
+			}
+			for id, p := range d.netPaths {
+				p.Since = now
+				n.Paths[id] = p
+			}
+			d.netPaths = nil
 		case "connected":
 			n.Paths["jdesk"] = model.Path{Kind: model.PathDirect, RTT: 11 * time.Millisecond, Since: now}
 		case "offline":
@@ -166,15 +284,126 @@ func (d *Demo) Simulate(event string) {
 			n.Devices = maps(s.Devices)
 			n.Devices["jdesk"] = &dev
 			if dev.Online {
+				dev.LastSeen = time.Time{}
 				n.Paths["jdesk"] = model.Path{Kind: model.PathDirect, RTT: 11 * time.Millisecond, Since: now}
 			} else {
+				dev.LastSeen = now.Add(-3 * time.Hour)
 				n.Paths["jdesk"] = model.Path{Kind: model.PathOffline, Since: now}
 			}
 		default:
-			return s
+			return m2Event(s, event, now)
 		}
 		return &n
 	})
+}
+
+// m2Event plays one of M2's outside events on s (see Simulate), or returns s.
+func m2Event(s *model.Snapshot, event string, now time.Time) *model.Snapshot {
+	n := *s
+	n.Devices = maps(s.Devices)
+	n.Paths = maps(s.Paths)
+	n.LANs = slices.Clone(s.LANs)
+	if s.LAN("weekend") == nil {
+		return s // left in the demo's window: the events play on 周末联机
+	}
+	weekend := func() *model.LAN {
+		i := slices.IndexFunc(n.LANs, func(l *model.LAN) bool { return l.ID == "weekend" })
+		l := *n.LANs[i]
+		l.Services = maps(l.Services)
+		n.LANs[i] = &l
+		return &l
+	}
+	device := func(id model.DeviceID) *model.Device {
+		d := *n.Devices[id]
+		n.Devices[id] = &d
+		return &d
+	}
+	switch event {
+	case "pending-device":
+		if _, ok := s.Devices["jpi"]; ok {
+			return s
+		}
+		n.Devices["jpi"] = &model.Device{ID: "jpi", Owner: "jie", Name: "阿杰的树莓派", Kind: "mini", OS: "linux",
+			Addr: "10.67.0.20", FQDN: "pi.jie.deneb.internal", Online: true, Refused: map[model.PersonID]bool{}}
+		n.Paths["jpi"] = model.Path{Kind: model.PathDirect, RTT: 12 * time.Millisecond}
+		l := weekend()
+		l.ApproveDevices = true
+		l.Pending = append(slices.Clone(l.Pending), "jpi")
+		l.Services["jpi"] = []model.Service{{Key: "tcp/22", Kind: "shell", Name: "命令行", Proto: "tcp", Port: 22, Ports: "22", On: true}}
+	case "pending-member":
+		l := weekend()
+		if slices.Contains(l.Members, "lin") || slices.Contains(l.PendingMembers, "lin") {
+			return s
+		}
+		l.ApproveMembers = true
+		l.PendingMembers = append(slices.Clone(l.PendingMembers), "lin")
+	case "login-due":
+		device("game").Login = model.Login{Expires: now.Add(12 * 24 * time.Hour), RenewFrom: now.Add(-2 * 24 * time.Hour)}
+	case "login-expired":
+		d := device("studio")
+		d.Login, d.Online = model.Login{Expires: now.Add(-24 * time.Hour), RenewFrom: now.Add(-15 * 24 * time.Hour), Expired: true}, false
+		n.Paths["studio"] = model.Path{Kind: model.PathOffline, Since: now}
+	case "others-expired":
+		d := device("jnas")
+		d.Login, d.Online = model.Login{Expired: true}, false
+		n.Paths["jnas"] = model.Path{Kind: model.PathOffline, Since: now}
+	case "unreachable":
+		n.Paths["mia"] = model.Path{Kind: model.PathUnreachable, Since: now}
+	case "twin":
+		if _, ok := s.Devices["mia2"]; ok {
+			return s
+		}
+		twin := *s.Devices["mia"]
+		twin.ID, twin.Addr, twin.FQDN = "mia2", "10.67.0.21", "macbook-2.mia.deneb.internal"
+		n.Devices["mia2"] = &twin
+		n.Paths["mia2"] = model.Path{Kind: model.PathDirect, RTT: 10 * time.Millisecond}
+		l := weekend()
+		l.Devices = append(slices.Clone(l.Devices), "mia2")
+		l.Services["mia2"] = []model.Service{{Key: "tcp/3389", Kind: "screen", Name: "远程桌面", Proto: "tcp", Port: 3389, Ports: "3389", On: true}}
+	case "stale":
+		if _, ok := s.Devices["game0"]; ok {
+			return s
+		}
+		old := *s.Devices["game"]
+		old.ID, old.Online, old.LastSeen = "game0", false, now.Add(-40*24*time.Hour)
+		old.Addr, old.FQDN = "10.67.0.22", "console-2.kittors.deneb.internal"
+		n.Devices["game0"] = &old
+		n.Paths["game0"] = model.Path{Kind: model.PathOffline}
+		n.Mine = append(slices.Clone(s.Mine), "game0")
+		l := weekend()
+		l.Devices = append(slices.Clone(l.Devices), "game0")
+		l.Services["game0"] = slices.Clone(old.Catalog)
+	case "notice":
+		if len(s.Notices) > 0 {
+			return s
+		}
+		n.Notices = []model.Notice{{Code: "tun-capture", Short: "Clash 可能挡住连接", Message: "Clash 正在接管网络，局域网里的设备可能连不上",
+			Rule: "IP-CIDR,10.67.0.0/16,DIRECT"}}
+	case "invitation":
+		if len(s.Invitations) > 0 || s.LAN(demoInviteLAN) != nil {
+			return s
+		}
+		n.Invitations = []model.Invitation{{ID: "inv-boardgame", LAN: demoInviteLAN, LANName: "桌游夜",
+			Inviter: *s.People["leo"], Expires: now.Add(7 * 24 * time.Hour)}}
+	case "waiting":
+		if s.LAN("books") != nil {
+			return s
+		}
+		n.LANs = append(n.LANs, &model.LAN{ID: "books", Name: "读书会", Owner: "leo", Members: []model.PersonID{"leo"},
+			Waiting: true, Services: map[model.DeviceID][]model.Service{}})
+	case "using":
+		n.Using = maps(s.Using)
+		if _, ok := n.Using["lindb"]; ok {
+			return s
+		}
+		n.Using["lindb"] = now.Add(-(2*time.Hour + 14*time.Minute + 8*time.Second))
+	case "engine":
+		// This computer's Deneb stops answering, or answers again.
+		n.Engine = !s.Engine
+	default:
+		return s
+	}
+	return &n
 }
 
 func maps[K comparable, V any](m map[K]V) map[K]V {
@@ -235,6 +464,9 @@ func demoSnapshot() *model.Snapshot {
 			"jnas":  {files(true), screen(false), web(true)},
 		},
 		Relays: []model.RelayID{"hk"},
+		// Made in M1: as the server moved them, new members wait, new
+		// devices do not (DESIGN §6.7).
+		ApproveMembers: true,
 	}
 	work := &model.LAN{
 		ID: "work", Name: "工作室", Owner: "me",
@@ -246,7 +478,8 @@ func demoSnapshot() *model.Snapshot {
 			"lindb":  {shell(true), web(true)},
 			"linci":  {web(true)},
 		},
-		Relays: []model.RelayID{"hk"},
+		Relays:         []model.RelayID{"hk"},
+		ApproveMembers: true,
 	}
 	direct := func(ms int) model.Path {
 		return model.Path{Kind: model.PathDirect, RTT: time.Duration(ms) * time.Millisecond}
@@ -271,6 +504,10 @@ func demoSnapshot() *model.Snapshot {
 			"leopc": direct(21),
 		},
 		SharedWithMe: 2,
+		// The demo's server does all that M2 adds, and M4's relay in a
+		// click, to show what they look like.
+		Features: map[string]bool{model.FeatureApprove: true, model.FeatureInvitePerson: true,
+			model.FeatureRenew: true, model.FeatureAddRelay: true},
 	}
 }
 
@@ -283,7 +520,9 @@ func withNewLAN(s *model.Snapshot, name string) (*model.Snapshot, model.LANID) {
 	}
 	n := *s
 	l := &model.LAN{ID: id, Name: name, Owner: s.Me, Members: []model.PersonID{s.Me},
-		Devices: []model.DeviceID{s.Self}, Services: map[model.DeviceID][]model.Service{}}
+		Devices: []model.DeviceID{s.Self}, Services: map[model.DeviceID][]model.Service{},
+		// A new LAN asks me about new devices and members (DESIGN §6.7).
+		ApproveDevices: true, ApproveMembers: true}
 	if me := s.Devices[s.Self]; me != nil {
 		l.Services[s.Self] = slices.Clone(me.Catalog)
 	}

@@ -1,8 +1,12 @@
 package control
 
 import (
+	"cmp"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/rand/v2"
 	"net/netip"
 	"slices"
@@ -45,22 +49,21 @@ func randomWorld(r *rand.Rand) *World {
 		byMachine:   map[proto.MachinePublic]*device{},
 		relays:      map[proto.RelayID]*proto.Relay{},
 		relayPos:    map[proto.RelayID]int{},
-		invites:     map[proto.InviteID]*invite{},
-		byToken:     map[string]*invite{},
+		relayMeta:   map[proto.RelayID]*relayMeta{},
+		joins:       map[string]*relayJoin{},
+		kicks:       map[string]*relayKick{},
+		bySecret:    map[string]proto.RelayID{},
+
+		kickedPerson: map[proto.RelayID]map[proto.PersonID]bool{},
+		kickedDevice: map[proto.RelayID]map[proto.DeviceID]bool{},
+		byNodeKey:    map[proto.NodePublic]*device{},
+		invites:      map[proto.InviteID]*invite{},
+		byToken:      map[string]*invite{},
+		shares:       map[string]*share{},
 	}
 	t0 := time.Date(2026, 11, 7, 0, 0, 0, 0, time.UTC)
 	tick := 0
 	at := func() time.Time { tick++; return t0.Add(time.Duration(tick) * time.Minute) }
-
-	for range 1 + r.IntN(3) {
-		id := proto.RelayID(token(r, "r_"))
-		w.relays[id] = &proto.Relay{ID: id, Name: token(r, "RELAYNAME"), HostName: token(r, "host") + ".test", DERPPort: 443}
-	}
-	var relayIDs []proto.RelayID
-	for id := range w.relays {
-		relayIDs = append(relayIDs, id)
-	}
-	slices.Sort(relayIDs)
 
 	var people []*person
 	for range 1 + r.IntN(5) {
@@ -72,12 +75,46 @@ func randomWorld(r *rand.Rand) *World {
 		w.byEmail[p.Email] = p
 		people = append(people, p)
 	}
+
+	// Relays (M4): public ones, people's own, some not registered yet
+	// (no port: on no list), some the deployment's defaults.
+	for range 1 + r.IntN(5) {
+		id := proto.RelayID(token(r, "r_"))
+		rl := &proto.Relay{ID: id, Name: token(r, "RELAYNAME"), HostName: token(r, "host") + ".test", DERPPort: 443}
+		if r.Float64() < 0.35 {
+			rl.Source = proto.RelayPublic
+		} else {
+			rl.Source, rl.Owner = proto.RelayServer, people[r.IntN(len(people))].ID
+		}
+		if r.Float64() < 0.15 {
+			rl.DERPPort = 0
+		}
+		w.relays[id] = rl
+		// Weights 0 (a standby) to 3 (the plan's §16).
+		w.relayMeta[id] = &relayMeta{CreatedAt: t0, Weight: r.IntN(4)}
+		w.relayPos[id] = -1
+		if r.Float64() < 0.3 {
+			w.relayPos[id] = r.IntN(3)
+		}
+	}
+	var relayIDs []proto.RelayID
+	for id := range w.relays {
+		relayIDs = append(relayIDs, id)
+	}
+	slices.Sort(relayIDs)
+	for _, id := range relayIDs {
+		if w.relayPos[id] >= 0 {
+			w.defaults = append(w.defaults, id)
+		}
+	}
+	slices.SortStableFunc(w.defaults, func(a, b proto.RelayID) int { return w.relayPos[a] - w.relayPos[b] })
 	var lans []*lan
 	for range r.IntN(5) {
 		owner := people[r.IntN(len(people))]
 		l := &lan{
 			ID: proto.LANID(token(r, "l_")), Name: token(r, "LANNAME"), Owner: owner.ID, CreatedAt: at(),
 			ApproveDevices: r.IntN(2) == 0, ApproveMembers: r.IntN(2) == 0,
+			Mode:     []proto.LANMode{proto.LANModeLAN, proto.LANModeLAN, proto.LANModeShare}[r.IntN(3)],
 			memberOf: map[proto.PersonID]*member{}, hasDevice: map[proto.DeviceID]*lanDevice{},
 			hasPending: map[proto.DeviceID]*lanDevice{},
 		}
@@ -99,8 +136,10 @@ func randomWorld(r *rand.Rand) *World {
 				add(p.ID, proto.RoleMember, []proto.MemberState{proto.MemberInvited, proto.MemberPending}[r.IntN(2)])
 			}
 		}
-		// A LAN's relays: a random prefix of all of them.
-		l.relays = slices.Clone(relayIDs[:r.IntN(len(relayIDs)+1)])
+		// The relays dragged in: any of them, in any order.
+		for _, i := range r.Perm(len(relayIDs))[:r.IntN(len(relayIDs)+1)] {
+			l.added = append(l.added, relayIDs[i])
+		}
 		w.lans[l.ID] = l
 		lans = append(lans, l)
 		var joined []proto.PersonID
@@ -150,6 +189,18 @@ func randomWorld(r *rand.Rand) *World {
 		if r.Float64() < 0.5 && len(relayIDs) > 0 {
 			d.HomeRelay = relayIDs[r.IntN(len(relayIDs))]
 		}
+		if r.Float64() < 0.6 {
+			// What it says it is connected to (M4), home first; an
+			// engine from before M4 says nothing.
+			if d.HomeRelay != "" {
+				d.Relays = append(d.Relays, d.HomeRelay)
+			}
+			for _, i := range r.Perm(len(relayIDs))[:r.IntN(len(relayIDs)+1)] {
+				if !slices.Contains(d.Relays, relayIDs[i]) {
+					d.Relays = append(d.Relays, relayIDs[i])
+				}
+			}
+		}
 		for _, port := range []uint16{22, 80, 445, 3389} {
 			if r.Float64() < 0.4 {
 				d.services = append(d.services, proto.Service{Kind: proto.ServiceOther, Name: token(r, "SVC"), Ports: []proto.PortRange{proto.Port(proto.TCP, port)}})
@@ -194,14 +245,249 @@ func randomWorld(r *rand.Rand) *World {
 		w.devices[d.ID] = d
 		w.byMachine[mk] = d
 	}
+
+	// Shares (M3): some live, some revoked, a few revoked so lately that
+	// they still hold the seat; each opens some of the device's services.
+	var devs []*device
+	for _, d := range w.devices {
+		devs = append(devs, d)
+	}
+	slices.SortFunc(devs, func(a, b *device) int { return cmp.Compare(a.ID, b.ID) })
+	for _, d := range devs {
+		for _, p := range people {
+			if p.ID == d.Owner || r.Float64() > 0.25 {
+				continue
+			}
+			sh := &share{ID: token(r, "s_"), Device: d.ID, Receiver: p.ID, Sharer: d.Owner, State: shareActive, CreatedAt: at()}
+			switch x := r.Float64(); {
+			case x < 0.15:
+				// Still holds the seat at the views' now.
+				sh.State, sh.RevokedAt, sh.HoldUntil = shareRevoked, t0.Add(12*time.Hour-3*time.Second), t0.Add(12*time.Hour+7*time.Second)
+			case x < 0.3:
+				sh.State, sh.RevokedAt, sh.HoldUntil = shareRevoked, t0, t0.Add(seatHold)
+			case x < 0.4:
+				sh.State, sh.RevokedAt = shareLeft, t0
+			}
+			w.shares[sh.ID] = sh
+			sid := shareScope(sh.ID)
+			for _, svc := range d.services {
+				if r.Float64() < 0.5 {
+					if d.opens[sid] == nil {
+						d.opens[sid] = map[proto.ServiceKey]bool{}
+					}
+					d.opens[sid][svc.Key()] = true
+				}
+			}
+			if r.Float64() < 0.2 {
+				d.Paused[sid] = true
+			}
+		}
+	}
+	for _, d := range w.devices {
+		if d.usable() {
+			w.byNodeKey[d.NodeKey] = d
+		}
+	}
+	// Some relays offline or full; some people and devices kicked off
+	// some relays, and some kicks lifted.
+	offline, full := map[proto.RelayID]bool{}, map[proto.RelayID]bool{}
+	for _, id := range relayIDs {
+		offline[id], full[id] = r.Float64() < 0.15, r.Float64() < 0.15
+	}
+	w.relayOffline = func(id proto.RelayID) bool { return offline[id] }
+	w.relayFull = func(id proto.RelayID) bool { return full[id] }
+	var kdevs []*device
+	for _, d := range w.devices {
+		kdevs = append(kdevs, d)
+	}
+	slices.SortFunc(kdevs, func(a, b *device) int { return cmp.Compare(a.ID, b.ID) })
+	for range r.IntN(6) {
+		k := &relayKick{ID: token(r, "k_"), Relay: relayIDs[r.IntN(len(relayIDs))], At: at()}
+		if r.Float64() < 0.5 || len(kdevs) == 0 {
+			k.Person = people[r.IntN(len(people))].ID
+		} else {
+			k.Device = kdevs[r.IntN(len(kdevs))].ID
+		}
+		if r.Float64() < 0.2 {
+			k.LiftedAt = at()
+		}
+		w.kicks[k.ID] = k
+		w.indexKick(k)
+	}
+	w.finishRelays()
 	return w
+}
+
+// refKicked restates whether d is kicked off relay id: a kick in force
+// of d, or of its owner.
+func refKicked(w *World, id proto.RelayID, d *device) bool {
+	for _, k := range w.kicks {
+		if k.Relay == id && k.LiftedAt.IsZero() && (k.Device == d.ID || k.Person == d.Owner) {
+			return true
+		}
+	}
+	return false
+}
+
+// refSpread restates how a group of relays sorts for device d (the
+// plan's §16): up and weighing something, by weighted rendezvous score,
+// highest first; the standbys; and down: offline, or full and d not on
+// it. The order given within the last two.
+func refSpread(w *World, d *device, ids []proto.RelayID) (up, standby, down []proto.RelayID) {
+	score := func(id proto.RelayID) float64 {
+		h := sha256.Sum256([]byte(string(d.ID) + "\x00" + string(id)))
+		u := (float64(binary.BigEndian.Uint64(h[:8])>>11) + 0.5) / (1 << 53)
+		return float64(w.relayMeta[id].Weight) / -math.Log(u)
+	}
+	for _, id := range ids {
+		switch {
+		case w.relayOffline(id) || w.relayFull(id) && !slices.Contains(d.Relays, id):
+			down = append(down, id)
+		case w.relayMeta[id].Weight == 0:
+			standby = append(standby, id)
+		default:
+			up = append(up, id)
+		}
+	}
+	slices.SortStableFunc(up, func(a, b proto.RelayID) int { return cmp.Compare(score(b), score(a)) })
+	return up, standby, down
+}
+
+// refListFor restates device d's list for a scope whose own relays are
+// own: own's registered relays up, by score, and its standbys; the
+// defaults by position; the other public relays up, by score, and their
+// standbys; then own's down and the public ones down. Each once, and
+// none d is kicked off.
+func refListFor(w *World, d *device, own []proto.RelayID) []proto.RelayID {
+	var ids []proto.RelayID
+	for id := range w.relays {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	var defaults, public []proto.RelayID
+	for _, id := range ids {
+		switch {
+		case w.relayPos[id] >= 0:
+			defaults = append(defaults, id)
+		case w.relays[id].Source == proto.RelayPublic:
+			public = append(public, id)
+		}
+	}
+	slices.SortStableFunc(defaults, func(a, b proto.RelayID) int { return w.relayPos[a] - w.relayPos[b] })
+	taken := map[proto.RelayID]bool{}
+	group := func(list []proto.RelayID) []proto.RelayID {
+		var g []proto.RelayID
+		for _, id := range list {
+			if w.relays[id].DERPPort != 0 && !taken[id] && !refKicked(w, id, d) {
+				taken[id] = true
+				g = append(g, id)
+			}
+		}
+		return g
+	}
+	ownUp, ownStandby, ownDown := refSpread(w, d, group(own))
+	defs := group(defaults)
+	pubUp, pubStandby, pubDown := refSpread(w, d, group(public))
+	out := []proto.RelayID{}
+	for _, part := range [][]proto.RelayID{ownUp, ownStandby, defs, pubUp, pubStandby, ownDown, pubDown} {
+		out = append(out, part...)
+	}
+	return out
+}
+
+// refScopeListFor restates d's list of a LAN (what was dragged in, then
+// the fallback) or of a share (the sharer's own relays, then the
+// fallback).
+func refScopeListFor(w *World, d *device, sid proto.ScopeID) []proto.RelayID {
+	if l, ok := sid.LAN(); ok {
+		return refListFor(w, d, w.lans[l].added)
+	}
+	shid, _ := sid.Share()
+	sh := w.shares[string(shid)]
+	var own []proto.RelayID
+	for id, rl := range w.relays {
+		if rl.Owner == sh.Sharer && rl.Source != proto.RelayPublic && w.relayPos[id] < 0 {
+			own = append(own, id)
+		}
+	}
+	slices.Sort(own)
+	return refListFor(w, d, own)
+}
+
+// refRelayList restates a scope's relay list (M4): the registered relays
+// of own, then the fallback, the defaults by position and then the other
+// public relays by ID, each once.
+func refRelayList(w *World, own []proto.RelayID) []proto.RelayID {
+	var ids []proto.RelayID
+	for id := range w.relays {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	var defaults, public []proto.RelayID
+	for _, id := range ids {
+		switch {
+		case w.relayPos[id] >= 0:
+			defaults = append(defaults, id)
+		case w.relays[id].Source == proto.RelayPublic:
+			public = append(public, id)
+		}
+	}
+	slices.SortStableFunc(defaults, func(a, b proto.RelayID) int { return w.relayPos[a] - w.relayPos[b] })
+	out := []proto.RelayID{}
+	for _, list := range [][]proto.RelayID{own, defaults, public} {
+		for _, id := range list {
+			if w.relays[id].DERPPort != 0 && !slices.Contains(out, id) {
+				out = append(out, id)
+			}
+		}
+	}
+	return out
+}
+
+// refScopeRelays restates the list of a LAN (what was dragged in, then
+// the fallback) or of a share (the sharer's own relays, then the
+// fallback).
+func refScopeRelays(w *World, sid proto.ScopeID) []proto.RelayID {
+	if l, ok := sid.LAN(); ok {
+		return refRelayList(w, w.lans[l].added)
+	}
+	shid, _ := sid.Share()
+	sh := w.shares[string(shid)]
+	var own []proto.RelayID
+	for id, rl := range w.relays {
+		if rl.Owner == sh.Sharer && rl.Source != proto.RelayPublic && w.relayPos[id] < 0 {
+			own = append(own, id)
+		}
+	}
+	slices.Sort(own)
+	return refRelayList(w, own)
+}
+
+// shareScopesOf restates which shares a usable device takes part in: its
+// own live shares, and the live shares made out to its owner of another
+// usable device.
+func shareScopesOf(w *World, d *device) map[proto.ScopeID]*share {
+	out := map[proto.ScopeID]*share{}
+	if !d.usable() {
+		return out
+	}
+	for _, sh := range w.shares {
+		if sh.State != shareActive {
+			continue
+		}
+		shd := w.devices[sh.Device]
+		if sh.Device == d.ID || sh.Receiver == d.Owner && shd != nil && shd.ID != d.ID && shd.usable() {
+			out[shareScope(sh.ID)] = sh
+		}
+	}
+	return out
 }
 
 // scopesOf restates which LANs a device is really in.
 func scopesOf(w *World, d *device) map[proto.ScopeID]bool {
 	out := map[proto.ScopeID]bool{}
 	for _, l := range w.lans {
-		if l.hasDevice[d.ID] != nil && l.joined(d.Owner) && d.usable() {
+		if l.hasDevice[d.ID] != nil && l.joined(d.Owner) && d.usable() && (l.Mode != proto.LANModeShare || d.Owner == l.Owner) {
 			out[proto.LANScope(l.ID)] = true
 		}
 	}
@@ -214,12 +500,23 @@ func TestNetMapIsolationRandom(t *testing.T) {
 	// nothing.
 	var peers, multiScope, hiddenByPause, refused, notJoined int
 	var waitingDevices, waitingMembers, invitations, expired int
+	var shareScopes, receiverSide, heldSeats int
+	var peerRelayed, peerFiltered, ownOnList, unreadyAdded, admitted, turnedAway int
+	var reordered, kickedOff int
 	for seed := range uint64(400) {
 		r := rand.New(rand.NewPCG(seed, 7))
 		w := randomWorld(r)
 		for _, d := range w.devices {
 			t.Run("", func(t *testing.T) { checkNetMap(t, w, d, online, seed) })
 			if nm := w.netMap(d.ID, 1, online); nm != nil {
+				for _, sc := range nm.Scopes {
+					if sh := w.shares[strings.TrimPrefix(string(sc.ID), "share/")]; sh != nil {
+						shareScopes++
+						if sh.Device != d.ID {
+							receiverSide++
+						}
+					}
+				}
 				for _, p := range nm.Peers {
 					peers++
 					if len(p.Scopes) > 1 {
@@ -227,6 +524,32 @@ func TestNetMapIsolationRandom(t *testing.T) {
 					}
 					if p.RefusedByMe || p.RefusedByPeer {
 						refused++
+					}
+					if len(p.Relays) > 0 {
+						peerRelayed++
+					}
+					if len(p.Relays) < len(w.devices[p.ID].Relays) {
+						peerFiltered++
+					}
+				}
+				for _, sc := range nm.Scopes {
+					for _, rl := range sc.Relays {
+						if w.relays[rl].Source != proto.RelayPublic && w.relayPos[rl] < 0 {
+							ownOnList++
+						}
+					}
+					if l, ok := sc.ID.LAN(); ok && len(sc.Relays) > 1 && !slices.Equal(sc.Relays, w.lans[l].relays) {
+						reordered++
+					}
+				}
+			}
+			for id := range w.relays {
+				if w.admits(id, d.NodeKey) {
+					admitted++
+				} else if d.usable() && ready(w.relays[id]) {
+					turnedAway++
+					if w.kicked(id, d) {
+						kickedOff++
 					}
 				}
 			}
@@ -252,18 +575,34 @@ func TestNetMapIsolationRandom(t *testing.T) {
 		}
 		for _, l := range w.lans {
 			waitingDevices += len(l.pending)
+			for _, id := range l.added {
+				if !ready(w.relays[id]) {
+					unreadyAdded++
+				}
+			}
 		}
 		for _, d := range w.devices {
 			if d.expired {
 				expired++
 			}
 		}
+		for _, sh := range w.shares {
+			if sh.held(time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)) {
+				heldSeats++
+			}
+		}
 	}
 	t.Logf("peers %d, through several scopes %d, refused %d; paused memberships %d; devices in a LAN their owner has not joined %d",
 		peers, multiScope, refused, hiddenByPause, notJoined)
 	t.Logf("waiting devices %d, people waiting to join %d, invitations %d, expired logins %d", waitingDevices, waitingMembers, invitations, expired)
+	t.Logf("share scopes %d (receiver's side %d), seats held after a revoke %d", shareScopes, receiverSide, heldSeats)
+	t.Logf("relays: peers with a relay %d, with relays left out %d; own relays on lists %d, not registered %d; admitted %d, turned away %d (kicked %d); lists in a device's own order %d",
+		peerRelayed, peerFiltered, ownOnList, unreadyAdded, admitted, turnedAway, kickedOff, reordered)
 	if peers < 500 || multiScope < 50 || refused < 50 || hiddenByPause < 50 || notJoined < 5 ||
-		waitingDevices < 50 || waitingMembers < 50 || invitations < 50 || expired < 50 {
+		waitingDevices < 50 || waitingMembers < 50 || invitations < 50 || expired < 50 ||
+		shareScopes < 200 || receiverSide < 100 || heldSeats < 20 ||
+		peerRelayed < 200 || peerFiltered < 50 || ownOnList < 200 || unreadyAdded < 20 || admitted < 500 || turnedAway < 100 ||
+		kickedOff < 50 || reordered < 100 {
 		t.Fatal("the random worlds are too thin to test much")
 	}
 }
@@ -274,32 +613,56 @@ func checkNetMap(t *testing.T, w *World, d *device, isOnline online, seed uint64
 		if nm != nil {
 			t.Fatalf("seed %d: logged-out device %s got a map", seed, d.ID)
 		}
+		for id := range w.relays {
+			if w.admits(id, d.NodeKey) {
+				t.Errorf("seed %d: relay %s lets in %s, logged out or run out", seed, id, d.ID)
+			}
+		}
 		return
 	}
 	if nm == nil {
 		t.Fatalf("seed %d: no map for %s", seed, d.ID)
 	}
 	mine := scopesOf(w, d)
+	shares := shareScopesOf(w, d)
 
 	got := map[proto.ScopeID]bool{}
 	for _, s := range nm.Scopes {
 		got[s.ID] = true
-		l, _ := s.ID.LAN()
 		var want []proto.Service
 		for _, svc := range d.services {
 			if d.opens[s.ID][svc.Key()] {
 				want = append(want, svc)
 			}
 		}
+		if sh := shares[s.ID]; sh != nil {
+			// The shared device opens what the share opens; the receiver's
+			// side opens nothing: only the receiver connects in.
+			if sh.Device != d.ID {
+				want = nil
+			}
+			if fmt.Sprint(s.Open) != fmt.Sprint(nonNil(want)) || s.Paused != d.Paused[s.ID] {
+				t.Errorf("seed %d: share scope %s of %s: %+v, want open %v", seed, s.ID, d.ID, s, want)
+			}
+			continue
+		}
+		l, _ := s.ID.LAN()
 		if fmt.Sprint(s.Open) != fmt.Sprint(nonNil(want)) {
 			t.Errorf("seed %d: %s opens %v in %s, want %v", seed, d.ID, s.Open, s.ID, want)
 		}
-		if s.Paused != d.Paused[s.ID] || s.Name != w.lans[l].Name || !slices.Equal(s.Relays, w.lans[l].relays) {
+		if s.Paused != d.Paused[s.ID] || s.Name != w.lans[l].Name || !slices.Equal(s.Relays, refScopeListFor(w, d, s.ID)) {
 			t.Errorf("seed %d: scope %s of %s: %+v", seed, s.ID, d.ID, s)
 		}
 	}
-	if fmt.Sprint(got) != fmt.Sprint(mine) {
-		t.Fatalf("seed %d: %s has scopes %v, want %v", seed, d.ID, got, mine)
+	wantScopes := map[proto.ScopeID]bool{}
+	for s := range mine {
+		wantScopes[s] = true
+	}
+	for s := range shares {
+		wantScopes[s] = true
+	}
+	if fmt.Sprint(got) != fmt.Sprint(wantScopes) {
+		t.Fatalf("seed %d: %s has scopes %v, want %v", seed, d.ID, got, wantScopes)
 	}
 
 	peers := map[proto.DeviceID]proto.Peer{}
@@ -307,28 +670,44 @@ func checkNetMap(t *testing.T, w *World, d *device, isOnline online, seed uint64
 		peers[p.ID] = p
 	}
 	for _, p := range w.devices {
-		var want []proto.ScopeID
+		// The scopes they share, apart by whether p paused them.
+		var want, wantPaused []proto.ScopeID
 		if p.ID != d.ID && p.usable() {
 			for s := range scopesOf(w, p) {
-				if mine[s] && !p.Paused[s] {
+				switch {
+				case mine[s] && !p.Paused[s]:
 					want = append(want, s)
+				case mine[s]:
+					wantPaused = append(wantPaused, s)
+				}
+			}
+			// A share joins the shared device and the receiver's devices,
+			// never two of the receiver's devices.
+			for sid, sh := range shares {
+				if sh.Device == d.ID && p.Owner == sh.Receiver || sh.Device == p.ID && d.Owner == sh.Receiver {
+					if p.Paused[sid] {
+						wantPaused = append(wantPaused, sid)
+					} else {
+						want = append(want, sid)
+					}
 				}
 			}
 		}
 		slices.Sort(want)
+		slices.Sort(wantPaused)
 		got, ok := peers[p.ID]
-		if len(want) == 0 {
+		if len(want) == 0 && len(wantPaused) == 0 {
 			if ok {
-				t.Errorf("seed %d: %s sees %s through %v; they share nothing it may use", seed, d.ID, p.ID, got.Scopes)
+				t.Errorf("seed %d: %s sees %s through %v; they share nothing", seed, d.ID, p.ID, got.Scopes)
 			}
 			continue
 		}
 		if !ok {
-			t.Errorf("seed %d: %s does not see %s, though they share %v", seed, d.ID, p.ID, want)
+			t.Errorf("seed %d: %s does not see %s, though they share %v (paused %v)", seed, d.ID, p.ID, want, wantPaused)
 			continue
 		}
-		if !slices.Equal(got.Scopes, want) {
-			t.Errorf("seed %d: %s sees %s through %v, want %v", seed, d.ID, p.ID, got.Scopes, want)
+		if !slices.Equal(got.Scopes, nonNil(want)) || !slices.Equal(got.PausedScopes, wantPaused) {
+			t.Errorf("seed %d: %s sees %s through %v (paused %v), want %v (paused %v)", seed, d.ID, p.ID, got.Scopes, got.PausedScopes, want, wantPaused)
 		}
 		other := p.Owner != d.Owner
 		if got.RefusedByPeer != (other && p.refused[d.Owner]) || got.RefusedByMe != (other && d.refused[p.Owner]) {
@@ -337,23 +716,47 @@ func checkNetMap(t *testing.T, w *World, d *device, isOnline online, seed uint64
 		if got.NodeKey != p.NodeKey || got.Online != isOnline(p.ID) || got.FQDN != p.Name+"."+w.people[p.Owner].Name+"."+proto.Domain {
 			t.Errorf("seed %d: node %s in %s's map: %+v", seed, p.ID, d.ID, got.Node)
 		}
+		// Through a relay: the ones the peer is on that are on a list of
+		// a scope both are in and the peer has not paused (M4).
+		allowed := map[proto.RelayID]bool{}
+		for _, sid := range want {
+			for _, rl := range refScopeListFor(w, d, sid) {
+				allowed[rl] = !refKicked(w, rl, p)
+			}
+		}
+		reported := p.Relays
+		if len(reported) == 0 && p.HomeRelay != "" {
+			reported = []proto.RelayID{p.HomeRelay}
+		}
+		var wantRelays []proto.RelayID
+		for _, rl := range reported {
+			if allowed[rl] && !slices.Contains(wantRelays, rl) {
+				wantRelays = append(wantRelays, rl)
+			}
+		}
+		home := proto.RelayID("")
+		if len(wantRelays) > 0 {
+			home = wantRelays[0]
+		}
+		if !slices.Equal(got.Relays, wantRelays) || got.HomeRelay != home {
+			t.Errorf("seed %d: %s reaches %s through %v (home %q), want %v", seed, d.ID, p.ID, got.Relays, got.HomeRelay, wantRelays)
+		}
+		for _, rl := range got.Relays {
+			if !w.admits(rl, d.NodeKey) || !w.admits(rl, p.NodeKey) {
+				t.Errorf("seed %d: relay %s between %s and %s does not let both in", seed, rl, d.ID, p.ID)
+			}
+		}
 	}
 
-	// Relays: the scopes' and the peers' homes, nothing else.
+	// Relays: the fallback and the scopes' lists, nothing else (M4).
 	wantRelays := map[proto.RelayID]bool{}
-	for s := range mine {
-		l, _ := s.LAN()
-		for _, rl := range w.lans[l].relays {
+	for _, rl := range refListFor(w, d, nil) {
+		wantRelays[rl] = true
+	}
+	for _, s := range nm.Scopes {
+		for _, rl := range refScopeListFor(w, d, s.ID) {
 			wantRelays[rl] = true
 		}
-	}
-	for _, p := range nm.Peers {
-		if p.HomeRelay != "" {
-			wantRelays[p.HomeRelay] = true
-		}
-	}
-	if d.HomeRelay != "" {
-		wantRelays[d.HomeRelay] = true
 	}
 	gotRelays := map[proto.RelayID]bool{}
 	for _, rl := range nm.Relays {
@@ -361,6 +764,14 @@ func checkNetMap(t *testing.T, w *World, d *device, isOnline online, seed uint64
 	}
 	if fmt.Sprint(gotRelays) != fmt.Sprint(wantRelays) {
 		t.Errorf("seed %d: %s gets relays %v, want %v", seed, d.ID, gotRelays, wantRelays)
+	}
+	// Admission (§2.6.3): a public relay lets in every device logged in,
+	// someone's own relay exactly the devices whose map has it.
+	for id, rl := range w.relays {
+		want := ready(rl) && !refKicked(w, id, d) && (rl.Source == proto.RelayPublic || gotRelays[id])
+		if w.admits(id, d.NodeKey) != want {
+			t.Errorf("seed %d: relay %s (%s, owner %s) lets %s in: %v, want %v", seed, id, rl.Source, rl.Owner, d.ID, !want, want)
+		}
 	}
 
 	// Nothing of a LAN it is not in, or of a device it cannot see, is in
@@ -384,6 +795,11 @@ func checkNetMap(t *testing.T, w *World, d *device, isOnline online, seed uint64
 	for _, p := range w.people {
 		if strings.Contains(js, p.Email) {
 			t.Errorf("seed %d: %s's map carries an email", seed, d.ID)
+		}
+	}
+	for _, sh := range w.shares {
+		if shares[shareScope(sh.ID)] == nil && strings.Contains(js, sh.ID) {
+			t.Errorf("seed %d: %s's map mentions share %s it is not in", seed, d.ID, sh.ID)
 		}
 	}
 }
@@ -422,8 +838,20 @@ func checkUserView(t *testing.T, w *World, me *person, isOnline online, now time
 			}
 			continue
 		}
-		if lv.Pending || lv.ApproveDevices != l.ApproveDevices || lv.ApproveMembers != l.ApproveMembers {
-			t.Errorf("seed %d: %s's view of %s: pending %v, switches %v %v", seed, me.ID, l.ID, lv.Pending, lv.ApproveDevices, lv.ApproveMembers)
+		if lv.Pending || lv.ApproveDevices != l.ApproveDevices || lv.ApproveMembers != l.ApproveMembers || lv.Mode != l.Mode {
+			t.Errorf("seed %d: %s's view of %s: pending %v, switches %v %v, mode %q", seed, me.ID, l.ID, lv.Pending, lv.ApproveDevices, lv.ApproveMembers, lv.Mode)
+		}
+		if l.Mode == proto.LANModeShare && l.Owner != me.ID {
+			// A member of a sharing LAN: whose it is, and nothing of it.
+			for _, m := range lv.Members {
+				if m.Person != l.Owner && m.Person != me.ID {
+					t.Errorf("seed %d: %s sees member %s of sharing LAN %s", seed, me.ID, m.Person, l.ID)
+				}
+			}
+			if len(lv.Devices) > 0 {
+				t.Errorf("seed %d: %s sees %d devices of sharing LAN %s", seed, me.ID, len(lv.Devices), l.ID)
+			}
+			continue
 		}
 		for _, m := range lv.Members {
 			wm := l.memberOf[m.Person]
@@ -506,6 +934,29 @@ func checkUserView(t *testing.T, w *World, me *person, isOnline online, now time
 		t.Errorf("seed %d: %s's invitations %v, want %v", seed, me.ID, gotInv, wantInv)
 	}
 
+	// Seats: me, who joined the LANs me owns, who me shares with (live, or
+	// revoked a moment ago), once each.
+	seatsWant := map[proto.PersonID]bool{me.ID: true}
+	for _, l := range w.lans {
+		for _, m := range l.members {
+			if l.Owner == me.ID && m.State == proto.MemberJoined {
+				seatsWant[m.Person] = true
+			}
+		}
+	}
+	for _, sh := range w.shares {
+		if sh.Sharer == me.ID && (sh.State == shareActive || sh.held(now)) {
+			seatsWant[sh.Receiver] = true
+		}
+	}
+	gotSeats := map[proto.PersonID]bool{}
+	for _, p := range v.Seats.People {
+		gotSeats[p] = true
+	}
+	if fmt.Sprint(gotSeats) != fmt.Sprint(seatsWant) || v.Seats.Used != len(seatsWant) {
+		t.Errorf("seed %d: %s's seats %v, want %v", seed, me.ID, v.Seats, seatsWant)
+	}
+
 	visible := map[proto.DeviceID]bool{}
 	for _, d := range w.devices {
 		if d.LoggedOut {
@@ -516,6 +967,9 @@ func checkUserView(t *testing.T, w *World, me *person, isOnline online, now time
 		}
 		for l := range myLANs {
 			ll := w.lans[l]
+			if ll.Mode == proto.LANModeShare && (ll.Owner != me.ID || d.Owner != ll.Owner) {
+				continue // its owner sees its own devices there; members see none
+			}
 			if ll.hasDevice[d.ID] != nil && ll.joined(d.Owner) || ll.hasPending[d.ID] != nil && pendingSeen(ll, d) {
 				visible[d.ID] = true
 			}
@@ -526,7 +980,8 @@ func checkUserView(t *testing.T, w *World, me *person, isOnline online, now time
 		gotDevices[dv.ID] = true
 		d := w.devices[dv.ID]
 		for _, l := range dv.LANs {
-			if !myLANs[l] || w.lans[l].hasDevice[d.ID] == nil || !w.lans[l].joined(d.Owner) {
+			ll := w.lans[l]
+			if !myLANs[l] || ll.hasDevice[d.ID] == nil || !ll.joined(d.Owner) || ll.Mode == proto.LANModeShare && d.Owner != ll.Owner {
 				t.Errorf("seed %d: %s sees %s in LAN %s", seed, me.ID, d.ID, l)
 			}
 		}
@@ -551,6 +1006,9 @@ func checkUserView(t *testing.T, w *World, me *person, isOnline online, now time
 	for l := range myLANs {
 		ll := w.lans[l]
 		for _, m := range ll.members {
+			if ll.Mode == proto.LANModeShare && ll.Owner != me.ID && m.Person != ll.Owner {
+				continue
+			}
 			if m.State == proto.MemberJoined || m.State == proto.MemberPending && ll.Owner == me.ID {
 				people[m.Person] = true
 			}
@@ -561,6 +1019,86 @@ func checkUserView(t *testing.T, w *World, me *person, isOnline online, now time
 	}
 	for id := range visible {
 		people[w.devices[id].Owner] = true
+	}
+	for id := range seatsWant {
+		people[id] = true
+	}
+	// Devices given to me: in "共享给我", with their giver and owner, and
+	// nothing of the device but what I may use.
+	mentionable := map[proto.DeviceID]bool{}
+	for id := range visible {
+		mentionable[id] = true
+	}
+	wantShared := map[proto.ShareID]*share{}
+	for _, sh := range w.shares {
+		d := w.devices[sh.Device]
+		if sh.State == shareActive && sh.Receiver == me.ID && d != nil && !d.LoggedOut {
+			wantShared[proto.ShareID(sh.ID)] = sh
+			mentionable[d.ID] = true
+			people[sh.Sharer] = true
+			people[d.Owner] = true
+		}
+	}
+	gotShared := map[proto.ShareID]bool{}
+	for _, sd := range v.SharedWithMe {
+		gotShared[sd.Share] = true
+		sh := wantShared[sd.Share]
+		if sh == nil {
+			t.Errorf("seed %d: %s is given %s, which is not theirs", seed, me.ID, sd.Share)
+			continue
+		}
+		d := w.devices[sh.Device]
+		var open []proto.Service
+		for _, svc := range d.services {
+			if d.opens[shareScope(sh.ID)][svc.Key()] {
+				open = append(open, svc)
+			}
+		}
+		if sd.Device.ID != d.ID || sd.From != sh.Sharer || fmt.Sprint(sd.Services) != fmt.Sprint(nonNil(open)) ||
+			len(sd.Device.LANs) != 0 || len(sd.Device.Services) != 0 || len(sd.Device.Refused) != 0 || len(sd.Device.Shares) != 0 ||
+			!sd.Device.Login.ExpiresAt.IsZero() {
+			t.Errorf("seed %d: %s's shared device %s says too much or too little: %+v", seed, me.ID, sd.Share, sd)
+		}
+	}
+	if len(gotShared) != len(wantShared) {
+		t.Errorf("seed %d: %s is given %d devices, want %d", seed, me.ID, len(gotShared), len(wantShared))
+	}
+	// Shares of my own devices list whom they are given to.
+	for _, dv := range v.Devices {
+		d := w.devices[dv.ID]
+		want := 0
+		for _, sh := range w.shares {
+			if sh.Device == d.ID && sh.State == shareActive {
+				want++
+			}
+		}
+		if d.Owner != me.ID {
+			want = 0
+		}
+		if len(dv.Shares) != want {
+			t.Errorf("seed %d: %s sees %d shares of %s, want %d", seed, me.ID, len(dv.Shares), d.ID, want)
+		}
+	}
+	// My devices that were logged out, and my LANs' public ones that were,
+	// are mine to delete (M7): listed for me, and for no one else.
+	wantOut := map[proto.DeviceID]bool{}
+	for _, d := range w.devices {
+		manager := d.Owner
+		if l := w.lans[d.PublicLAN]; d.PublicLAN != "" && l != nil {
+			manager = l.Owner
+		}
+		if d.LoggedOut && manager == me.ID {
+			wantOut[d.ID] = true
+			mentionable[d.ID] = true
+		}
+	}
+	if len(v.LoggedOutDevices) != len(wantOut) {
+		t.Errorf("seed %d: %s's logged-out devices: %d, want %d", seed, me.ID, len(v.LoggedOutDevices), len(wantOut))
+	}
+	for _, dv := range v.LoggedOutDevices {
+		if !wantOut[dv.ID] {
+			t.Errorf("seed %d: %s's logged-out devices have %s", seed, me.ID, dv.ID)
+		}
 	}
 	for _, i := range w.invites {
 		l := w.lans[i.LAN]
@@ -594,8 +1132,14 @@ func checkUserView(t *testing.T, w *World, me *person, isOnline online, now time
 		}
 	}
 	for _, d := range w.devices {
-		if !visible[d.ID] && (strings.Contains(js, string(d.ID)) || strings.Contains(js, d.DisplayName)) {
+		if !mentionable[d.ID] && (strings.Contains(js, string(d.ID)) || strings.Contains(js, d.DisplayName)) {
 			t.Errorf("seed %d: %s's view mentions device %s it cannot see", seed, me.ID, d.ID)
+		}
+	}
+	for _, sh := range w.shares {
+		mine := sh.State == shareActive && (sh.Receiver == me.ID || w.devices[sh.Device].Owner == me.ID)
+		if !mine && strings.Contains(js, sh.ID) {
+			t.Errorf("seed %d: %s's view mentions share %s", seed, me.ID, sh.ID)
 		}
 	}
 	for _, i := range w.invites {

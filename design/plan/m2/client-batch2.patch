@@ -1,6 +1,6 @@
-diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/actions.go /tmp/deneb-m2/cmd/deneb/actions.go
---- cmd/deneb/actions.go	2026-11-08 12:01:00
-+++ cmd/deneb/actions.go	2026-11-08 12:11:29
+diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/actions.go cmd/deneb/actions.go
+--- cmd/deneb/actions.go	2026-11-08 12:38:21
++++ cmd/deneb/actions.go	2026-11-08 12:38:21
 @@ -15,7 +15,7 @@
  // address it answers with: a remote desktop in the remote desktop app, a
  // shared folder in the file manager, a website in the browser.
@@ -10,9 +10,9 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/actions.go /tm
  		func(c *ui.Context, addr string, err error) {
  			if err != nil {
  				a.problem(c, err)
-diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/allview.go /tmp/deneb-m2/cmd/deneb/allview.go
+diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/allview.go cmd/deneb/allview.go
 --- cmd/deneb/allview.go	1970-01-01 07:30:00
-+++ cmd/deneb/allview.go	2026-11-08 12:11:29
++++ cmd/deneb/allview.go	2026-11-08 12:38:21
 @@ -0,0 +1,793 @@
 +package main
 +
@@ -807,9 +807,9 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/allview.go /tm
 +	}
 +	return false
 +}
-diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/allview_test.go /tmp/deneb-m2/cmd/deneb/allview_test.go
+diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/allview_test.go cmd/deneb/allview_test.go
 --- cmd/deneb/allview_test.go	1970-01-01 07:30:00
-+++ cmd/deneb/allview_test.go	2026-11-08 12:11:29
++++ cmd/deneb/allview_test.go	2026-11-08 12:38:21
 @@ -0,0 +1,240 @@
 +package main
 +
@@ -1051,10 +1051,10 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/allview_test.g
 +		t.Errorf("off the rows: focus %q, Mia's MacBook faded %v", a.focus, a.device("weekend/mia").faded)
 +	}
 +}
-diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/canvas.go /tmp/deneb-m2/cmd/deneb/canvas.go
---- cmd/deneb/canvas.go	2026-11-08 12:01:00
-+++ cmd/deneb/canvas.go	2026-11-08 12:11:29
-@@ -79,6 +79,10 @@
+diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/canvas.go cmd/deneb/canvas.go
+--- cmd/deneb/canvas.go	2026-11-08 12:38:21
++++ cmd/deneb/canvas.go	2026-11-08 12:38:21
+@@ -80,6 +80,10 @@
  func (r *relayStop) at() ui.Point { return ui.Point{X: r.base.X + r.off.X, Y: r.base.Y + r.off.Y} }
  
  func (a *app) hasRelayLink() bool {
@@ -1065,7 +1065,7 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/canvas.go /tmp
  	for _, d := range a.devices {
  		if d.path == "relay" {
  			return true
-@@ -91,6 +95,11 @@
+@@ -92,6 +96,11 @@
  // the tray's band (§6.3). The card is kept clear of where it shows
  // (freeSpot), not by the area.
  func (a *app) restArea(w, h float32) ui.Rect {
@@ -1077,7 +1077,7 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/canvas.go /tmp
  	// Never a negative size, however small the window: an empty area just
  	// holds things where they are.
  	return ui.Rect{X: 70, Y: 44, W: max(0, w-140), H: max(0, h-trayBand-70-44)}
-@@ -129,10 +138,19 @@
+@@ -130,10 +139,19 @@
  				continue
  			}
  			at := d.at()
@@ -1098,7 +1098,7 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/canvas.go /tmp
  		if rl := a.relay; any(rl) != self && rl != nil && a.hasRelayLink() {
  			at := rl.at()
  			if !apart(r, a.relayFootprint(at)) || !apart(r, a.relayFootprint(ui.Point{X: at.X + rl.push.X, Y: at.Y + rl.push.Y})) {
-@@ -224,7 +242,7 @@
+@@ -225,7 +243,7 @@
  		}
  		r := fp(q)
  		for _, d := range a.devices {
@@ -1107,7 +1107,7 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/canvas.go /tmp
  				return false
  			}
  		}
-@@ -276,6 +294,9 @@
+@@ -277,6 +295,9 @@
  // overTray reports whether a tile centered at q is over the tray: on it,
  // or within a few DIPs of it. Only there does letting go put it in.
  func (a *app) overTray(q ui.Point, w, h float32) bool {
@@ -1117,7 +1117,7 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/canvas.go /tmp
  	z := a.trayZone(w, h)
  	const m = 22
  	return q.X >= z.X-m && q.X <= z.X+z.W+m && q.Y >= z.Y-m && q.Y <= z.Y+z.H+m
-@@ -283,6 +304,9 @@
+@@ -284,6 +305,9 @@
  
  // nearTray reports whether a tile centered at q comes close to the tray.
  func (a *app) nearTray(q ui.Point, w, h float32) bool {
@@ -1127,7 +1127,7 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/canvas.go /tmp
  	z := a.trayZone(w, h)
  	dx := max(z.X-q.X, 0, q.X-(z.X+z.W))
  	dy := max(z.Y-q.Y, 0, q.Y-(z.Y+z.H))
-@@ -294,7 +318,7 @@
+@@ -295,7 +319,7 @@
  func (a *app) dragged() (ui.Rect, any, bool) {
  	for _, d := range a.devices {
  		if d.dragging {
@@ -1136,7 +1136,7 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/canvas.go /tmp
  		}
  	}
  	if a.relay != nil && a.relay.dragging {
-@@ -319,11 +343,11 @@
+@@ -320,11 +344,11 @@
  	if a.start.IsZero() {
  		a.start = now
  	}
@@ -1150,7 +1150,7 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/canvas.go /tmp
  		a.waitingCanvas(c, p, l)
  		return
  	}
-@@ -335,13 +359,19 @@
+@@ -336,13 +360,19 @@
  	}
  	a.drag = a.dragState(w, h)
  	grow := a.trackGrowth(c, now)
@@ -1171,7 +1171,7 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/canvas.go /tmp
  		relayUp := a.relay.dragging
  		relayShows := a.relayShows(c)
  		if relayShows && !relayUp {
-@@ -358,7 +388,9 @@
+@@ -359,7 +389,9 @@
  		}
  		a.cardLayer(c, p)
  		a.toastView(c, p, w, h, now)
@@ -1182,7 +1182,7 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/canvas.go /tmp
  		// Built last, so that they float over everything: the ones in the
  		// hand or on their way, and any that came out of the tray just now.
  		for _, d := range slices.Clone(a.devices) {
-@@ -370,6 +402,12 @@
+@@ -371,6 +403,12 @@
  			a.relayView(c, p, w, h)
  		}
  	})
@@ -1195,7 +1195,7 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/canvas.go /tmp
  	// Where things rest is kept, for the next time the window opens (§6.2).
  	a.keepPlaces()
  	a.places.save(now)
-@@ -435,10 +473,21 @@
+@@ -436,10 +474,21 @@
  		c.After(d.popped.Sub(c.Now()))
  	}
  	going := !d.gone.IsZero()
@@ -1219,7 +1219,7 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/canvas.go /tmp
  	if landing {
  		// On its way into the tray, to the slot the tray opened for it,
  		// wherever that is now. The hand cannot catch it on the way.
-@@ -456,7 +505,9 @@
+@@ -457,7 +506,9 @@
  		}
  	}
  	col.Draggable(&d.off, opts)
@@ -1230,7 +1230,7 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/canvas.go /tmp
  		if at := d.at(); d.removable() && a.overTray(at, w, h) {
  			// Mine, let go over the tray: it flies into the slot the tray
  			// opened for it, and leaves the LAN as it lands there.
-@@ -473,6 +524,9 @@
+@@ -474,6 +525,9 @@
  	}
  	d.dragging = col.Dragging()
  	live := col.DragOffset()
@@ -1240,7 +1240,7 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/canvas.go /tmp
  	switch {
  	case first:
  		// Its first frame showed it where it came from, as it looked
-@@ -494,16 +548,30 @@
+@@ -495,16 +549,30 @@
  	}
  	// Step aside while something else is dragged over this device.
  	push := ui.Point{}
@@ -1275,7 +1275,7 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/canvas.go /tmp
  	// Its link is cut while I refuse its owner on this computer.
  	cut := float32(0)
  	if a.cutOff(d) {
-@@ -528,7 +596,9 @@
+@@ -529,7 +597,9 @@
  	// Its link fades as it is held over the tray: let go, and it is cut
  	// (§9, scene 5).
  	dim := float32(0)
@@ -1286,7 +1286,7 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/canvas.go /tmp
  		dim = 1
  	}
  	d.dim = col.AnimateTo("dim", dim, ui.Animation{Duration: 160 * time.Millisecond})
-@@ -564,7 +634,8 @@
+@@ -565,7 +635,8 @@
  		}
  		// Offline, it greys over 300 ms rather than at once.
  		gone := float32(0)
@@ -1296,7 +1296,7 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/canvas.go /tmp
  			gone = 1
  		}
  		off := col.AnimateTo("offline", gone, ui.Animation{Duration: 300 * time.Millisecond})
-@@ -585,7 +656,14 @@
+@@ -586,7 +657,14 @@
  			a.tileBadges(c, p, d, col.Hovered())
  		})
  		name := ui.Column(c).AlignItems(ui.Center).Gap(1)
@@ -1312,7 +1312,7 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/canvas.go /tmp
  			name.AnimatePose(ui.Pose{Fade: 1}, ui.Animation{Duration: 120 * time.Millisecond})
  		} else {
  			name.AnimatePose(ui.Pose{}, ui.Animation{Duration: 220 * time.Millisecond, Delay: 60 * time.Millisecond})
-@@ -602,7 +680,13 @@
+@@ -603,7 +681,13 @@
  			} else {
  				ui.Text(c, d.name).FontSize(13).FontWeight(500).SingleLine().MaxWidth(nameWidth)
  			}
@@ -1327,7 +1327,7 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/canvas.go /tmp
  			if !d.using.IsZero() && linked(d.path) {
  				// The count goes up every second, its digits of one width.
  				st.FontFeatures("tnum")
-@@ -743,6 +827,9 @@
+@@ -744,6 +828,9 @@
  // going (DESIGN scene 1: 中转站缩小淡出). One that a link comes back to
  // pops in.
  func (a *app) relayShows(c *ui.Context) bool {
@@ -1337,9 +1337,9 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/canvas.go /tmp
  	r, now := a.relay, c.Now()
  	if a.relayLinked() {
  		if !r.shown {
-diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/links.go /tmp/deneb-m2/cmd/deneb/links.go
---- cmd/deneb/links.go	2026-11-08 12:01:00
-+++ cmd/deneb/links.go	2026-11-08 12:11:29
+diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/links.go cmd/deneb/links.go
+--- cmd/deneb/links.go	2026-11-08 12:38:21
++++ cmd/deneb/links.go	2026-11-08 12:38:21
 @@ -157,7 +157,7 @@
  // geo returns the shape of the link to d, made anew only when its ends,
  // or the relay it goes through, moved.
@@ -1467,9 +1467,9 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/links.go /tmp/
  }
  
  // paintWaitLine draws the line of a link waiting as path says, alpha of the
-diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/m2_test.go /tmp/deneb-m2/cmd/deneb/m2_test.go
---- cmd/deneb/m2_test.go	2026-11-08 12:01:00
-+++ cmd/deneb/m2_test.go	2026-11-08 12:11:29
+diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/m2_test.go cmd/deneb/m2_test.go
+--- cmd/deneb/m2_test.go	2026-11-08 12:38:21
++++ cmd/deneb/m2_test.go	2026-11-08 12:38:21
 @@ -6,6 +6,7 @@
  	"image/png"
  	"os"
@@ -1732,9 +1732,9 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/m2_test.go /tm
  			}
  			sc.play(r)
  			tt.SetScale(2)
-diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/model.go /tmp/deneb-m2/cmd/deneb/model.go
---- cmd/deneb/model.go	2026-11-08 12:01:00
-+++ cmd/deneb/model.go	2026-11-08 12:11:29
+diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/model.go cmd/deneb/model.go
+--- cmd/deneb/model.go	2026-11-08 12:38:21
++++ cmd/deneb/model.go	2026-11-08 12:38:21
 @@ -1,6 +1,7 @@
  package main
  
@@ -1843,9 +1843,9 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/model.go /tmp/
  	case d.pending && d.mine:
  		return "等" + spaced(a.ownerName()) + "同意"
  	case d.pending:
-diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/panels.go /tmp/deneb-m2/cmd/deneb/panels.go
---- cmd/deneb/panels.go	2026-11-08 12:01:00
-+++ cmd/deneb/panels.go	2026-11-08 12:11:29
+diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/panels.go cmd/deneb/panels.go
+--- cmd/deneb/panels.go	2026-11-08 12:38:21
++++ cmd/deneb/panels.go	2026-11-08 12:38:21
 @@ -98,14 +98,14 @@
  // op goes out (startLeave).
  func (a *app) takeOut(c *ui.Context, d *device, toast, byHand bool) {
@@ -2050,8 +2050,9 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/panels.go /tmp
  		return "移出", func(c *ui.Context) { a.takeOut(c, d, true, false) }
  	case d.path == "offline":
 -		if a.watching[d.id] {
+-			return "上线时会告诉你", func(*ui.Context) { delete(a.watching, d.id) }
 +		if a.watching[string(d.dev)] {
- 			return "上线时会告诉你", func(*ui.Context) { delete(a.watching, d.id) }
++			return "上线时会告诉你", func(*ui.Context) { delete(a.watching, string(d.dev)) }
  		}
  		return "上线时告诉我", func(*ui.Context) {
  			if a.watching == nil {
@@ -2062,15 +2063,15 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/panels.go /tmp
  		}
  	case d.path == "refused":
  		return "问问" + who, tell("能让我用一下你的"+d.name+"吗？在 Deneb 里点一下就行", "")
- 	case d.path == "unreachable":
+ 	case d.path == "unreachable" && a.snap.Can(model.FeatureAddRelay):
 -		return "加一个中转站", func(c *ui.Context) { a.send(c, model.Op{Kind: model.OpLANAddRelay, LAN: a.lan}) }
 +		return "加一个中转站", func(c *ui.Context) { a.send(c, model.Op{Kind: model.OpLANAddRelay, LAN: d.lan}) }
  	}
  	return "", nil
  }
-diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/sync.go /tmp/deneb-m2/cmd/deneb/sync.go
---- cmd/deneb/sync.go	2026-11-08 12:01:00
-+++ cmd/deneb/sync.go	2026-11-08 12:11:29
+diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/sync.go cmd/deneb/sync.go
+--- cmd/deneb/sync.go	2026-11-08 12:38:21
++++ cmd/deneb/sync.go	2026-11-08 12:38:21
 @@ -10,6 +10,7 @@
  	"os"
  	"path/filepath"
@@ -2387,9 +2388,9 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/sync.go /tmp/d
 +
 +// lanOf is the LAN a device on the canvas shows in, as the snapshot has it.
 +func (a *app) lanOf(d *device) *model.LAN { return a.snap.LAN(d.lan) }
-diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/view.go /tmp/deneb-m2/cmd/deneb/view.go
---- cmd/deneb/view.go	2026-11-08 12:01:00
-+++ cmd/deneb/view.go	2026-11-08 12:11:29
+diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/view.go cmd/deneb/view.go
+--- cmd/deneb/view.go	2026-11-08 12:38:21
++++ cmd/deneb/view.go	2026-11-08 12:38:21
 @@ -39,7 +39,11 @@
  	root.Children(func() {
  		a.sidebar(c, p, bar)
@@ -2530,9 +2531,9 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/view.go /tmp/d
  	case l != nil && a.self != "" && !l.Has(model.DeviceID(a.self)):
  		// Made on another of my devices: this computer waits in the tray,
  		// and nothing here connects until it is in.
-diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/view_test.go /tmp/deneb-m2/cmd/deneb/view_test.go
---- cmd/deneb/view_test.go	2026-11-08 12:01:00
-+++ cmd/deneb/view_test.go	2026-11-08 12:11:29
+diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/view_test.go cmd/deneb/view_test.go
+--- cmd/deneb/view_test.go	2026-11-08 12:38:21
++++ cmd/deneb/view_test.go	2026-11-08 12:38:21
 @@ -69,8 +69,14 @@
  //   - Another's card said "Mia的设备", and says "Mia 的设备" now, a Latin
  //     name set apart as everywhere else (M2's self-check): the frames with
@@ -2562,9 +2563,9 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/view_test.go /
  			w := color.NRGBAModel.Convert(want.At(x, y)).(color.NRGBA)
  			g := color.NRGBAModel.Convert(img.At(x, y)).(color.NRGBA)
  			d := max(absDiff(w.R, g.R), absDiff(w.G, g.G), absDiff(w.B, g.B), absDiff(w.A, g.A))
-diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/views.go /tmp/deneb-m2/cmd/deneb/views.go
---- cmd/deneb/views.go	2026-11-08 12:01:00
-+++ cmd/deneb/views.go	2026-11-08 12:11:29
+diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/views.go cmd/deneb/views.go
+--- cmd/deneb/views.go	2026-11-08 12:38:21
++++ cmd/deneb/views.go	2026-11-08 12:38:21
 @@ -283,7 +283,10 @@
  		if lan == "" {
  			lan = inv.LAN
@@ -2577,10 +2578,10 @@ diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig cmd/deneb/views.go /tmp/
  	})
  }
  
-diff -ruN -x *.orig client/model/model.go /tmp/deneb-m2/client/model/model.go
---- client/model/model.go	2026-11-08 12:01:00
-+++ client/model/model.go	2026-11-08 12:11:29
-@@ -115,6 +115,9 @@
+diff -ruN -x *.orig client/model/model.go client/model/model.go
+--- client/model/model.go	2026-11-08 12:38:21
++++ client/model/model.go	2026-11-08 12:38:22
+@@ -134,6 +134,9 @@
  	// Invited are people invited by name who have not answered: all of them
  	// for the owner, the ones I invited for a member.
  	Invited []Invited
@@ -2590,9 +2591,9 @@ diff -ruN -x *.orig client/model/model.go /tmp/deneb-m2/client/model/model.go
  }
  
  // Invited is someone asked into a LAN by name, who has not answered yet.
-diff -ruN -x *.orig client/model/op.go /tmp/deneb-m2/client/model/op.go
---- client/model/op.go	2026-11-08 12:01:00
-+++ client/model/op.go	2026-11-08 12:11:29
+diff -ruN -x *.orig client/model/op.go client/model/op.go
+--- client/model/op.go	2026-11-08 12:38:21
++++ client/model/op.go	2026-11-08 12:38:22
 @@ -37,6 +37,9 @@
  	// nothing reaches go through a relay. The demo plays it; the real one
  	// comes with relays in M4.

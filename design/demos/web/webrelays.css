@@ -1,0 +1,426 @@
+/* The relays pages of the web (DESIGN.md §14.8, §14.9; design/plan/m4/
+   web-relays.md): M4-11 weights, M4-12 a relay into a LAN, M4-13 the
+   deployment's page. The wells, cells and balls are M3-15's; the share bar,
+   the LAN chips on a cell, the capsule that goes with the hand and the
+   three buttons in the card are new. */
+
+.rwell {
+  position: absolute;
+  top: 20px;
+  border-radius: 20px;
+  background: var(--well);
+  padding: 14px 14px 16px;
+}
+.rwell .card-label {
+  display: flex;
+  justify-content: space-between;
+  margin: 0 4px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-3);
+}
+.rgrid {
+  display: grid;
+  row-gap: 10px;
+  column-gap: 6px;
+}
+.rcell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 6px 10px;
+  border-radius: 16px;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: center;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.16s ease-out, opacity 0.16s ease-out;
+}
+.rcell:hover {
+  background: var(--well-2);
+}
+.rcell.sel {
+  background: var(--bg);
+  box-shadow: var(--shadow-sm);
+}
+/* The cell whose relay is in the hand: a faint shadow of itself. */
+.rcell.ghost {
+  opacity: 0.35;
+}
+.rcell small {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink-2);
+}
+.rcell small.none {
+  color: var(--ink-3);
+}
+.orb {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  flex: none;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--ink-2);
+  background: radial-gradient(circle at 34% 28%, var(--ball-1) 0%, var(--ball-2) 52%, var(--ball-3) 100%);
+  box-shadow: inset 0 -1.5px 3px rgba(0, 0, 0, 0.08), 0 6px 14px rgba(9, 9, 11, 0.12), 0 1px 2px rgba(9, 9, 11, 0.1);
+}
+.orb svg {
+  fill: currentColor;
+}
+.orb .on {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 2px var(--well);
+}
+.orb .on.busy {
+  background: #f59e0b;
+}
+.rcell.sel .orb .on {
+  box-shadow: 0 0 0 2px var(--bg);
+}
+.orb.add {
+  background: none;
+  box-shadow: none;
+  color: var(--ink-3);
+}
+.orb.add .ring {
+  position: absolute;
+  inset: 0;
+}
+.orb.wait .ring {
+  animation: breathe 1.2s ease-in-out infinite alternate;
+}
+@keyframes breathe {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.45;
+  }
+}
+.rcell.add-cell {
+  color: var(--ink-2);
+  font-weight: 400;
+}
+
+/* ---- The LANs a relay is in: small chips under its name, as the sidebar's rows ---- */
+.lchips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
+  min-height: 0;
+}
+.lchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px 0 6px;
+  border-radius: 999px;
+  background: var(--bg);
+  box-shadow: 0 0 0 1px var(--line);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-2);
+  white-space: nowrap;
+  cursor: grab;
+}
+.lchip .mdots,
+.sheet .mdots {
+  display: flex;
+  flex: none;
+}
+.lchip .mdots .ball,
+.sheet .mdots .ball,
+.rpill .mdots .ball {
+  width: 8px;
+  height: 8px;
+  margin-right: -3px;
+  box-shadow: 0 0 0 1.5px var(--bg);
+}
+.lchip .mdots {
+  padding-right: 3px;
+}
+.lchip.ghost {
+  opacity: 0.3;
+}
+
+/* ---- What goes with the hand: the relay as a capsule, and what letting go does ---- */
+.rpill {
+  position: absolute;
+  z-index: 40;
+  transform: translate(-50%, -50%) rotate(-2deg);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 14px 0 4px;
+  border-radius: 999px;
+  background: var(--bg);
+  box-shadow: var(--shadow-md), 0 0 0 1px var(--line);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.rpill .orb {
+  width: 32px;
+  height: 32px;
+}
+.rpill.lan {
+  height: 30px;
+  padding: 0 12px 0 10px;
+  gap: 7px;
+  font-size: 12px;
+}
+.rpill .rnote {
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%) rotate(2deg);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-3);
+  white-space: nowrap;
+  transition: opacity 0.16s ease-out;
+}
+.rpill .rnote.go {
+  color: var(--primary);
+}
+/* A LAN's row that takes it lights up blue (the desktop's), then a soft blue flash once it is in. */
+.nav.target {
+  background: var(--bg);
+  color: var(--ink);
+  box-shadow: 0 0 0 2px var(--primary);
+}
+
+/* ---- The share bar: how many devices go first to which relay ---------------------------- */
+/* Its own block formatting context: the same height clipped or not (it is
+   clipped while it opens). */
+.wbar-slot {
+  display: flow-root;
+}
+.wbar-wrap {
+  margin: 0 2px 14px;
+}
+.wbar {
+  position: relative;
+  height: 38px;
+}
+.wseg {
+  position: absolute;
+  top: 0;
+  height: 38px;
+  border-radius: 12px;
+  background: var(--bg);
+  box-shadow: var(--shadow-sm), 0 0 0 1px var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--ink);
+}
+.wseg .pct {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+  font-weight: 400;
+}
+/* A standby relay: dashed, at the bar's end, takes no share. */
+.wseg.spare {
+  background: transparent;
+  box-shadow: none;
+  border: 1.5px dashed color-mix(in srgb, var(--ink) 22%, transparent);
+  color: var(--ink-3);
+  font-weight: 400;
+}
+.whandle {
+  position: absolute;
+  top: 0;
+  width: 14px;
+  height: 38px;
+  margin-left: -7px;
+  cursor: col-resize;
+  display: grid;
+  place-items: center;
+  touch-action: none;
+}
+.whandle i {
+  width: 4px;
+  height: 18px;
+  border-radius: 2px;
+  background: var(--ink-3);
+  opacity: 0.55;
+  transition: background 0.14s ease-out, opacity 0.14s ease-out, height 0.14s ease-out;
+}
+.whandle:hover i,
+.whandle.held i {
+  background: var(--primary);
+  opacity: 1;
+  height: 24px;
+}
+/* A segment too narrow for its name: the name over it, on hover. */
+.wtip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  padding: 4px 9px;
+  border-radius: 8px;
+  background: var(--bg);
+  box-shadow: var(--shadow-md), 0 0 0 1px var(--line);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.14s ease-out;
+}
+.wtip.on {
+  opacity: 1;
+}
+.wsay {
+  margin: 10px 4px 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink-3);
+}
+
+/* ---- The card ----------------------------------------------------------------- */
+.sheet .orb-s {
+  position: relative;
+  flex: none;
+  width: 40px;
+  height: 40px;
+}
+.sheet .orb-s .orb {
+  width: 40px;
+  height: 40px;
+}
+.sheet .num {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+}
+.sheet .seg {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 12px;
+  background: var(--well);
+}
+.sheet .seg button {
+  flex: 1;
+  height: 30px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background 0.16s ease-out, color 0.16s ease-out, box-shadow 0.16s ease-out;
+}
+.sheet .seg button:hover {
+  color: var(--ink);
+}
+.sheet .seg button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.sheet .seg button.on {
+  background: var(--bg);
+  color: var(--ink);
+  box-shadow: var(--shadow-sm);
+}
+.sheet .lan-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.sheet .lan-row .lchip {
+  height: 30px;
+  padding: 0 6px 0 10px;
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--well);
+  box-shadow: none;
+  cursor: default;
+}
+.sheet .lan-row .lchip .x {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-left: 1px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.sheet .lan-row .lchip .x:hover {
+  background: var(--well-2);
+  color: var(--ink);
+}
+.sheet .lan-row .lchip.add {
+  padding: 0 12px 0 8px;
+  background: transparent;
+  color: var(--ink-3);
+  border: 1.5px dashed color-mix(in srgb, var(--ink) 22%, transparent);
+  cursor: pointer;
+}
+.cmd {
+  margin: 2px 0 0;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: var(--well);
+  font: 12px/1.55 ui-monospace, 'SF Mono', Menlo, monospace;
+  color: var(--ink);
+  word-break: break-all;
+  user-select: all;
+}
+.cmd-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+.cmd-foot .hint {
+  margin: 0;
+  flex: 1;
+}
+.cmd-foot .btn {
+  flex: none;
+  min-width: 84px;
+  justify-content: center;
+}
+.say {
+  margin: 10px 2px 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+.sheet .chip .gb {
+  margin-left: 2px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink-3);
+}

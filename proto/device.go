@@ -45,6 +45,7 @@ const (
 	PathOps           = "/device/v1/ops"            // POST Op → OpResult
 	PathUserView      = "/device/v1/userview"       // GET → UserView, for engines that do not stream it
 	PathInvite        = "/device/v1/invite"         // POST InviteLookup → InvitePreview
+	PathRelayUsage    = "/device/v1/relay-usage"    // GET → RelayUsage, for my relays' cards (M4)
 )
 
 // StreamKeepAlive is how often the stream sends a keep-alive frame, and
@@ -96,7 +97,23 @@ type LoginRequest struct {
 	DisplayName   string     `json:"displayName,omitempty"`
 	Kind          DeviceKind `json:"kind,omitempty"`
 	EngineVersion string     `json:"engineVersion,omitempty"`
+	// Caps are what this engine can do that older ones cannot (the Cap
+	// constants), claimed afresh on every start. The server copies the
+	// latest claim into Node.Caps for every peer, so a peer turns on a
+	// behavior only once this side said it copes with it. A name is 1 to
+	// 64 of a-z, 0-9, '-' and '.'; the server drops malformed ones and
+	// keeps at most 32. Servers before M4 ignore the field, and their maps
+	// carry no Caps: an engine then treats every peer as claiming none.
+	Caps []string `json:"caps,omitempty"`
 }
+
+// Capabilities an engine may claim in LoginRequest.Caps.
+const (
+	// CapHandshakeDedupe: this engine drops repeated WireGuard handshake
+	// messages before WireGuard sees them, so a peer may send the same
+	// handshake message both direct and through a relay.
+	CapHandshakeDedupe = "handshake-dedupe"
+)
 
 // LoginState is whether someone is logged in on this machine.
 type LoginState struct {
@@ -133,6 +150,12 @@ type Report struct {
 	HomeRelay RelayID          `json:"homeRelay,omitempty"`
 	// Paused are the scopes this device paused on itself.
 	Paused []ScopeID `json:"paused"`
+	// Relays are all the relays the device is connected to and can be
+	// reached through, HomeRelay first (M4). An own relay lets in only
+	// the devices of the scopes it is on, so one home relay is not enough
+	// for a device in several scopes: it keeps, for each scope, the first
+	// relay on the scope's list it could connect to.
+	Relays []RelayID `json:"relays,omitempty"`
 }
 
 // ReportResult answers a report.

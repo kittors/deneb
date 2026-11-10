@@ -3,9 +3,11 @@ package main
 import (
 	"math"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/kittors/deneb/client/model"
 )
 
 // The canvas: devices as glossy tiles colored by their owner, joined to
@@ -78,6 +80,10 @@ func dist(a, b ui.Point) float32 { return float32(math.Hypot(float64(a.X-b.X), f
 func (r *relayStop) at() ui.Point { return ui.Point{X: r.base.X + r.off.X, Y: r.base.Y + r.off.Y} }
 
 func (a *app) hasRelayLink() bool {
+	if a.all() {
+		// The "全部" view shows no relay: a link through one goes straight.
+		return false
+	}
 	for _, d := range a.devices {
 		if d.path == "relay" {
 			return true
@@ -90,6 +96,11 @@ func (a *app) hasRelayLink() bool {
 // the tray's band (§6.3). The card is kept clear of where it shows
 // (freeSpot), not by the area.
 func (a *app) restArea(w, h float32) ui.Rect {
+	if a.all() {
+		// No tray in the "全部" view: down to the canvas's bottom, with
+		// room for a region around what rests at its edges.
+		return ui.Rect{X: 96, Y: 80, W: max(0, w-192), H: max(0, h-102-80)}
+	}
 	// Never a negative size, however small the window: an empty area just
 	// holds things where they are.
 	return ui.Rect{X: 70, Y: 44, W: max(0, w-140), H: max(0, h-trayBand-70-44)}
@@ -128,8 +139,17 @@ func (a *app) freeSpot(want ui.Point, self any, fp func(ui.Point) ui.Rect, w, h 
 				continue
 			}
 			at := d.at()
-			if !apart(r, footprint(at)) || !apart(r, footprint(ui.Point{X: at.X + d.push.X, Y: at.Y + d.push.Y})) {
+			if !apart(r, a.foot(d, at)) || !apart(r, a.foot(d, ui.Point{X: at.X + d.push.X, Y: at.Y + d.push.Y})) {
 				return false
+			}
+		}
+		if me := a.device(a.self); a.all() && me != nil && self == any(me) {
+			// This computer keeps out of every region, by a little air
+			// (scene 3).
+			for _, q := range a.regionRects {
+				if overlaps(ui.Rect{X: r.X - 16, Y: r.Y - 16, W: r.W + 32, H: r.H + 32}, q) {
+					return false
+				}
 			}
 		}
 		if rl := a.relay; any(rl) != self && rl != nil && a.hasRelayLink() {
@@ -223,7 +243,7 @@ func (a *app) roomAt(self any, at ui.Point, fp func(ui.Point) ui.Rect, w, h floa
 		}
 		r := fp(q)
 		for _, d := range a.devices {
-			if any(d) != self && !d.dragging && a.landing != d && d.placed() && overlaps(r, footprint(d.at())) {
+			if any(d) != self && !d.dragging && a.landing != d && d.placed() && overlaps(r, a.foot(d, d.at())) {
 				return false
 			}
 		}
@@ -265,16 +285,16 @@ func (a *app) trayZone(w, h float32) ui.Rect {
 	if a.trayUp && a.trayAt.W > 0 {
 		return a.trayAt
 	}
-	right := float32(0)
-	if a.selected != "" {
-		right = cardWidth + 20
-	}
+	right := a.bottomRight(h)
 	return ui.Rect{X: (w-right)/2 - 140, Y: h - 22 - 56, W: 280, H: 56}
 }
 
 // overTray reports whether a tile centered at q is over the tray: on it,
 // or within a few DIPs of it. Only there does letting go put it in.
 func (a *app) overTray(q ui.Point, w, h float32) bool {
+	if a.all() {
+		return false
+	}
 	z := a.trayZone(w, h)
 	const m = 22
 	return q.X >= z.X-m && q.X <= z.X+z.W+m && q.Y >= z.Y-m && q.Y <= z.Y+z.H+m
@@ -282,6 +302,9 @@ func (a *app) overTray(q ui.Point, w, h float32) bool {
 
 // nearTray reports whether a tile centered at q comes close to the tray.
 func (a *app) nearTray(q ui.Point, w, h float32) bool {
+	if a.all() {
+		return false
+	}
 	z := a.trayZone(w, h)
 	dx := max(z.X-q.X, 0, q.X-(z.X+z.W))
 	dy := max(z.Y-q.Y, 0, q.Y-(z.Y+z.H))
@@ -293,7 +316,7 @@ func (a *app) nearTray(q ui.Point, w, h float32) bool {
 func (a *app) dragged() (ui.Rect, any, bool) {
 	for _, d := range a.devices {
 		if d.dragging {
-			return footprint(d.live), d, true
+			return a.foot(d, d.live), d, true
 		}
 	}
 	if a.relay != nil && a.relay.dragging {
@@ -318,8 +341,12 @@ func (a *app) canvas(c *ui.Context, p *palette) {
 	if a.start.IsZero() {
 		a.start = now
 	}
-	if a.snap.LAN(a.lan) == nil {
+	if !a.all() && a.snap.LAN(a.lan) == nil {
 		a.emptyCanvas(c, p)
+		return
+	}
+	if l := a.snap.LAN(a.lan); l != nil && l.Waiting {
+		a.waitingCanvas(c, p, l)
 		return
 	}
 	a.place()
@@ -330,12 +357,18 @@ func (a *app) canvas(c *ui.Context, p *palette) {
 	}
 	a.drag = a.dragState(w, h)
 	grow := a.trackGrowth(c, now)
-	box.Draw(func(pt *ui.Painter, r ui.Rect) { a.paintLinks(pt, r, p, grow) })
+	box.Draw(func(pt *ui.Painter, r ui.Rect) {
+		a.paintRegions(pt, r, p)
+		a.paintLinks(pt, r, p, grow)
+	})
 	box.Children(func() {
 		// The canvas itself, under everything: a click on it puts the card
 		// away.
 		if ui.Box(c.Key("floor")).Absolute().Left(0).Top(0).Right(0).Bottom(0).Clicked() {
 			a.selected, a.more = "", false
+		}
+		if a.all() {
+			a.regions(c, p)
 		}
 		relayUp := a.relay.dragging
 		relayShows := a.relayShows(c)
@@ -353,7 +386,9 @@ func (a *app) canvas(c *ui.Context, p *palette) {
 		}
 		a.cardLayer(c, p)
 		a.toastView(c, p, w, h, now)
-		a.trayView(c, p, w, h, now)
+		if !a.all() {
+			a.trayView(c, p, w, h, now)
+		}
 		// Built last, so that they float over everything: the ones in the
 		// hand or on their way, and any that came out of the tray just now.
 		for _, d := range slices.Clone(a.devices) {
@@ -365,6 +400,12 @@ func (a *app) canvas(c *ui.Context, p *palette) {
 			a.relayView(c, p, w, h)
 		}
 	})
+	// What the devices said for the regions, which show it in the next frame.
+	if a.dropOver != a.dropNext || (a.edgeNote == nil) != (a.edgeNext == nil) {
+		c.AnimationFrame()
+	}
+	a.dropOver, a.dropNext = a.dropNext, ""
+	a.edgeNote, a.edgeNext = a.edgeNext, nil
 	// Where things rest is kept, for the next time the window opens (§6.2).
 	a.keepPlaces()
 	a.places.save(now)
@@ -430,10 +471,21 @@ func (a *app) deviceView(c *ui.Context, p *palette, d *device, w, h float32) {
 		c.After(d.popped.Sub(c.Now()))
 	}
 	going := !d.gone.IsZero()
-	col := ui.Column(c.Key(d.id)).Absolute().Left(d.base.X - 70).Top(d.base.Y - tileSize/2).Width(140).AlignItems(ui.Center).Gap(10)
+	col := ui.Column(c.Key(d.key())).Absolute().Left(d.base.X - 70).Top(d.base.Y - tileSize/2).Width(140).AlignItems(ui.Center).Gap(10)
 	// No Snap and no throw: a device lands where the hand lets go, as a
 	// thing set down on a table; what happens next depends on that point.
-	opts := ui.DraggableOptions{Bounds: a.dragBounds(d.base, d.removable(), w, h), Rigid: true, Animation: ui.Snappy}
+	bounds := a.dragBounds(d.base, d.removable(), w, h)
+	if a.all() {
+		// In the "全部" view: anywhere in the canvas, or, for another's,
+		// inside its region (scene 3).
+		bounds = a.allBounds(d, w, h)
+		if !d.mine {
+			if b, ok := a.innerBounds(d); ok {
+				bounds = b
+			}
+		}
+	}
+	opts := ui.DraggableOptions{Bounds: bounds, Rigid: true, Animation: ui.Snappy}
 	if landing {
 		// On its way into the tray, to the slot the tray opened for it,
 		// wherever that is now. The hand cannot catch it on the way.
@@ -451,7 +503,9 @@ func (a *app) deviceView(c *ui.Context, p *palette, d *device, w, h float32) {
 		}
 	}
 	col.Draggable(&d.off, opts)
-	if _, _, ok := col.DragEnded(); ok && !landing {
+	if _, _, ok := col.DragEnded(); ok && !landing && a.all() {
+		a.droppedInAll(c, d, w, h)
+	} else if ok && !landing {
 		if at := d.at(); d.removable() && a.overTray(at, w, h) {
 			// Mine, let go over the tray: it flies into the slot the tray
 			// opened for it, and leaves the LAN as it lands there.
@@ -468,6 +522,9 @@ func (a *app) deviceView(c *ui.Context, p *palette, d *device, w, h float32) {
 	}
 	d.dragging = col.Dragging()
 	live := col.DragOffset()
+	if a.all() {
+		a.heldInAll(d, live, bounds)
+	}
 	switch {
 	case first:
 		// Its first frame showed it where it came from, as it looked
@@ -489,16 +546,30 @@ func (a *app) deviceView(c *ui.Context, p *palette, d *device, w, h float32) {
 	}
 	// Step aside while something else is dragged over this device.
 	push := ui.Point{}
-	if fp, who, ok := a.dragged(); ok && who != any(d) && !d.dragging && !d.flying && !landing {
-		push, d.way = makeRoom(footprint(d.at()), fp, d.way, a.roomAt(d, d.at(), footprint, w, h))
+	if fp, who, ok := a.dragged(); ok && who != any(d) && !d.dragging && !d.flying && !landing && !a.selfInAll(who) {
+		push, d.way = makeRoom(a.foot(d, d.at()), fp, d.way, a.roomAt(d, d.at(), a.footOf(d), w, h))
 	} else {
 		d.way = ui.Point{}
 	}
 	d.push = push
 	px := col.AnimateTo("push-x", push.X, stepAnim(push))
 	py := col.AnimateTo("push-y", push.Y, stepAnim(push))
-	col.Translate(px, py)
-	d.live = ui.Point{X: d.base.X + live.X + px, Y: d.base.Y + live.Y + py}
+	// Its region in the hand takes it along (scene 3).
+	ro := ui.Point{}
+	if a.all() && d.lan != "" {
+		ro = a.regionOff[d.lan]
+	}
+	col.Translate(px+ro.X, py+ro.Y)
+	d.live = ui.Point{X: d.base.X + live.X + px + ro.X, Y: d.base.Y + live.Y + py + ro.Y}
+	// Dimmed with its region while another LAN has the focus.
+	faded := float32(0)
+	if a.all() && a.focus != "" && d.lan != a.focus && d.id != a.self {
+		faded = 1
+	}
+	d.faded = col.AnimateTo("faded", faded, ui.Smooth)
+	if d.faded > 0 {
+		col.Opacity(1 - 0.65*d.faded)
+	}
 	// Its link is cut while I refuse its owner on this computer.
 	cut := float32(0)
 	if a.cutOff(d) {
@@ -506,7 +577,12 @@ func (a *app) deviceView(c *ui.Context, p *palette, d *device, w, h float32) {
 	}
 	d.cut = col.AnimateTo("cut", cut, ui.Animation{Duration: 320 * time.Millisecond})
 	if col.Clicked() {
-		a.selected, a.more = d.id, false
+		if d.pending && !d.mine {
+			// Waiting for me: a click lets it in (DESIGN §6.7).
+			a.approve(c, d, true)
+		} else {
+			a.selected, a.more = d.id, false
+		}
 	}
 	col.Cursor(ui.CursorGrab)
 	if d.dragging {
@@ -518,7 +594,9 @@ func (a *app) deviceView(c *ui.Context, p *palette, d *device, w, h float32) {
 	// Its link fades as it is held over the tray: let go, and it is cut
 	// (§9, scene 5).
 	dim := float32(0)
-	if armed || landing {
+	if armed || landing || a.all() && d.dragging && d.removable() && a.regionAt(d.live) == "" {
+		// In the "全部" view, out of every region: letting go takes it out
+		// of its LAN.
 		dim = 1
 	}
 	d.dim = col.AnimateTo("dim", dim, ui.Animation{Duration: 160 * time.Millisecond})
@@ -540,6 +618,13 @@ func (a *app) deviceView(c *ui.Context, p *palette, d *device, w, h float32) {
 	case col.Hovered():
 		pose = ui.Pose{Y: -2}
 	}
+	if !d.approved.IsZero() && c.Now().Sub(d.approved) < 90*time.Millisecond {
+		// Let in: it dips, and springs up full (DESIGN §6.7).
+		pose, tileAnim = ui.Pose{Scale: 0.9}, ui.Animation{Duration: 90 * time.Millisecond}
+		c.After(90*time.Millisecond - c.Now().Sub(d.approved))
+	} else if !d.approved.IsZero() && c.Now().Sub(d.approved) < 700*time.Millisecond {
+		tileAnim = ui.Bouncy
+	}
 	col.Children(func() {
 		if !d.popped.IsZero() && c.Now().Sub(d.popped) < 700*time.Millisecond && !pop {
 			// It springs up as it pops in (DESIGN §6.1: joining lands Bouncy).
@@ -547,23 +632,64 @@ func (a *app) deviceView(c *ui.Context, p *palette, d *device, w, h float32) {
 		}
 		// Offline, it greys over 300 ms rather than at once.
 		gone := float32(0)
-		if d.path == "offline" {
+		if d.path == "offline" || d.path == "paused" || d.path == "nonet" {
+			// Paused, it greys as well (scene 3).
 			gone = 1
 		}
 		off := col.AnimateTo("offline", gone, ui.Animation{Duration: 300 * time.Millisecond})
-		tile := deviceTileOff(c, p, d.kind, a.people[d.owner].color, tileSize, a.selected == d.id, off)
+		waits := float32(0)
+		if d.pending || d.turnedDown {
+			waits = 1
+		}
+		wait := col.AnimateTo("pending", waits, ui.Animation{Duration: 220 * time.Millisecond})
+		owner := a.people[d.owner].color
+		tile := ui.Box(c).Size(tileSize, tileSize)
 		tile.AnimatePose(pose, tileAnim)
+		tile.Children(func() {
+			solid := deviceTileOff(c, p, d.kind, owner, tileSize, a.selected == d.id, off)
+			if wait > 0 {
+				solid.Opacity(1 - wait)
+				pendingTile(c, p, d.kind, owner, tileSize).Absolute().Left(0).Top(0).Opacity(wait).PassThrough()
+			}
+			a.tileBadges(c, p, d, col.Hovered())
+		})
 		name := ui.Column(c).AlignItems(ui.Center).Gap(1)
-		if first || landing || armed || pop || going {
+		if a.all() && d.id == a.self {
+			// Over its tile in the "全部" view, clear of the links that go
+			// down to the regions under it (scene 3).
+			name.Absolute().Left(0).Right(0).Bottom(tileSize + 10)
+		}
+		if first || landing || armed || pop || going || a.selfOverRegion(d) {
+			// (This computer held over a region in the "全部" view: its name
+			// goes, rather than sit on the region's names.)
 			name.AnimatePose(ui.Pose{Fade: 1}, ui.Animation{Duration: 120 * time.Millisecond})
 		} else {
 			name.AnimatePose(ui.Pose{}, ui.Animation{Duration: 220 * time.Millisecond, Delay: 60 * time.Millisecond})
 		}
 		name.Children(func() {
 			// A long name ends in "…" within the device's footprint, so that
-			// it never runs under the next device's.
-			ui.Text(c, d.name).FontSize(13).FontWeight(500).SingleLine().MaxWidth(nameWidth)
-			ui.Text(c, a.status(d)).FontSize(12).TextColor(p.ink2).SingleLine().MaxWidth(nameWidth)
+			// it never runs under the next device's. A second of its name
+			// shows a small grey 2 after it (DESIGN §6.8).
+			if d.twin > 1 {
+				ui.Row(c).AlignItems(ui.Baseline).Gap(3).MaxWidth(nameWidth).Children(func() {
+					ui.Text(c, d.name).FontSize(13).FontWeight(500).SingleLine().Shrink(1)
+					ui.Text(c, strconv.Itoa(d.twin)).FontSize(11).FontWeight(500).TextColor(p.ink3).FontFeatures("tnum")
+				})
+			} else {
+				ui.Text(c, d.name).FontSize(13).FontWeight(500).SingleLine().MaxWidth(nameWidth)
+			}
+			status, ink := a.status(d), p.ink2
+			if hint := a.dropHint(d, live); hint != "" {
+				// In the hand in the "全部" view, its second line says what
+				// letting go does (scene 3).
+				status, ink = hint, p.primary
+			}
+			st := ui.Text(c, status).FontSize(12).TextColor(ink).SingleLine().MaxWidth(nameWidth)
+			if !d.using.IsZero() && linked(d.path) {
+				// The count goes up every second, its digits of one width.
+				st.FontFeatures("tnum")
+				c.After(time.Second - a.now().Sub(d.using)%time.Second)
+			}
 		})
 	})
 }
@@ -601,7 +727,11 @@ func deviceTileOff(c *ui.Context, p *palette, kind string, col ui.Color, size fl
 		if off > 0 {
 			glyph = white.Alpha(1 - 0.45*off)
 		}
-		ui.Icon(c, deviceGlyphs[kind]).Size(size/2, size/2).TextColor(glyph)
+		// Told to be another kind, the new shape fades in over the old one
+		// as it fades out (DESIGN §6.9).
+		g := ui.Box(c.Key("glyph-" + kind)).Absolute().Left(0).Top(0).Right(0).Bottom(0).Center().PassThrough()
+		g.Transition(ui.ElementTransition{Duration: 200 * time.Millisecond, Enter: &ui.Motion{}, Exit: &ui.Motion{}})
+		g.Children(func() { ui.Icon(c, deviceGlyphs[kind]).Size(size/2, size/2).TextColor(glyph) })
 	})
 	return t
 }
@@ -614,6 +744,9 @@ func (a *app) relayView(c *ui.Context, p *palette, w, h float32) {
 	if _, _, ok := el.DragEnded(); ok {
 		spot := a.freeSpot(r.at(), r, a.relayFootprint, w, h)
 		r.off = ui.Point{X: spot.X - r.base.X, Y: spot.Y - r.base.Y}
+		// Put there by hand: it comes back there, whatever its tracks cross.
+		r.byHand = true
+		a.places.set(a.lan, relayHandKey, ui.Point{X: 1, Y: 1})
 	}
 	live := el.DragOffset()
 	r.dragging = el.Dragging()
@@ -695,6 +828,9 @@ const relayFade = 280 * time.Millisecond
 // going (DESIGN scene 1: 中转站缩小淡出). One that a link comes back to
 // pops in.
 func (a *app) relayShows(c *ui.Context) bool {
+	if a.all() {
+		return false
+	}
 	r, now := a.relay, c.Now()
 	if a.relayLinked() {
 		if !r.shown {
@@ -745,7 +881,7 @@ func (a *app) relayFading() time.Time {
 // on its way off the canvas, or into the tray, takes the relay along.
 func (a *app) relayLinked() bool {
 	for _, d := range a.devices {
-		if d.path == "relay" && d.gone.IsZero() && a.landing != d && !d.unplaced {
+		if d.path == "relay" && d.gone.IsZero() && a.landing != d && !d.unplaced && !d.pending {
 			return true
 		}
 	}
@@ -820,4 +956,62 @@ func (a *app) relayLabelSide() string {
 		return cur
 	}
 	return best
+}
+
+// pendingTile is a device that waits to be let into the LAN: its tile's
+// shape in a dashed line of its owner's color, its glyph faint, nothing
+// filled (DESIGN §6.7).
+func pendingTile(c *ui.Context, p *palette, kind string, owner ui.Color, size float32) ui.Element {
+	radius := size * 0.3
+	t := ui.Box(c).Size(size, size).Center()
+	t.Draw(func(pt *ui.Painter, r ui.Rect) {
+		var path ui.Path
+		roundRect(&path, r.X+0.75, r.Y+0.75, r.W-1.5, r.H-1.5, radius)
+		// Filled with the canvas first, so that it covers the end of a
+		// track as a tile does: one drawn back in as it waits again.
+		pt.FillPath(&path, p.bg)
+		pt.FillPath(&path, owner.Alpha(0.06))
+		path.Dash(0, 5, 4)
+		pt.StrokePath(&path, 1.5, owner.Alpha(0.75))
+	})
+	t.Children(func() {
+		ui.Icon(c, deviceGlyphs[kind]).Size(size/2, size/2).TextColor(owner.Alpha(0.55))
+	})
+	return t
+}
+
+// roundRect adds a rectangle with round corners to path.
+func roundRect(path *ui.Path, x, y, w, h, r float32) {
+	const k = 0.5523 // a cubic's reach to draw a quarter circle
+	path.MoveTo(x+r, y).LineTo(x+w-r, y).
+		CubeTo(x+w-r+r*k, y, x+w, y+r-r*k, x+w, y+r).LineTo(x+w, y+h-r).
+		CubeTo(x+w, y+h-r+r*k, x+w-r+r*k, y+h, x+w-r, y+h).LineTo(x+r, y+h).
+		CubeTo(x+r-r*k, y+h, x, y+h-r+r*k, x, y+h-r).LineTo(x, y+r).
+		CubeTo(x, y+r-r*k, x+r-r*k, y, x+r, y).Close()
+}
+
+// tileBadges are the small round buttons at a tile's top right: the
+// amber dot of a login of mine that asks to be renewed, which renews it,
+// and the "×" of a device that waits, shown as the pointer is on it, which
+// turns it away, or takes mine back (DESIGN §6.7, §6.8).
+func (a *app) tileBadges(c *ui.Context, p *palette, d *device, hovered bool) {
+	if d.mine && d.login.Due(a.now()) && !d.pending && a.snap.Can(model.FeatureRenew) {
+		dot := ui.ButtonBase(c.Key("renew")).Absolute().Right(-3).Top(-3).Size(14, 14).Radius(999).
+			Background(ui.Hex("#F59E0B")).Border(2, p.bg).FocusRing(false)
+		dot.Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: &ui.Motion{Scale: 0.4}, Exit: &ui.Motion{Scale: 0.4}})
+		dot.AnimatePose(pressPose(dot, 0.85), ui.Snappy)
+		if dot.Clicked() {
+			a.renew(c, d)
+		}
+	}
+	if d.pending && hovered {
+		x := ui.ButtonBase(c.Key("turn-away")).Absolute().Right(-7).Top(-7).Size(20, 20).Radius(999).Center().
+			Background(p.bg).Border(1, p.line).Shadow(0, 2, 6, 0, ui.RGBA(9, 9, 11, 0.12)).FocusRing(false)
+		x.Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: &ui.Motion{Scale: 0.6}, Exit: &ui.Motion{Scale: 0.6}})
+		x.AnimatePose(pressPose(x, 0.88), ui.Snappy)
+		x.Children(func() { ui.Icon(c, uiGlyphs["close"]).Size(12, 12).TextColor(p.ink2) })
+		if x.Clicked() {
+			a.approve(c, d, false)
+		}
+	}
 }

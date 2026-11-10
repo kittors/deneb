@@ -1,0 +1,194 @@
+/* A LAN on a phone (DESIGN §14.6), as design/demos/web/web.css has it. */
+/* The LAN on a phone: a list, by person; a card rises from the bottom. */
+.m-lan {
+  position: fixed;
+  inset: 0;
+  overflow: auto;
+  background: var(--well);
+  padding-top: env(safe-area-inset-top);
+}
+.m-head {
+  display: flex;
+  align-items: center;
+  padding: 14px 20px 0;
+}
+.m-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 22px;
+  font-weight: 600;
+}
+.m-title svg {
+  color: var(--ink-3);
+  transform: rotate(90deg);
+}
+.m-head .stack {
+  margin-left: auto;
+}
+.m-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 20px 0;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.m-list {
+  position: absolute;
+  inset: 76px 0 0 0;
+  padding: 6px 16px 120px;
+}
+.m-gh {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 4px 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.m-gh .ball {
+  width: 22px;
+  height: 22px;
+  font-size: 10px;
+}
+.m-card {
+  border-radius: 20px;
+  background: var(--bg);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.m-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 66px;
+  padding: 0 16px;
+  cursor: pointer;
+  transition: background 0.16s ease-out;
+}
+.m-row + .m-row::before {
+  content: '';
+  position: absolute;
+  left: 70px;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: var(--line);
+}
+.m-row:active {
+  background: var(--well);
+}
+.m-row .tile-m {
+  position: relative;
+  flex: none;
+  width: 40px;
+  height: 40px;
+}
+.m-row .tile-m .tile {
+  border-radius: 12px;
+}
+.m-row .tile-m .tile::before {
+  left: 6px;
+  top: 3px;
+  width: 20px;
+  height: 9px;
+}
+.m-row b {
+  display: block;
+  font-size: 15px;
+  font-weight: 500;
+}
+.m-row small {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.m-row.pending .tile {
+  background: none;
+  box-shadow: none;
+}
+.m-row.pending .tile::before {
+  display: none;
+}
+.m-row.pending .tile svg {
+  fill: color-mix(in srgb, var(--c) 55%, transparent);
+  filter: none;
+}
+.m-row.pending .tile svg.dash {
+  position: absolute;
+  inset: 0;
+  fill: none;
+  color: var(--c);
+}
+.m-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(9, 9, 11, 0.24);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 40;
+}
+.m-scrim.on {
+  pointer-events: auto;
+}
+.m-lan .sheet.m-sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: auto;
+  bottom: 0;
+  width: auto;
+  max-height: none;
+  border-radius: 20px 20px 0 0;
+  padding-bottom: 34px;
+  z-index: 50;
+}
+
+.m-lan .m-title {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--ink);
+  font: inherit;
+  font-size: 22px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.m-lan .m-list {
+  position: static;
+  padding: 6px 16px 130px;
+}
+.m-lan .m-row .tile svg:not(.dash) {
+  position: relative;
+}
+.m-lan .m-row em {
+  margin-left: auto;
+  font-style: normal;
+  font-size: 13px;
+  color: var(--ink-3);
+}
+.m-lan .m-dock {
+  position: fixed;
+}
+.m-lan .sheet.m-sheet {
+  position: fixed;
+}
+.m-lan .m-scrim {
+  position: fixed;
+}
+.m-lan-row {
+  width: 100%;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+.m-lan-row svg {
+  margin-left: auto;
+  color: var(--primary);
+}

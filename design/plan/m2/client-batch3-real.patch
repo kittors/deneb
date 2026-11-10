@@ -1,0 +1,1026 @@
+diff -ruN -x .mygo -x *.png -x *.orig cmd/deneb/main.go cmd/deneb/main.go
+--- cmd/deneb/main.go	2026-11-08 16:38:27
++++ cmd/deneb/main.go	2026-11-08 15:16:20
+@@ -2,12 +2,10 @@
+ 
+ import (
+ 	"context"
+-	"embed"
+ 	"log"
+ 	"os"
+ 	"path/filepath"
+ 	"slices"
+-	"sync/atomic"
+ 	"time"
+ 
+ 	"github.com/egoist/mygo"
+@@ -33,6 +31,8 @@
+ 	// with.
+ 	mygo.App.OnOpenURL(func(u string) { a.post(func(c *ui.Context) { a.openLink(c, u) }) })
+ 	mygo.App.WhenReady(func() {
++		// The menu bar's mark first: the window's frames keep it up to date.
++		bar := newMenuBar(a)
+ 		w := mygo.NewWindow(mygo.WindowOptions{
+ 			Title:     "Deneb",
+ 			Width:     1180,
+@@ -46,81 +46,21 @@
+ 			// one kept the starter template's 480×360 window.
+ 			StateKey: "lan-window",
+ 			// MyGo draws this window itself; no web page sits behind it.
+-			Content: ui.View(a.view),
++			Content: ui.View(bar.view(a.view)),
+ 		})
+-		panel := menuBar(a, w)
++		bar.attach(w)
+ 		// A new snapshot, or work done off the main thread, asks the window
+-		// and the menu bar's panel for a frame built anew, which takes it in.
++		// and the menu bar's panel for a frame built anew, which takes it
++		// in, and the mark for the world they show.
+ 		a.setWake(func() {
+-			w.Update(func() {})
+-			if panel != nil && panel.IsVisible() {
+-				panel.Update(func() {})
+-			}
++			w.Update(bar.followStore)
++			bar.update()
+ 		})
+ 	})
+ 	if err := mygo.App.Run(); err != nil {
+ 		log.Fatal(err)
+ 	}
+ }
+-
+-// menuBar puts Deneb's mark in the menu bar, and under it the panel a click
+-// opens (DESIGN §7.1). The mark follows the world: a dot while something
+-// waits for me, an outline while nothing connects here. It returns the
+-// panel, or nil where the system has no menu bar to put it in.
+-func menuBar(a *app, w *mygo.Window) *mygo.Window {
+-	tray, err := mygo.NewTray(mygo.TrayOptions{ID: "deneb", Icon: trayIcons["solid"], IconIsTemplate: true, ToolTip: "Deneb"})
+-	if err != nil {
+-		log.Printf("deneb: no menu bar mark: %v", err)
+-		return nil
+-	}
+-	panel := mygo.NewFlyout(mygo.FlyoutOptions{
+-		Tray: tray, Placement: mygo.PlacementBottom, Gap: 6,
+-		Width: panelWidth, Height: 360, Focusable: true, Shadow: true, CornerRadius: 20, Hidden: true,
+-		Content: ui.View(a.panel),
+-	})
+-	open := func() {
+-		if panel.IsVisible() {
+-			panel.Hide()
+-			return
+-		}
+-		panel.Show()
+-	}
+-	tray.OnClick(open)
+-	tray.OnRightClick(open)
+-	// Closed by a click elsewhere, or Escape: what it held goes now.
+-	panel.OnClose(func(*mygo.CloseEvent) { a.post(func(c *ui.Context) { a.flushPanel(c) }) })
+-	a.showMain = func() {
+-		panel.Hide()
+-		w.Show()
+-		w.Focus()
+-	}
+-	a.resizePanel = func(h int) { panel.SetSize(panelWidth, h) }
+-	var was atomic.Value
+-	mark := func(s *model.Snapshot) {
+-		if st := trayState(s, time.Now()); was.Swap(st) != st {
+-			tray.SetIcon(trayIcons[st], true)
+-		}
+-	}
+-	mark(a.store.Snapshot())
+-	a.store.Subscribe(mark)
+-	return panel
+-}
+-
+-// trayIcons are the menu bar's marks, drawn by TestTrayIcons.
+-var trayIcons = func() map[string][]byte {
+-	out := map[string][]byte{}
+-	for _, st := range []string{"solid", "dot", "hollow"} {
+-		b, err := trayIconFiles.ReadFile("trayicons/" + st + ".png")
+-		if err != nil {
+-			panic(err)
+-		}
+-		out[st] = b
+-	}
+-	return out
+-}()
+-
+-//go:embed trayicons/*.png
+-var trayIconFiles embed.FS
+ 
+ // pickStore chooses where the world comes from, and the outside events
+ // ⌥⌘1 to ⌥⌘5 play where there is a world to play them in:
+diff -ruN -x .mygo -x *.png -x *.orig cmd/deneb/menubar.go cmd/deneb/menubar.go
+--- cmd/deneb/menubar.go	2026-11-08 16:38:27
++++ cmd/deneb/menubar.go	2026-11-08 15:27:51
+@@ -25,11 +25,12 @@
+ )
+ 
+ // trayState is the menu bar's mark for s: "hollow" while nothing connects
+-// here (the engine does not answer, or every LAN is paused), "dot" while
+-// something waits for me, "solid" otherwise.
++// here (the engine does not answer, no one logged in on this computer yet,
++// or every LAN is paused), "dot" while something waits for me, "solid"
++// otherwise.
+ func trayState(s *model.Snapshot, now time.Time) string {
+ 	switch {
+-	case !s.Engine || allPaused(s):
++	case !s.Engine || !s.LoggedIn || allPaused(s):
+ 		return "hollow"
+ 	case len(choresOf(s, now)) > 0:
+ 		return "dot"
+@@ -131,31 +132,57 @@
+ }
+ 
+ // panelBody is the panel: this computer and how it is, what waits for me,
+-// my LANs with their switches, and the way into the window.
++// my LANs with their switches, and the way into the window. It is as tall
++// as what it holds, up to panelMaxHeight: beyond it the middle scrolls,
++// this computer and the way into the window staying in sight.
+ func (a *app) panelBody(c *ui.Context, p *palette) ui.Element {
+ 	now := c.Now()
+ 	a.expireDone(c, now)
+ 	s := a.snap
+-	body := ui.Column(c.Key("panel")).Width(panelWidth).Radius(20).Background(p.bg).Clip().Padding(16, 12, 12, 12)
+-	if p.dark {
++	body := ui.Column(c.Key("panel")).Width(panelWidth).MaxHeight(panelMaxHeight).Radius(20).Background(p.bg).Clip().Padding(16, 12, 12, 12)
++	if p.dark && !a.systemPanel {
++		// The system outlines its own panel with a hairline.
+ 		body.Border(1, p.line)
+ 	}
++	note := a.panelNote.text != "" && now.Before(a.panelNote.until)
++	if note {
++		c.After(a.panelNote.until.Sub(now))
++	}
+ 	body.Children(func() {
+ 		a.panelHead(c, p)
+-		a.fold(c, "chores-section", s.Engine && (len(choresOf(s, now)) > 0 || len(a.panelDone) > 0), func() {
+-			a.panelChores(c, p, now)
++		a.fold(c, "note-section", note, func() { a.panelNoteRow(c, p) })
++		ui.Scroll(c.Key("panel-scroll")).Shrink(1).Children(func() {
++			a.fold(c, "chores-section", s.Engine && (len(choresOf(s, now)) > 0 || len(a.panelDone) > 0), func() {
++				a.panelChores(c, p, now)
++			})
++			a.fold(c, "lans-section", s.Engine && len(s.LANs) > 0, func() {
++				ui.Text(c, "局域网").FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(14, 8, 6, 8)
++				for _, l := range s.LANs {
++					a.panelLAN(c, p, l)
++				}
++			})
+ 		})
+-		a.fold(c, "lans-section", s.Engine && len(s.LANs) > 0, func() {
+-			ui.Text(c, "局域网").FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(14, 8, 6, 8)
+-			for _, l := range s.LANs {
+-				a.panelLAN(c, p, l)
+-			}
+-		})
+ 		a.panelOpen(c, p)
+ 	})
+ 	return body
+ }
+ 
++// panelNote is why something done from the panel did not go through, said
++// in the panel until a moment is over, as the window's toast says it: the
++// window may be out of sight.
++type panelNote struct {
++	text  string
++	until time.Time
++}
++
++// panelNoteRow says the panel's note, under this computer.
++func (a *app) panelNoteRow(c *ui.Context, p *palette) {
++	ui.Box(c).Height(10)
++	ui.Row(c).Radius(14).Background(p.well).Padding(10, 12).Children(func() {
++		ui.Text(c, a.panelNote.text).FontSize(12).TextColor(p.ink2).Grow(1).Shrink(1)
++	})
++}
++
+ // fold is a group of the panel that opens out as it comes and folds away
+ // as it goes, by its height, the rest of the panel following in step and in
+ // place (DESIGN §6.6: nothing jumps). It is built while it shows, or folds.
+@@ -219,6 +246,10 @@
+ 	switch {
+ 	case !s.Engine:
+ 		return p.ink3, "Deneb 没在运行"
++	case !s.LoggedIn:
++		return p.ink3, "还没登录"
++	case !s.Loaded:
++		return p.ink3, "正在连接…"
+ 	case len(lans) == 0:
+ 		return p.ink3, "还没有局域网"
+ 	case allPaused(s):
+@@ -497,13 +528,21 @@
+ 	a.drain(c)
+ 	a.sync(nil)
+ 	p := colors(c)
+-	ui.Column(c).Fill().AlignItems(ui.Start).Children(func() {
+-		body := a.panelBody(c, p)
+-		if b := body.Bounds(); b.H > 0 && a.resizePanel != nil {
+-			if h := int(min(b.H, panelMaxHeight) + 0.5); h != a.panelHeight {
+-				a.panelHeight = h
+-				a.resizePanel(h)
+-			}
++	// The panel draws all of the flyout: nothing around it, where the
++	// window runs a frame behind the panel's height.
++	c.Root().Background(ui.Transparent)
++	// Out of the window's flow, the panel is as tall as what it holds,
++	// whatever the window's height is now, and the window follows it.
++	ui.Column(c.Key("panel-at")).Absolute().Left(0).Top(0).Children(func() {
++		b := a.panelBody(c, p).Bounds()
++		if b.H <= 0 {
++			// Not laid out yet: the next frame measures it.
++			c.After(0)
++			return
++		}
++		if h := int(min(b.H, panelMaxHeight) + 0.5); h != a.panelHeight && a.resizePanel != nil {
++			a.panelHeight = h
++			a.resizePanel(h)
+ 		}
+ 	})
+ }
+diff -ruN -x .mygo -x *.png -x *.orig cmd/deneb/menubar_test.go cmd/deneb/menubar_test.go
+--- cmd/deneb/menubar_test.go	2026-11-08 16:38:27
++++ cmd/deneb/menubar_test.go	2026-11-08 15:30:41
+@@ -1,18 +1,27 @@
+ package main
+ 
+ import (
++	"context"
++	"encoding/json"
+ 	"fmt"
+ 	"image/jpeg"
+ 	"image/png"
+ 	"os"
+ 	"path/filepath"
++	"slices"
+ 	"strings"
++	"sync"
+ 	"sync/atomic"
+ 	"testing"
+ 	"time"
+ 
+ 	"github.com/egoist/mygo/ui"
+ 	"github.com/kittors/deneb/client"
++	"github.com/kittors/deneb/client/model"
++	"github.com/kittors/deneb/engine/localapi/apitype"
++	"github.com/kittors/deneb/engine/localapi/fake"
++	"github.com/kittors/deneb/engine/localapi/localclient"
++	"github.com/kittors/deneb/proto"
+ )
+ 
+ // menubarScreen is the menu bar's panel as the recordings show it: a strip
+@@ -84,6 +93,7 @@
+ 		m.a.flushPanel(c)
+ 	}
+ 	m.open = !m.open
++	m.a.panelShown = m.open
+ }
+ 
+ // The panel lists what waits for me, and its mark tells it: a dot while
+@@ -337,5 +347,352 @@
+ 			}
+ 			sc.play(r)
+ 		}
++	}
++}
++
++// What the panel says while there is little to say: this computer's Deneb
++// not running, no one logged in on it yet, the world on its way. Only the
++// way into the window is left; the mark is an outline while nothing can
++// connect here.
++func TestPanelBeforeTheWorld(t *testing.T) {
++	sample := client.NewDemo().Snapshot()
++	for _, tc := range []struct {
++		name, line, mark string
++		snap             model.Snapshot
++	}{
++		{"engine", "Deneb 没在运行", "hollow", func() model.Snapshot { s := *sample; s.Engine = false; return s }()},
++		{"logged out", "还没登录", "hollow", model.Snapshot{Engine: true}},
++		{"loading", "正在连接…", "solid", model.Snapshot{Engine: true, LoggedIn: true}},
++	} {
++		a := newApp(&fixedStore{&tc.snap}, demoPlaces())
++		tt := ui.NewTester(a.panel, panelWidth, panelMaxHeight)
++		tt.Frame()
++		tt.Advance(400 * time.Millisecond)
++		tt.Frame()
++		if !tt.HasText(tc.line) || !tt.HasText("打开 Deneb") || tt.HasText("局域网") || tt.HasText("要你处理") {
++			t.Errorf("%s: the panel shows %q", tc.name, tt.Texts())
++		}
++		if st := trayState(&tc.snap, time.Now()); st != tc.mark {
++			t.Errorf("%s: the mark is %q, want %q", tc.name, st, tc.mark)
++		}
++	}
++}
++
++// Many LANs and chores: the panel stops at its height, and its middle
++// scrolls, this computer and the way into the window staying in sight.
++func TestPanelScrolls(t *testing.T) {
++	a, d := newDemoApp()
++	d.Manual()
++	for _, ev := range []string{"pending-device", "pending-member", "login-due", "invitation"} {
++		d.Simulate(ev)
++	}
++	for i := 1; i <= 6; i++ {
++		if _, err := d.Do(context.Background(), model.Op{Kind: model.OpLANCreate, Name: fmt.Sprintf("新局域网 %d", i)}); err != nil {
++			t.Fatal(err)
++		}
++	}
++	tt := ui.NewTester(a.panel, panelWidth, 900)
++	tt.Frame()
++	tt.Advance(400 * time.Millisecond)
++	tt.Frame()
++	open, ok := tt.Find("打开 Deneb")
++	if !ok || open.Y+open.H > panelMaxHeight-8 {
++		t.Fatalf("打开 Deneb is at %v, out of the panel's %v: %q", open, panelMaxHeight, tt.Texts())
++	}
++	if a.panelHeight != 0 {
++		t.Errorf("without a flyout the panel asked for %d", a.panelHeight)
++	}
++	last, _ := tt.Find("新局域网 6")
++	if last.Y < panelMaxHeight {
++		t.Fatalf("the last LAN fits at %v: nothing to scroll", last)
++	}
++	tt.Wheel(panelWidth/2, 300, 0, 400)
++	tt.Frame()
++	tt.Advance(400 * time.Millisecond)
++	tt.Frame()
++	after, _ := tt.Find("新局域网 6")
++	if after.Y >= last.Y || after.Y+after.H > open.Y {
++		t.Errorf("scrolling took the last LAN from %v to %v, 打开 Deneb at %v", last, after, open)
++	}
++	if head, _ := tt.Find("都连上了"); head.Y > 40 {
++		t.Errorf("this computer scrolled away: %v", head)
++	}
++}
++
++// refusing is the demo, but for pausing, which this computer's Deneb turns
++// down, as one too old to pause does.
++type refusing struct{ *client.Demo }
++
++func (r refusing) Do(ctx context.Context, op model.Op) (model.Result, error) {
++	if op.Kind == model.OpLANPause {
++		return model.Result{}, &model.Error{Code: model.ErrInvalid, Message: "这台电脑上的 Deneb 还不能暂停，更新以后再试"}
++	}
++	return r.Demo.Do(ctx, op)
++}
++
++// Something done from the panel that does not go through: the panel says
++// why, in the store's words, for a moment, and the switch stays as it was.
++func TestPanelSaysProblems(t *testing.T) {
++	d := client.NewDemo()
++	d.Manual()
++	a := newApp(refusing{d}, demoPlaces())
++	m := &menubarScreen{a: a, open: true}
++	a.panelShown = true
++	tt := ui.NewTester(m.view, screenW, screenH)
++	tt.Frame()
++	tt.Advance(400 * time.Millisecond)
++	tt.Frame()
++	const why = "这台电脑上的 Deneb 还不能暂停，更新以后再试"
++	if err := tt.Click("暂停周末联机"); err != nil {
++		t.Fatal(err)
++	}
++	for i := 0; i < 30; i++ {
++		tt.Advance(time.Second / 60)
++		tt.Frame()
++	}
++	if !tt.HasText(why) {
++		t.Fatalf("the panel does not say why: %q", tt.Texts())
++	}
++	if b, _ := tt.Find(why); b.X+b.W > float32(screenW) {
++		t.Errorf("the note runs out of the panel: %v", b)
++	}
++	if a.snap.LAN("weekend").Paused {
++		t.Error("周末联机 shows paused")
++	}
++	for i := 0; i < 300; i++ {
++		tt.Advance(time.Second / 60)
++		tt.Frame()
++	}
++	if tt.HasText(why) {
++		t.Error("the note stays")
++	}
++}
++
++// The panel on this computer's store (DESIGN §7.1, on real data): an M2
++// world behind a fake engine, as TestLiveM2View has it. What waits for me
++// shows with its button, and the button's op reaches the server, held
++// until its row folds as in the window; the switch pauses the LAN on the
++// engine, as `deneb lan pause` does; 打开 Deneb brings the window. On an M1
++// server only what it does shows, and while the engine does not answer the
++// panel says so, as the demo does.
++func TestLivePanel(t *testing.T) {
++	dir, err := os.MkdirTemp("", "dnb")
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { os.RemoveAll(dir) })
++	path := filepath.Join(dir, "d.sock")
++	e := fake.New()
++	weekend := apitype.ScopeID(proto.LANScope("weekend"))
++	e.Update(func(s *apitype.State) {
++		s.LoggedIn, s.User, s.SelfDeviceID, s.ControlConnected = true, "me", "mac", true
++		s.Scopes, s.Peers, s.Paths = []apitype.Scope{{ID: weekend, Name: "周末联机"}}, nil, nil
++	})
++	now := time.Now()
++	view := proto.UserView{Version: 3, Me: "me", Features: proto.M2Features,
++		People: []proto.Person{{ID: "me", Name: "kittors"}, {ID: "jie", Name: "jie", DisplayName: "阿杰"}, {ID: "lin", Name: "lin", DisplayName: "小林"}},
++		LANs: []proto.LANView{{ID: "weekend", Name: "周末联机", Owner: "me", ApproveDevices: true, ApproveMembers: true,
++			Members: []proto.Member{{Person: "me", State: proto.MemberJoined}, {Person: "jie", State: proto.MemberJoined}, {Person: "lin", State: proto.MemberPending}},
++			Devices: []proto.LANDevice{{Device: "mac"}, {Device: "jpi", Pending: true}}}},
++		Devices: []proto.DeviceView{
++			{ID: "mac", Owner: "me", Name: "mac", DisplayName: "kittors 的 MacBook", Login: proto.LoginInfo{ExpiresAt: now.Add(48 * time.Hour), RenewFrom: now.Add(-time.Hour)}},
++			{ID: "jpi", Owner: "jie", Name: "pi", DisplayName: "阿杰的树莓派"}},
++	}
++	var mu sync.Mutex
++	var ops []string
++	publish := func() {
++		raw, _ := json.Marshal(view)
++		e.SetUserView(raw, view.Version)
++	}
++	publish()
++	e.HandleOps(func(op apitype.OpRequest) (*apitype.OpResult, *apitype.Error) {
++		var args proto.OpArgs
++		json.Unmarshal(op.Args, &args)
++		mu.Lock()
++		defer mu.Unlock()
++		ops = append(ops, strings.Join(strings.Fields(op.Op+" "+string(args.LAN)+" "+string(args.Device)+" "+string(args.Person)), " "))
++		// The server takes it: the next view has it.
++		switch proto.OpType(op.Op) {
++		case proto.OpDeviceApprove:
++			view.LANs[0].Devices[1].Pending = false
++		case proto.OpMemberApprove:
++			view.LANs[0].Members[2].State = proto.MemberJoined
++		case proto.OpDeviceRenew:
++			view.Devices[0].Login = proto.LoginInfo{ExpiresAt: now.Add(90 * 24 * time.Hour), RenewFrom: now.Add(80 * 24 * time.Hour)}
++		}
++		view.Version++
++		publish()
++		return &apitype.OpResult{Version: view.Version}, nil
++	})
++	sent := func() []string { mu.Lock(); defer mu.Unlock(); return slices.Clone(ops) }
++	stop, err := e.Listen(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	l := client.NewLive(localclient.New(path))
++	l.Start()
++	t.Cleanup(l.Close)
++
++	a := newApp(l, &places{at: map[model.LANID]map[string]ui.Point{}})
++	var shown atomic.Int32
++	a.showMain = func() { shown.Add(1) }
++	m := &menubarScreen{a: a, open: true}
++	a.panelShown = true
++	tt := ui.NewTester(m.view, screenW, screenH)
++	until := func(what string, ok func() bool) {
++		t.Helper()
++		deadline := time.Now().Add(10 * time.Second)
++		for tt.Frame(); !ok(); tt.Frame() {
++			if time.Now().After(deadline) {
++				t.Fatalf("timed out waiting for %s; the panel shows %q, sent %q", what, tt.Texts(), sent())
++			}
++			time.Sleep(5 * time.Millisecond)
++			tt.Advance(16 * time.Millisecond)
++		}
++	}
++	settle := func() {
++		for i := 0; i < 30; i++ {
++			tt.Advance(time.Second / 60)
++			tt.Frame()
++		}
++	}
++	click := func(text string) {
++		t.Helper()
++		settle()
++		b, ok := tt.Find(text)
++		if !ok {
++			t.Fatalf("no %q: %q", text, tt.Texts())
++		}
++		tt.ClickAt(b.X+b.W/2, b.Y+b.H/2)
++		tt.Frame()
++	}
++	until("what waits for me", func() bool { return tt.HasText("阿杰的树莓派想加入周末联机") })
++	for _, want := range []string{"小林想加入周末联机", "kittors 的 MacBook 需要重新登录", "周末联机", "1 台都连上了", "打开 Deneb"} {
++		if !tt.HasText(want) {
++			t.Errorf("the panel does not show %q: %q", want, tt.Texts())
++		}
++	}
++	if st := trayState(a.snap, time.Now()); st != "dot" {
++		t.Errorf("with chores the mark is %q", st)
++	}
++
++	// 同意: said in the row at once, sent as it folds.
++	click("同意")
++	if !tt.HasText("已同意阿杰的树莓派") || len(sent()) > 0 {
++		t.Fatalf("the row says %q; sent %q before it folded", tt.Texts(), sent())
++	}
++	until("letting the Pi in", func() bool { return slices.Contains(sent(), "device.approve weekend jpi") })
++	until("the Pi in", func() bool { return a.store.Snapshot().LAN("weekend").Has("jpi") })
++
++	// 续上 goes at once.
++	click("续上")
++	until("renewing this Mac", func() bool { return slices.Contains(sent(), "device.renew mac") })
++	until("the login renewed", func() bool { return !tt.HasText("kittors 的 MacBook 需要重新登录") && !tt.HasText("已续上") })
++
++	// 同意 for 小林, and the panel put away before the row folds: it goes now.
++	click("同意")
++	if slices.Contains(sent(), "member.approve weekend lin") {
++		t.Fatal("letting 小林 in went before the row folded")
++	}
++	m.toggle(nil)
++	until("letting 小林 in", func() bool { return slices.Contains(sent(), "member.approve weekend lin") })
++	m.toggle(nil)
++	until("nothing waiting", func() bool { return !tt.HasText("要你处理") })
++	if st := trayState(a.snap, time.Now()); st != "solid" {
++		t.Errorf("with nothing waiting the mark is %q", st)
++	}
++
++	// The switch pauses 周末联机 on this computer's engine, and resumes it.
++	click("暂停周末联机")
++	until("周末联机 paused", func() bool { return tt.HasText("已暂停") && e.Snapshot().Scopes[0].Paused })
++	if st := trayState(a.snap, time.Now()); st != "hollow" {
++		t.Errorf("with every LAN paused the mark is %q", st)
++	}
++	click("暂停周末联机")
++	until("周末联机 back", func() bool { return !tt.HasText("已暂停") && !e.Snapshot().Scopes[0].Paused })
++
++	click("打开 Deneb")
++	if shown.Load() != 1 {
++		t.Errorf("打开 Deneb brought the window %d times", shown.Load())
++	}
++
++	// An M1 server: no letting in or renewing from the panel; the switch
++	// stays, the engine doing it.
++	mu.Lock()
++	view.Features = nil
++	view.LANs[0].Devices = append(view.LANs[0].Devices, proto.LANDevice{Device: "jpc", Pending: true})
++	view.Devices = append(view.Devices, proto.DeviceView{ID: "jpc", Owner: "jie", Name: "pc", DisplayName: "阿杰的台式机"})
++	view.Version++
++	publish()
++	mu.Unlock()
++	until("the M1 view", func() bool {
++		return len(a.store.Snapshot().Features) == 0 && a.store.Snapshot().LAN("weekend").HasPending("jpc")
++	})
++	tt.Advance(time.Second)
++	tt.Frame()
++	if tt.HasText("同意") || tt.HasText("要你处理") || !tt.HasText("周末联机") {
++		t.Errorf("on an M1 server the panel shows %q", tt.Texts())
++	}
++	if _, ok := tt.Find("暂停周末联机"); !ok {
++		t.Error("on an M1 server the switch is gone")
++	}
++
++	// The engine stops answering: the panel says so, the mark is an outline.
++	stop()
++	until("the engine gone", func() bool { return tt.HasText("Deneb 没在运行") && !tt.HasText("局域网") })
++	if st := trayState(a.snap, time.Now()); st != "hollow" {
++		t.Errorf("without the engine the mark is %q", st)
++	}
++	stop, err = e.Listen(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(stop)
++	until("the engine back", func() bool { return !tt.HasText("Deneb 没在运行") && tt.HasText("周末联机") })
++}
++
++// The flyout follows the panel's height, whatever its own is now: one too
++// short for chores that came while it was open grows to them, one too
++// tall shrinks, never past panelMaxHeight.
++func TestPanelAsksItsHeight(t *testing.T) {
++	a, d := newDemoApp()
++	d.Manual()
++	h := 200
++	var tt *ui.Tester
++	a.resizePanel = func(n int) { h = n; tt.SetSize(panelWidth, n) }
++	tt = ui.NewTester(a.panel, panelWidth, h)
++	settle := func() {
++		for i := 0; i < 40; i++ {
++			tt.Frame()
++			tt.Advance(time.Second / 60)
++		}
++	}
++	settle()
++	plain := h
++	if plain <= 200 || plain >= panelMaxHeight {
++		t.Fatalf("the sample's panel asked for %d", plain)
++	}
++	h = 500
++	tt.SetSize(panelWidth, h)
++	a.panelHeight = h
++	settle()
++	if h != plain {
++		t.Errorf("a flyout 500 tall shrank to %d, not %d", h, plain)
++	}
++	d.Simulate("pending-device")
++	d.Simulate("login-due")
++	settle()
++	if h <= plain+80 {
++		t.Errorf("with two chores the panel asked for %d, without %d", h, plain)
++	}
++	if open, ok := tt.Find("打开 Deneb"); !ok || open.Y+open.H > float32(h) {
++		t.Errorf("打开 Deneb at %v, in a flyout %d tall", open, h)
++	}
++	for i := 1; i <= 8; i++ {
++		d.Do(context.Background(), model.Op{Kind: model.OpLANCreate, Name: fmt.Sprintf("新局域网 %d", i)})
++	}
++	settle()
++	if h != panelMaxHeight {
++		t.Errorf("with many LANs the panel asked for %d", h)
+ 	}
+ }
+diff -ruN -x .mygo -x *.png -x *.orig cmd/deneb/model.go cmd/deneb/model.go
+--- cmd/deneb/model.go	2026-11-08 16:38:27
++++ cmd/deneb/model.go	2026-11-08 15:15:48
+@@ -287,13 +287,18 @@
+ 	edgeHit            string // the device of another's that reached its region's edge in this drag
+ 
+ 	// The menu bar's panel (DESIGN §7.1): the chores it just did, said in
+-	// their place for a moment; how tall it last asked to be; and what the
+-	// app gives it: the window brought to the front, the panel resized.
++	// their place for a moment; why something it did went wrong; how tall
++	// it last asked to be; and what the app gives it: the window brought to
++	// the front, the panel resized. panelShown is set while it shows, and
++	// systemPanel where the system's flyout draws its shadow and outline.
+ 	panelDone   map[string]*doneRow
++	panelNote   panelNote
+ 	panelHeight int
+ 	foldH       map[string]float32 // each folding group's height, as last laid out
+ 	showMain    func()
+ 	resizePanel func(height int)
++	panelShown  bool
++	systemPanel bool
+ 
+ 	naming *naming // a new LAN being named in the sidebar
+ 	// wantLAN is a LAN made or joined here that the snapshot does not have
+diff -ruN -x .mygo -x *.png -x *.orig cmd/deneb/sync.go cmd/deneb/sync.go
+--- cmd/deneb/sync.go	2026-11-08 14:01:59
++++ cmd/deneb/sync.go	2026-11-08 15:16:00
+@@ -714,9 +714,11 @@
+ 
+ // run does work off the main thread and hands its result to done on it; a
+ // store that answers at once (the demo's) is asked in place, so that what it
+-// answers shows in the same frame.
++// answers shows in the same frame. Without a frame to answer in (c nil: a
++// window going away sends what it held), the work goes off the main thread
++// all the same, and its answer to the next frame.
+ func run[T any](a *app, c *ui.Context, work func(context.Context) (T, error), done func(*ui.Context, T, error)) {
+-	if _, ok := a.store.(client.Immediate); ok {
++	if _, ok := a.store.(client.Immediate); ok && c != nil {
+ 		v, err := work(context.Background())
+ 		done(c, v, err)
+ 		return
+@@ -741,6 +743,10 @@
+ 		msg = "等了太久，没办成"
+ 	}
+ 	a.notify(c, nil, msg, nil)
++	if a.panelShown {
++		// The menu bar's panel says it too: the window may be out of sight.
++		a.panelNote = panelNote{text: msg, until: c.Now().Add(4 * time.Second)}
++	}
+ }
+ 
+ // post hands fn to the main thread, where the next frame runs it first.
+diff -ruN -x .mygo -x *.png -x *.orig cmd/deneb/systray.go cmd/deneb/systray.go
+--- cmd/deneb/systray.go	1970-01-01 07:30:00
++++ cmd/deneb/systray.go	2026-11-08 15:17:17
+@@ -0,0 +1,248 @@
++package main
++
++import (
++	"embed"
++	"log"
++	"sync/atomic"
++	"time"
++
++	"github.com/egoist/mygo"
++	"github.com/egoist/mygo/ui"
++	"github.com/kittors/deneb/client/model"
++)
++
++// The menu bar as the system has it (DESIGN §7.1): Deneb's mark, an item
++// of the macOS menu bar, and under it the panel a click opens, a flyout of
++// MyGo's drawing menubar.go's panel. The window closes to the menu bar:
++// Deneb stays there, as the engine stays (§2.4), and the panel's
++// "打开 Deneb", or the Dock icon, brings the window back.
++//
++// All of it runs on the main thread, as the views' frames do, but open,
++// which the window's wake reads from any goroutine, and the fades' timers.
++type menuBar struct {
++	a    *app
++	tray *mygo.Tray
++
++	open     atomic.Pointer[mygo.Window] // the panel while it shows, or fades away
++	closing  bool                        // the open panel fades away
++	fades    atomic.Int64                // the latest fade, which stops those before it
++	quitting bool
++
++	mark   string          // the mark shown: "solid", "dot" or "hollow"
++	seen   *model.Snapshot // the world the mark was last set for, and when
++	seenAt time.Time
++}
++
++// newMenuBar puts Deneb's mark in the menu bar, or returns nil where the
++// system has no menu bar to put it in.
++func newMenuBar(a *app) *menuBar {
++	tray, err := mygo.NewTray(mygo.TrayOptions{ID: "deneb", Icon: trayIcons["solid"], IconIsTemplate: true, ToolTip: "Deneb"})
++	if err != nil {
++		log.Printf("deneb: no menu bar mark: %v", err)
++		return nil
++	}
++	m := &menuBar{a: a, tray: tray, mark: "solid"}
++	a.systemPanel = true
++	// A click opens the panel or puts it away, and so does a right-click:
++	// M2 has no menu of its own there yet.
++	tray.OnClick(m.toggle)
++	tray.OnRightClick(m.toggle)
++	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) { m.quitting = true })
++	return m
++}
++
++// view is v, the mark following what v shows at the end of each frame:
++// ops on their way included, as letting someone in from the panel.
++func (m *menuBar) view(v func(*ui.Context)) func(*ui.Context) {
++	if m == nil {
++		return v
++	}
++	return func(c *ui.Context) {
++		v(c)
++		m.follow(m.a.snap, c.Now())
++	}
++}
++
++// attach lets w close to the menu bar, and gives the panel the way into it.
++func (m *menuBar) attach(w *mygo.Window) {
++	if m == nil {
++		return
++	}
++	a := m.a
++	w.OnClose(func(e *mygo.CloseEvent) {
++		if m.quitting {
++			return
++		}
++		e.PreventDefault()
++		w.Hide()
++		// What its toast held back goes now, as when the canvas changes:
++		// out of sight, the toast's moment would never be over.
++		if t := a.toast; t != nil && t.commit != nil {
++			t.commit(nil)
++		}
++		a.toast = nil
++	})
++	// The Dock icon brings the window back.
++	mygo.App.OnActivate(func(bool) {
++		if !w.IsVisible() {
++			w.Show()
++		}
++	})
++	a.showMain = func() {
++		m.close()
++		w.Show()
++		w.Focus()
++	}
++	a.resizePanel = func(h int) {
++		if p := m.open.Load(); p != nil {
++			p.SetSize(panelWidth, h)
++		}
++	}
++	// While no view draws, the mark follows the store, and the clock: a
++	// login comes due with no news.
++	go func() {
++		for range time.Tick(30 * time.Second) {
++			w.Update(m.followStore)
++		}
++	}()
++	m.followStore()
++}
++
++// followStore sets the mark for the store's world and the ops on their
++// way, as the views would show it.
++func (m *menuBar) followStore() {
++	if m == nil {
++		return
++	}
++	s := m.a.store.Snapshot()
++	for _, p := range m.a.pend {
++		s = s.With(p.op)
++	}
++	m.follow(s, time.Now())
++}
++
++// follow sets the mark for s.
++func (m *menuBar) follow(s *model.Snapshot, now time.Time) {
++	if s == m.seen && now.Sub(m.seenAt) < time.Second {
++		return
++	}
++	m.seen, m.seenAt = s, now
++	if st := trayState(s, now); st != m.mark {
++		m.mark = st
++		m.tray.SetIcon(trayIcons[st], true)
++	}
++}
++
++// update asks the open panel for a frame built anew.
++func (m *menuBar) update() {
++	if m == nil {
++		return
++	}
++	if p := m.open.Load(); p != nil {
++		p.Update(func() {})
++	}
++}
++
++// toggle opens the panel, or puts it away.
++func (m *menuBar) toggle() {
++	if m.open.Load() != nil && !m.closing {
++		m.close()
++		return
++	}
++	m.show()
++}
++
++// show opens the panel under the mark, fading in: a new flyout each time,
++// as MyGo has them, as tall as the panel last was.
++func (m *menuBar) show() {
++	a := m.a
++	if p := m.open.Load(); p != nil {
++		// It was fading away: it comes back.
++		m.closing = false
++		m.fade(p, p.Opacity(), 1, nil)
++		return
++	}
++	h := a.panelHeight
++	if h == 0 {
++		h = 360
++	}
++	p := mygo.NewFlyout(mygo.FlyoutOptions{
++		Tray: m.tray, Placement: mygo.PlacementBottom, Gap: 6,
++		Width: panelWidth, Height: h, Focusable: true, Shadow: true, CornerRadius: 20, Hidden: true,
++		Content: ui.View(m.view(a.panel)),
++	})
++	// A click elsewhere, or Escape, puts it away: it fades out first.
++	p.OnClose(func(e *mygo.CloseEvent) {
++		if !m.quitting && m.open.Load() == p {
++			e.PreventDefault()
++			m.close()
++		}
++	})
++	p.OnClosed(func() {
++		if m.open.CompareAndSwap(p, nil) {
++			m.closing, a.panelShown = false, false
++		}
++		// What its rows held goes now, whether or not a view draws.
++		a.flushPanel(nil)
++	})
++	m.open.Store(p)
++	m.closing, a.panelShown = false, true
++	if a.panelHeight != 0 && a.panelHeight != h {
++		// Its first frame found it taller or shorter than it was.
++		p.SetSize(panelWidth, a.panelHeight)
++	}
++	p.SetOpacity(0)
++	p.Show()
++	m.fade(p, 0, 1, nil)
++}
++
++// close puts the panel away, fading out.
++func (m *menuBar) close() {
++	p := m.open.Load()
++	if p == nil || m.closing {
++		return
++	}
++	m.closing = true
++	m.fade(p, p.Opacity(), 0, p.Destroy)
++}
++
++// fade takes the panel's opacity from one value to the other in 160 ms
++// (DESIGN §7.1), the whole of it, the system's shadow too, and then does
++// done on the main thread. A later fade stops it.
++func (m *menuBar) fade(p *mygo.Window, from, to float64, done func()) {
++	gen := m.fades.Add(1)
++	go func() {
++		const steps = 10
++		for i := 1; i <= steps; i++ {
++			time.Sleep(16 * time.Millisecond)
++			if m.fades.Load() != gen {
++				return
++			}
++			k := float64(i) / steps
++			p.SetOpacity(from + (to-from)*(1-(1-k)*(1-k)*(1-k)))
++		}
++		if done != nil {
++			p.Update(func() {
++				if m.fades.Load() == gen {
++					done()
++				}
++			})
++		}
++	}()
++}
++
++// trayIcons are the menu bar's marks, drawn by TestTrayIcons.
++var trayIcons = func() map[string][]byte {
++	out := map[string][]byte{}
++	for _, st := range []string{"solid", "dot", "hollow"} {
++		b, err := trayIconFiles.ReadFile("trayicons/" + st + ".png")
++		if err != nil {
++			panic(err)
++		}
++		out[st] = b
++	}
++	return out
++}()
++
++//go:embed trayicons/*.png
++var trayIconFiles embed.FS
+diff -ruN -x .mygo -x *.png -x *.orig cmd/deneb/trayicon_test.go cmd/deneb/trayicon_test.go
+--- cmd/deneb/trayicon_test.go	2026-11-08 16:38:27
++++ cmd/deneb/trayicon_test.go	2026-11-08 15:17:34
+@@ -12,14 +12,17 @@
+ )
+ 
+ // TestTrayIcons draws the menu bar's three icons into trayicons/, when
+-// DENEB_TRAY_ICONS is set: 16 points at twice the size, black on clear, for
+-// macOS to tint as a template (DESIGN §7.1).
++// DENEB_TRAY_ICONS is set: the 16-point mark in the middle of the 18 points
++// MyGo makes a menu bar icon, so that none of it is scaled, at twice the
++// size, black on clear, for macOS to tint as a template (DESIGN §7.1).
+ func TestTrayIcons(t *testing.T) {
+ 	if os.Getenv("DENEB_TRAY_ICONS") == "" {
+ 		t.Skip("set DENEB_TRAY_ICONS to draw the menu bar's icons")
+ 	}
+ 	for _, state := range []string{"solid", "dot", "hollow"} {
+-		tt := ui.NewTester(func(c *ui.Context) { trayGlyph(c, state, black) }, 16, 16)
++		tt := ui.NewTester(func(c *ui.Context) {
++			ui.Box(c).Fill().Center().Children(func() { trayGlyph(c, state, black) })
++		}, 18, 18)
+ 		tt.SetScale(2)
+ 		tt.Frame()
+ 		// The tester draws on white: the glyph's darkness is its cover.
+diff -ruN -x .mygo -x *.png -x *.orig cmd/deneb/view_test.go cmd/deneb/view_test.go
+--- cmd/deneb/view_test.go	2026-11-08 14:01:59
++++ cmd/deneb/view_test.go	2026-11-08 16:36:41
+@@ -79,8 +79,27 @@
+ 
+ const sidebarChanged = true
+ 
++// trayCentered are the frames that show the tray, or a toast over it, while
++// a card is open. Both sat left of the canvas's middle then, beside the
++// card, and sit in the middle now, card open or not (the user's report,
++// 2026-11-08: bottomRight in panels.go). These frames differ from the
++// baseline in the band at the bottom, from trayBandTop down, on purpose,
++// and are held to it above.
++var trayCentered = map[string]bool{}
++
++const trayBandTop = 500 // DIPs from the window's top
++
+ func init() {
+ 	for _, theme := range []string{"light", "dark"} {
++		for _, shot := range []string{"01_main", "02_hover", "03_card-switching", "04_card-others", "05_card-closing",
++			"06_card-closed", "10_drop-settling", "12_refuse-hint", "14_tray-offer", "15_tray-armed", "20_band-not-tray"} {
++			trayCentered[theme+"_"+shot+".png"] = true
++		}
++	}
++}
++
++func init() {
++	for _, theme := range []string{"light", "dark"} {
+ 		for _, shot := range []string{"16_tray-landing", "18_undo-returning", "23_tray-joining",
+ 			"07_card-opening", "08_card-open", "09_dragging", "11_drop-made-room", "13_refuse-rests",
+ 			"17_tray-landed", "19_undo-back", "21_band-rests-above", "22_tray-dragging", "24_tray-joined", "25_toast-gone"} {
+@@ -118,7 +137,11 @@
+ 				t.Fatal(err)
+ 			}
+ 			if baseline != "" && !changedOnPurpose[file] {
+-				if px, most := differ(t, filepath.Join(baseline, file), img); px > 128 || most > 1 {
++				bottom := 740
++				if trayCentered[file] {
++					bottom = trayBandTop
++				}
++				if px, most := differ(t, filepath.Join(baseline, file), img, bottom); px > 128 || most > 1 {
+ 					t.Errorf("%s: %d pixels differ from the baseline's, by up to %d of 255", file, px, most)
+ 				}
+ 			}
+@@ -236,8 +259,9 @@
+ }
+ 
+ // differ counts the pixels of img that differ from those of the PNG in
+-// file, and by how much at most in any channel.
+-func differ(t *testing.T, file string, img *image.RGBA) (px, most int) {
++// file, and by how much at most in any channel: above bottom (DIPs from
++// the window's top), the sidebar left out while it differs on purpose.
++func differ(t *testing.T, file string, img *image.RGBA, bottom int) (px, most int) {
+ 	t.Helper()
+ 	f, err := os.Open(file)
+ 	if err != nil {
+@@ -256,7 +280,7 @@
+ 	if sidebarChanged {
+ 		left += sidebarWidth * b.Dx() / 1180
+ 	}
+-	for y := b.Min.Y; y < b.Max.Y; y++ {
++	for y := b.Min.Y; y < b.Min.Y+bottom*b.Dy()/740; y++ {
+ 		for x := left; x < b.Max.X; x++ {
+ 			w := color.NRGBAModel.Convert(want.At(x, y)).(color.NRGBA)
+ 			g := color.NRGBAModel.Convert(img.At(x, y)).(color.NRGBA)

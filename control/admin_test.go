@@ -27,6 +27,17 @@ func adminServer(t *testing.T, dataDir string, seed Seed, lines *[]string, mu *s
 	}
 	ts.Config.Handler = s.Handler()
 	ts.Start()
+	t.Cleanup(func() {
+		ts.Close()
+		s.Close()
+	})
+	return s, ts, serveAdmin(t, s)
+}
+
+// serveAdmin serves s's admin socket until the test ends, and returns its
+// path. The socket goes before the server: cleanups run last first.
+func serveAdmin(t *testing.T, s *Server) string {
+	t.Helper()
 	// A short directory: a Unix socket's path has to fit in about 100
 	// bytes, and test directories are long.
 	sockDir, err := os.MkdirTemp("", "dca")
@@ -46,11 +57,9 @@ func adminServer(t *testing.T, dataDir string, seed Seed, lines *[]string, mu *s
 	t.Cleanup(func() {
 		cancel()
 		<-done
-		ts.Close()
-		s.Close()
 		os.RemoveAll(sockDir)
 	})
-	return s, ts, sock
+	return sock
 }
 
 func TestAdminApprove(t *testing.T) {
@@ -148,5 +157,57 @@ func TestAdminApproveSeedOnly(t *testing.T) {
 	}
 	if _, err := AdminApprove(sock, link, "kittors@deneb.test"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestAdminExpire moves a login's expiry for a test of "需要重新登录" and
+// "登录过期", and device.renew brings it back.
+func TestAdminExpire(t *testing.T) {
+	var mu sync.Mutex
+	var lines []string
+	s, ts, sock := adminServer(t, t.TempDir(), DevSeed(), &lines, &mu)
+	_ = s
+	mac := newEngine(t, ts.URL, "mac", proto.MacOS)
+	nas := newEngine(t, ts.URL, "nas", proto.Linux)
+	for _, e := range []*engine{mac, nas} {
+		link := startLogin(t, e)
+		if _, err := AdminApprove(sock, link, "kittors@deneb.test"); err != nil {
+			t.Fatal(err)
+		}
+		var st proto.LoginState
+		e.call("POST", proto.PathLogin, e.loginRequest(), &st)
+		e.id = st.Device
+	}
+	res, err := AdminExpire(sock, nas.id, "72h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.RenewFrom.Before(time.Now()) || time.Until(res.ExpiresAt) < 71*time.Hour {
+		t.Fatalf("after expire 72h: %+v", res)
+	}
+	if dv := deviceView(mac.view(), nas.id); dv == nil || dv.Login.Expired || !dv.Login.RenewFrom.Before(time.Now()) {
+		t.Fatalf("the Mac's view of the NAS: %+v", dv)
+	}
+	if _, err := AdminExpire(sock, nas.id, "-1m"); err != nil {
+		t.Fatal(err)
+	}
+	if dv := deviceView(mac.view(), nas.id); !dv.Login.Expired {
+		t.Fatalf("after expire -1m the NAS is not expired: %+v", dv.Login)
+	}
+	mac.must(proto.OpDeviceRenew, proto.OpArgs{Device: nas.id})
+	if dv := deviceView(mac.view(), nas.id); dv.Login.Expired || dv.Login.RenewFrom.Before(time.Now()) {
+		t.Fatalf("after renewing: %+v", dv.Login)
+	}
+	if _, err := AdminExpire(sock, "d_nope", "1h"); err == nil {
+		t.Fatal("an unknown device was moved")
+	}
+	if _, err := AdminExpire(sock, nas.id, "soon"); err == nil {
+		t.Fatal("a bad duration passed")
+	}
+	mu.Lock()
+	all := strings.Join(lines, "\n")
+	mu.Unlock()
+	if !strings.Contains(all, "admin: login of device "+string(nas.id)) {
+		t.Errorf("the log lacks the expire:\n%s", all)
 	}
 }

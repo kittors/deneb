@@ -21,11 +21,11 @@ func cmdKernelUndo(args []string) error {
 	fs := flag.NewFlagSet("kernel-undo", flag.ExitOnError)
 	stateDir := fs.String("state", defaultStateDir(), "state directory the kernel-mode engine ran on")
 	fs.Parse(args)
-	if runtime.GOOS != "darwin" {
-		return errors.New("kernel mode exists on macOS only")
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" && runtime.GOOS != "windows" {
+		return errors.New("kernel mode exists on macOS, Linux and Windows only")
 	}
-	if os.Geteuid() != 0 {
-		return errors.New("kernel-undo needs root: sudo denebd kernel-undo -state <dir>")
+	if !isAdmin() {
+		return errors.New("kernel-undo needs root (sudo denebd kernel-undo -state <dir>), or an administrator on Windows")
 	}
 	log.SetFlags(0)
 	if err := engine.UndoKernel(*stateDir, log.Printf); err != nil {

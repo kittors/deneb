@@ -1,0 +1,273 @@
+diff -ruN -x .mygo -x build -x *.orig cmd/deneb/allview.go cmd/deneb/allview.go
+--- cmd/deneb/allview.go	2026-11-08 13:54:04
++++ cmd/deneb/allview.go	2026-11-08 13:48:20
+@@ -556,11 +556,11 @@
+ 	// It rests where it lands now: the toast keeps clear of there.
+ 	d.rest = spot
+ 	a.rekey(d, to)
+-	a.send(c, model.Op{Kind: model.OpLANAddDevice, LAN: to, Device: d.dev})
+-	a.send(c, model.Op{Kind: model.OpLANRemoveDevice, LAN: from, Device: d.dev})
++	a.sendAfter(c, model.Op{Kind: model.OpLANAddDevice, LAN: to, Device: d.dev},
++		model.Op{Kind: model.OpLANRemoveDevice, LAN: from, Device: d.dev})
+ 	a.notify(c, d, "已把"+short(d.name)+"挪到"+short(l.Name), func() {
+-		a.send(c, model.Op{Kind: model.OpLANAddDevice, LAN: from, Device: d.dev})
+-		a.send(c, model.Op{Kind: model.OpLANRemoveDevice, LAN: to, Device: d.dev})
++		a.sendAfter(c, model.Op{Kind: model.OpLANAddDevice, LAN: from, Device: d.dev},
++			model.Op{Kind: model.OpLANRemoveDevice, LAN: to, Device: d.dev})
+ 		a.rekey(d, from)
+ 		d.off, d.flying = ui.Point{X: rest.X - d.base.X, Y: rest.Y - d.base.Y}, true
+ 	})
+diff -ruN -x .mygo -x build -x *.orig cmd/deneb/live_test.go cmd/deneb/live_test.go
+--- cmd/deneb/live_test.go	2026-11-08 13:54:04
++++ cmd/deneb/live_test.go	2026-11-08 13:48:52
+@@ -442,3 +442,62 @@
+ 	r.tt.Release(row.X+30, row.Y+row.H/2)
+ 	r.settle(300 * time.Millisecond)
+ }
++
++// The "全部" view on the live store, in the fake world (DESIGN §9 scene 3):
++// every LAN in its region; the sidebar's switch pauses a LAN on this
++// computer's engine and resumes it; one of my devices let go in another
++// region moves there, into it first, and undo moves it back.
++func TestLiveAllView(t *testing.T) {
++	r := newLiveRig(t, fakeworld.Ready, "all-view")
++	r.until("the canvas", func() bool { return r.a.device(build) != nil })
++	r.click("全部")
++	r.until("the regions", func() bool {
++		return r.a.all() && r.a.device("studio/"+build) != nil && r.a.device("weekend/"+jiePC) != nil && len(r.a.regionRects) == 2
++	})
++	r.settle(600 * time.Millisecond)
++	r.shot("all")
++	// 周末联机's switch: paused on this computer, 阿杰's devices with it.
++	r.click("暂停周末联机")
++	r.until("周末联机 paused", func() bool {
++		l := r.store().LAN(weekend)
++		return l.Paused && r.store().Path(model.DeviceID(jiePC)).Kind == model.PathPaused
++	})
++	r.tt.Move(700, 700)
++	r.settle(800 * time.Millisecond)
++	r.shot("paused")
++	if !r.tt.HasText("周末联机已暂停，其他照常") || r.a.device("weekend/"+jiePC).path != "paused" {
++		t.Errorf("paused, the window shows %q", r.tt.Texts())
++	}
++	r.click("暂停周末联机")
++	r.until("周末联机 back", func() bool { return !r.store().LAN(weekend).Paused })
++	r.settle(800 * time.Millisecond)
++	// 构建服务器, from 工作室's region into 周末联机's.
++	d := r.a.device("studio/" + build)
++	from := r.at(d)
++	wk := r.a.regionRects[weekend]
++	to := ui.Point{X: sidebarWidth + wk.X + wk.W/2, Y: headerHeight + wk.Y + wk.H - 90}
++	r.tt.Press(from.X, from.Y)
++	for i := 1; i <= 30; i++ {
++		k := float32(i) / 30
++		r.tt.Move(from.X+(to.X-from.X)*k, from.Y+(to.Y-from.Y)*k)
++		r.tt.Frame()
++		r.tt.Advance(16 * time.Millisecond)
++	}
++	r.tt.Release(to.X, to.Y)
++	r.until("构建服务器 in 周末联机", func() bool {
++		s := r.store()
++		return s.LAN(weekend).Has(model.DeviceID(build)) && !s.LAN(model.LANID("studio")).Has(model.DeviceID(build))
++	})
++	r.settle(800 * time.Millisecond)
++	r.shot("moved")
++	if r.a.device("weekend/"+build) == nil {
++		t.Fatal("构建服务器 is not in 周末联机's region")
++	}
++	r.click("撤销")
++	r.until("构建服务器 back in 工作室", func() bool {
++		s := r.store()
++		return s.LAN(model.LANID("studio")).Has(model.DeviceID(build)) && !s.LAN(weekend).Has(model.DeviceID(build))
++	})
++	r.settle(800 * time.Millisecond)
++	r.shot("undone")
++}
+diff -ruN -x .mygo -x build -x *.orig cmd/deneb/sync.go cmd/deneb/sync.go
+--- cmd/deneb/sync.go	2026-11-08 13:54:04
++++ cmd/deneb/sync.go	2026-11-08 13:48:20
+@@ -654,6 +654,28 @@
+ 	a.sync(nil)
+ }
+ 
++// sendAfter sends first, and then second once the store took first: both
++// show at once, and second goes only after first went through, or not at
++// all if first was turned down. A move between LANs is into the new one,
++// then out of the old, so that a device is never left in neither.
++func (a *app) sendAfter(c *ui.Context, first, second model.Op) {
++	p1, p2 := &pending{op: first}, &pending{op: second, held: true}
++	a.pend = append(a.pend, p1, p2)
++	a.gen++
++	run(a, c, func(ctx context.Context) (model.Result, error) { return a.store.Do(ctx, p1.op) },
++		func(c *ui.Context, r model.Result, err error) {
++			p1.done, p1.ver, p1.err = true, r.Version, err
++			a.gen++
++			if err != nil {
++				a.pend = slices.DeleteFunc(a.pend, func(x *pending) bool { return x == p2 })
++				a.problem(c, err)
++				return
++			}
++			a.commit(c, p2)
++		})
++	a.sync(nil)
++}
++
+ // commit hands a pending op to the store.
+ func (a *app) commit(c *ui.Context, p *pending) {
+ 	p.held = false
+diff -ruN -x .mygo -x build -x *.orig cmd/deneb/view.go cmd/deneb/view.go
+--- cmd/deneb/view.go	2026-11-08 13:54:04
++++ cmd/deneb/view.go	2026-11-08 13:48:20
+@@ -120,9 +120,9 @@
+ 			// until I let it in or turn it away (DESIGN §6.7).
+ 			waits := l.Owner == a.snap.Me && len(l.Pending)+len(l.PendingMembers) > 0
+ 			o := rowOpts{count: count, flash: a.flash(c, l.ID), dot: waits, ring: a.personOver == l.ID, at: a.rowAt(l.ID)}
+-			if !l.Waiting {
++			if !l.Waiting && l.Has(a.snap.Self) {
+ 				// Its switch: on, it connects; off, it is paused on this
+-				// computer (scene 3).
++				// computer, which must be in it (scene 3).
+ 				lan, name, paused := l.ID, l.Name, l.Paused
+ 				o.trail = func() bool {
+ 					flipped := miniToggle(c, p, "pause-"+string(lan), "暂停"+name, !paused)
+diff -ruN -x .mygo -x build -x *.orig cmd/deneb/view_test.go cmd/deneb/view_test.go
+--- cmd/deneb/view_test.go	2026-11-08 13:54:04
++++ cmd/deneb/view_test.go	2026-11-08 13:47:07
+@@ -59,8 +59,10 @@
+ // also checks that the change left every frame as it was. The renderer's
+ // caches make a frame differ from itself by a few pixels a little from one
+ // run to the next (at most 14 of 3.5 million, each by 1 of 255, over four
+-// runs of the same code), so that much is let through; anything that moves,
+-// recolors or resizes what is drawn changes hundreds of pixels by more.
++// runs of the same code; 66 on a frame caught mid-scale, light_05, when the
++// whole package's tests ran before it and filled the caches their way), so
++// 128 such pixels are let through; anything that moves, recolors or resizes
++// what is drawn changes hundreds of pixels, by more than 1.
+ // changedOnPurpose are the frames a fix after the split changed, against
+ // the baseline taken before it; the others stay as they were.
+ //   - The toast that comes in or goes out over the tray rose up through it,
+@@ -116,7 +118,7 @@
+ 				t.Fatal(err)
+ 			}
+ 			if baseline != "" && !changedOnPurpose[file] {
+-				if px, most := differ(t, filepath.Join(baseline, file), img); px > 64 || most > 1 {
++				if px, most := differ(t, filepath.Join(baseline, file), img); px > 128 || most > 1 {
+ 					t.Errorf("%s: %d pixels differ from the baseline's, by up to %d of 255", file, px, most)
+ 				}
+ 			}
+diff -ruN -x *.orig client/live.go client/live.go
+--- client/live.go	2026-11-08 13:54:04
++++ client/live.go	2026-11-08 13:47:56
+@@ -5,6 +5,7 @@
+ 	"encoding/json"
+ 	"errors"
+ 	"net"
++	"slices"
+ 	"strconv"
+ 	"strings"
+ 	"sync"
+@@ -214,6 +215,12 @@
+ 	for _, r := range st.Relays {
+ 		s.Relays[model.RelayID(r.ID)] = &model.Relay{ID: model.RelayID(r.ID), Name: r.Name}
+ 	}
++	// The LANs this computer paused on itself: the engine's, not the
++	// server's (DESIGN §9 scene 3).
++	paused := map[apitype.ScopeID]bool{}
++	for _, sc := range st.Scopes {
++		paused[sc.ID] = sc.Paused
++	}
+ 	if v := l.view; v != nil && st.LoggedIn {
+ 		s.Loaded = true
+ 		if len(v.Features) > 0 {
+@@ -266,7 +273,8 @@
+ 			ml := &model.LAN{ID: model.LANID(lv.ID), Name: lv.Name, Owner: model.PersonID(lv.Owner),
+ 				Services: map[model.DeviceID][]model.Service{},
+ 				// M2: its two switches, and whether I wait to be let in.
+-				ApproveDevices: lv.ApproveDevices, ApproveMembers: lv.ApproveMembers, Waiting: lv.Pending}
++				ApproveDevices: lv.ApproveDevices, ApproveMembers: lv.ApproveMembers, Waiting: lv.Pending,
++				Paused: paused[apitype.ScopeID(proto.LANScope(lv.ID))]}
+ 			for _, m := range lv.Members {
+ 				// Only those in are members: someone invited is not in yet,
+ 				// and one who waits for me to let them in shows apart (M2).
+@@ -375,6 +383,9 @@
+ // whose answer was lost to an engine starting over is sent again with the
+ // same key, so that it takes effect once.
+ func (l *Live) Do(ctx context.Context, op model.Op) (model.Result, error) {
++	if op.Kind == model.OpLANPause {
++		return l.pause(ctx, op.LAN, op.On)
++	}
+ 	args := proto.OpArgs{
+ 		LAN: proto.LANID(op.LAN), Device: proto.DeviceID(op.Device), Person: proto.PersonID(op.Person),
+ 		Name: op.Name, Invite: op.Invite, On: op.On, Refuse: op.Refuse,
+@@ -427,6 +438,37 @@
+ 		}
+ 	}
+ 	return r, nil
++}
++
++// pause pauses a LAN on this computer, or resumes it: the engine does it on
++// its own, at once, as `deneb lan pause` does, and tells the server after.
++// The snapshot says so from now on, rather than wait for the engine's next
++// state, so that the switch does not flip back in between.
++func (l *Live) pause(ctx context.Context, lan model.LANID, on bool) (model.Result, error) {
++	scope := apitype.ScopeID(proto.LANScope(proto.LANID(lan)))
++	if err := l.lc.Pause(ctx, scope, on); err != nil {
++		if _, ok := localclient.AsError(err); ok || errors.Is(err, localclient.ErrNotRunning) || errors.Is(err, context.DeadlineExceeded) {
++			return model.Result{}, modelError(err)
++		}
++		// An engine older than the switch answers without an error of its
++		// own: in plain words, never the HTTP status.
++		return model.Result{}, &model.Error{Code: model.ErrInvalid, Message: "这台电脑上的 Deneb 还不能暂停，更新以后再试"}
++	}
++	l.update(func(time.Time) {
++		st := l.state
++		if st == nil {
++			return
++		}
++		n := *st
++		n.Scopes = slices.Clone(st.Scopes)
++		for i := range n.Scopes {
++			if n.Scopes[i].ID == scope {
++				n.Scopes[i].Paused = on
++			}
++		}
++		l.state = &n
++	})
++	return model.Result{}, nil
+ }
+ 
+ // service finds the service of dev with key, as service.set names it to the
+diff -ruN -x *.orig client/live_test.go client/live_test.go
+--- client/live_test.go	2026-11-08 13:54:04
++++ client/live_test.go	2026-11-08 13:48:52
+@@ -348,3 +348,30 @@
+ 		t.Errorf("turned down as %v", err)
+ 	}
+ }
++
++// Pausing a LAN goes to this computer's engine, as `deneb lan pause` does:
++// the LAN shows paused at once, the devices only it shares stop, and
++// resuming brings them back.
++func TestLivePause(t *testing.T) {
++	_, l := live(t, fakeworld.Ready)
++	waitFor(t, l, "the world", func(s *model.Snapshot) bool {
++		return len(s.LANs) == 2 && s.Path(model.DeviceID(fakeworld.JiePC)).Kind == model.PathDirect
++	})
++	weekend := model.LANID(fakeworld.Weekend)
++	if r := do(t, l, model.Op{Kind: model.OpLANPause, LAN: weekend, On: true}); r.Version != 0 {
++		t.Errorf("pausing answers version %d", r.Version)
++	}
++	if !l.Snapshot().LAN(weekend).Paused {
++		t.Fatal("周末联机 does not show paused at once")
++	}
++	waitFor(t, l, "阿杰's desktop paused", func(s *model.Snapshot) bool {
++		return s.LAN(weekend).Paused && s.Path(model.DeviceID(fakeworld.JiePC)).Kind == model.PathPaused
++	})
++	if s := l.Snapshot(); s.LAN(model.LANID(fakeworld.Studio)).Paused || s.Path(model.DeviceID(fakeworld.Build)).Kind == model.PathPaused {
++		t.Error("pausing 周末联机 paused 工作室 too")
++	}
++	do(t, l, model.Op{Kind: model.OpLANPause, LAN: weekend, On: false})
++	waitFor(t, l, "阿杰's desktop back", func(s *model.Snapshot) bool {
++		return !s.LAN(weekend).Paused && s.Path(model.DeviceID(fakeworld.JiePC)).Kind != model.PathPaused
++	})
++}

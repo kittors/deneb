@@ -9,6 +9,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -105,11 +106,22 @@ func TestRemoteSmoke(t *testing.T) {
 	}
 	b.must(proto.OpInviteAccept, proto.OpArgs{Invite: inv.URL})
 
+	// Renaming works against the deployed server (the client's card uses
+	// it); a Chinese name keeps the DNS label, and the old name comes back.
+	a.must(proto.OpDeviceRename, proto.OpArgs{Device: a.id, Name: "冒烟测试机"})
+	a.must(proto.OpDeviceRename, proto.OpArgs{Device: a.id, Name: "smoke-a"})
+
 	st := b.stream(t, true)
 	f := st.next(t)
 	if f.NetMap == nil || len(f.NetMap.Peers) != 1 || f.NetMap.Peers[0].ID != a.id || lanByName(f.UserView, "冒烟测试") == nil {
 		fb, _ := json.Marshal(f)
 		t.Fatalf("stream frame: %s", fb)
+	}
+	if p := f.NetMap.Peers[0]; p.DisplayName != "smoke-a" || p.FQDN != "smoke-a.mia.deneb.internal" {
+		t.Fatalf("after renaming back b sees a as %q, %q", p.DisplayName, p.FQDN)
+	}
+	if !slices.Equal(f.UserView.Features, proto.M2Features) {
+		t.Logf("features %v (an M1 server sends none)", f.UserView.Features)
 	}
 	n := f.NetMap.Network
 	t.Logf("network %s %s, dns %v; relays %+v; version %d", n.IPv4, n.IPv6, n.DNS, f.NetMap.Relays, f.Version)

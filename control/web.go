@@ -52,9 +52,10 @@ type pageDevice struct {
 }
 
 func (s *Server) pageDevice(pl *pendingLogin) *pageDevice {
-	name := pl.req.DisplayName
+	f := pl.facts.Load()
+	name := f.req.DisplayName
 	if name == "" {
-		name = strings.TrimSuffix(pl.req.Hostname, ".local")
+		name = strings.TrimSuffix(f.req.Hostname, ".local")
 	}
 	if name == "" {
 		name = "一台新设备"
@@ -63,7 +64,7 @@ func (s *Server) pageDevice(pl *pendingLogin) *pageDevice {
 	if m := int(s.now().Sub(pl.created).Minutes()); m >= 1 {
 		when = strconv.Itoa(m) + " 分钟前"
 	}
-	return &pageDevice{Name: name, OS: osLabel(pl.req.OS), From: pl.remoteIP, When: when}
+	return &pageDevice{Name: name, OS: osLabel(f.req.OS), From: f.remoteIP, When: when}
 }
 
 func osLabel(o proto.OS) string {
@@ -152,7 +153,7 @@ func (s *Server) handleLoginCode(w http.ResponseWriter, r *http.Request) {
 		page.Account = pangu("登录到" + p.DisplayName + "（" + p.Email + "）")
 	}
 	now := s.now()
-	if s.tries.blocked(page.Email, now) {
+	if !s.tries.take(page.Email, now) {
 		s.logf("login: %q is blocked for too many wrong codes (code %s, from %s)", page.Email, shortCode(pl.code), remoteIP(r))
 		page.Error = "试错的次数太多了，请 15 分钟后再试"
 		s.render(w, http.StatusTooManyRequests, loginTmpl, page)
@@ -161,7 +162,6 @@ func (s *Server) handleLoginCode(w http.ResponseWriter, r *http.Request) {
 	want, ok := s.codes[page.Email]
 	got := strings.TrimSpace(r.PostFormValue("code"))
 	if !ok || p == nil || subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
-		s.tries.failed(page.Email, now)
 		s.logf("login: wrong code for %q (code %s, from %s)", page.Email, shortCode(pl.code), remoteIP(r))
 		page.Error = "验证码不对"
 		s.render(w, http.StatusOK, loginTmpl, page)

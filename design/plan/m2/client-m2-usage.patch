@@ -1,0 +1,815 @@
+diff -ruN -x .mygo -x *.png a/cmd/deneb/closed_test.go b/cmd/deneb/closed_test.go
+--- cmd/deneb/closed_test.go	1970-01-01 07:30:00
++++ cmd/deneb/closed_test.go	2026-11-08 18:21:41
+@@ -0,0 +1,111 @@
++package main
++
++import (
++	"fmt"
++	"image/jpeg"
++	"image/png"
++	"os"
++	"path/filepath"
++	"testing"
++	"time"
++
++	"github.com/egoist/mygo/ui"
++)
++
++// closeScreenShare turns this computer's 远程桌面 off in 周末联机, from its
++// card, as a hand would.
++func closeScreenShare(t *testing.T, a *app, tt *ui.Tester) {
++	t.Helper()
++	if a.selected != "mac" {
++		p := a.device("mac").at()
++		tt.ClickAt(a.origin.X+p.X, a.origin.Y+p.Y)
++		for i := 0; i < 40; i++ {
++			tt.Advance(16 * time.Millisecond)
++			tt.Frame()
++		}
++	}
++	box, ok := tt.Find("远程桌面")
++	if !ok || a.cardAt.W == 0 {
++		t.Fatalf("no 远程桌面 in this computer's card: %q", tt.Texts())
++	}
++	tt.ClickAt(a.origin.X+a.cardAt.X+a.cardAt.W-16-12-19, box.Y+box.H/2)
++	tt.Frame()
++}
++
++// Closing a service someone uses (scene 5): a short red light runs on
++// their link to this computer, and their device's second line says the
++// service was closed, for a moment, then what it said before.
++func TestClosingAServiceInUse(t *testing.T) {
++	a, d := newDemoApp()
++	d.Manual()
++	tt := ui.NewTester(a.view, 1180, 740)
++	frames := func(dt time.Duration) {
++		for end := tt.Now().Add(dt); tt.Now().Before(end); {
++			tt.Advance(16 * time.Millisecond)
++			tt.Frame()
++		}
++	}
++	frames(800 * time.Millisecond)
++	closeScreenShare(t, a, tt)
++	jd := a.device("jdesk")
++	if jd == nil || jd.closed != "远程桌面" || a.status(jd) != "远程桌面被关了" {
++		t.Fatalf("阿杰的台式机 after 远程桌面 closed: %+v, %q", jd, a.status(jd))
++	}
++	if mia := a.device("mia"); mia.closed != "" {
++		t.Errorf("Mia, who used nothing, shows %q closed", mia.closed)
++	}
++	frames(closedRun + 100*time.Millisecond)
++	if a.status(jd) != "远程桌面被关了" {
++		t.Errorf("the second line went before its moment: %q", a.status(jd))
++	}
++	frames(closedSay)
++	if s := a.status(jd); s != "直接连上" {
++		t.Errorf("after its moment the second line says %q", s)
++	}
++}
++
++// TestM2ClosedFrames records closing a service in use, both themes, for
++// review (DESIGN §11), when DENEB_M2 names a folder.
++func TestM2ClosedFrames(t *testing.T) {
++	root := os.Getenv("DENEB_M2")
++	if root == "" {
++		t.Skip("set DENEB_M2 to a folder to record M2's demo")
++	}
++	for _, dark := range []bool{false, true} {
++		theme := map[bool]string{false: "light", true: "dark"}[dark]
++		dir := filepath.Join(root, theme+"-closed")
++		os.MkdirAll(dir, 0o755)
++		a, d := newDemoApp()
++		d.Manual()
++		tt := ui.NewTester(a.view, 1180, 740)
++		tt.SetDark(dark)
++		n := 0
++		rec := func(dt time.Duration) {
++			for end := tt.Now().Add(dt); tt.Now().Before(end); n++ {
++				tt.Advance(time.Second / 60)
++				tt.Frame()
++				f, _ := os.Create(filepath.Join(dir, fmt.Sprintf("%04d.jpg", n)))
++				jpeg.Encode(f, tt.Image(), &jpeg.Options{Quality: 88})
++				f.Close()
++			}
++		}
++		shot := func(name string) {
++			tt.SetScale(2)
++			tt.Frame()
++			f, _ := os.Create(filepath.Join(root, theme+"-closed_"+name+".png"))
++			png.Encode(f, tt.Image())
++			f.Close()
++			tt.SetScale(1)
++			tt.Frame()
++		}
++		rec(800 * time.Millisecond)
++		closeScreenShare(t, a, tt)
++		rec(450 * time.Millisecond)
++		shot("红光")
++		rec(450 * time.Millisecond)
++		shot("门口的圈")
++		rec(800 * time.Millisecond)
++		shot("被关了")
++		rec(4 * time.Second)
++	}
++}
+diff -ruN -x .mygo -x *.png a/cmd/deneb/links.go b/cmd/deneb/links.go
+--- cmd/deneb/links.go	2026-11-08 14:01:59
++++ cmd/deneb/links.go	2026-11-08 18:21:15
+@@ -331,6 +331,51 @@
+ 			pt.StrokePathGradient(path, 5, beam(1, glow, false))
+ 			pt.StrokePathGradient(path, 2, beam(2, 1, true))
+ 		}
++		if k := float32(now.Sub(d.closedAt)) / float32(closedRun); d.closed != "" && k >= 0 && k < 1 {
++			a.paintClosed(pt, cv, L, k, fk*(1-0.65*d.dim), glow, o)
++		}
++	}
++}
++
++// closedRun is how long the red light of a use cut runs, its ring
++// included; closedSay how long the device's second line says so.
++const (
++	closedRun = 1100 * time.Millisecond
++	closedSay = 4 * time.Second
++)
++
++// paintClosed is the red light of a use of this computer's service cut
++// just now, k of the way through (scene 5): a short run of it from the
++// device's end of the link to this computer's door, where it spreads into
++// a small ring and is gone.
++func (a *app) paintClosed(pt *ui.Painter, cv curve, L, k, alpha, glow float32, o ui.Point) {
++	red := ui.Hex("#EF4444")
++	door := min(L, tileSize/2+6)
++	const run = 0.7 // of the time it runs; the ring after
++	if k < run {
++		head := L - (L-door)*ui.EaseInOut(k/run)
++		tail := min(L, head+44)
++		if tail-head >= 1 {
++			hp, tp := cv.at(head), cv.at(tail)
++			angle := float32(math.Atan2(float64(hp.X-tp.X), float64(-(hp.Y-tp.Y))) * 180 / math.Pi)
++			light := func(k int, a float32, hot bool) ui.LinearGradient {
++				end := red.Alpha(a * alpha)
++				if hot {
++					end = red.Mix(white, 0.45).Alpha(alpha)
++				}
++				return ui.LinearGradient{Angle: angle, Stops: []ui.GradientStop{{Color: red.Alpha(0), At: 0}, {Color: red.Alpha(a * alpha * 0.85), At: 0.7}, {Color: end, At: 1}}}
++			}
++			path := cv.pathInto(&a.beamPath, head, tail, o)
++			pt.StrokePathGradient(path, 9, light(0, glow*0.9, false))
++			pt.StrokePathGradient(path, 5, light(1, min(1, glow*2), false))
++			pt.StrokePathGradient(path, 2, light(2, 1, true))
++		}
++	}
++	if k > run-0.08 {
++		r := min(1, (k-(run-0.08))/(1-run+0.08))
++		q := cv.at(door)
++		rad := 5 + 15*ui.EaseOut(r)
++		pt.Stroke(ui.Rect{X: q.X + o.X - rad, Y: q.Y + o.Y - rad, W: 2 * rad, H: 2 * rad}, red.Alpha((1-r)*alpha), rad, 2)
+ 	}
+ }
+ 
+diff -ruN -x .mygo -x *.png a/cmd/deneb/menubar.go b/cmd/deneb/menubar.go
+--- cmd/deneb/menubar.go	2026-11-08 15:27:51
++++ cmd/deneb/menubar.go	2026-11-08 18:16:23
+@@ -255,15 +255,23 @@
+ 	case allPaused(s):
+ 		return p.ink3, "都暂停了"
+ 	}
+-	unreachable, connecting := map[model.DeviceID]bool{}, false
++	// As it is, in the card's words: 都连上了 only when everything is; of
++	// the devices that are not, the most pressing kind, as the card puts
++	// them first (连不上 before 不在线).
++	unreachable, offline, connecting := map[model.DeviceID]bool{}, map[model.DeviceID]bool{}, false
+ 	for _, l := range lans {
+ 		if l.Paused {
+ 			continue
+ 		}
+ 		for _, id := range l.Devices {
++			if id == s.Self {
++				continue
++			}
+ 			switch s.Path(id).Kind {
+ 			case model.PathUnreachable:
+ 				unreachable[id] = true
++			case model.PathOffline:
++				offline[id] = true
+ 			case model.PathConnecting:
+ 				connecting = true
+ 			}
+@@ -274,6 +282,8 @@
+ 		return amber, fmt.Sprintf("%d 台连不上", len(unreachable))
+ 	case connecting:
+ 		return p.ink3, "正在连接…"
++	case len(offline) > 0:
++		return p.ink3, fmt.Sprintf("%d 台不在线", len(offline))
+ 	}
+ 	return p.ok, "都连上了"
+ }
+diff -ruN -x .mygo -x *.png a/cmd/deneb/menubar_test.go b/cmd/deneb/menubar_test.go
+--- cmd/deneb/menubar_test.go	2026-11-08 15:30:41
++++ cmd/deneb/menubar_test.go	2026-11-08 18:17:36
+@@ -696,3 +696,30 @@
+ 		t.Errorf("with many LANs the panel asked for %d", h)
+ 	}
+ }
++
++// The panel's head says how things are, in the card's words: 都连上了 only
++// when every device is; a device off says 不在线; one that cannot be reached
++// says 连不上, which goes first when both are so (as the card puts it).
++func TestPanelSaysWhatIsNotConnected(t *testing.T) {
++	a, d := newDemoApp()
++	d.Manual()
++	tt := ui.NewTester(a.panel, panelWidth, panelMaxHeight)
++	settle := func() {
++		for i := 0; i < 30; i++ {
++			tt.Advance(time.Second / 60)
++			tt.Frame()
++		}
++	}
++	head := func(want string, dot ui.Color) {
++		t.Helper()
++		settle()
++		if c, line := a.panelSummary(&lightPalette); line != want || c != dot || !tt.HasText(want) {
++			t.Errorf("the head says %q in %v, want %q in %v", line, c, want, dot)
++		}
++	}
++	head("都连上了", lightPalette.ok)
++	d.Simulate("offline")
++	head("1 台不在线", lightPalette.ink3)
++	d.Simulate("unreachable")
++	head("1 台连不上", ui.Hex("#F59E0B"))
++}
+diff -ruN -x .mygo -x *.png a/cmd/deneb/model.go b/cmd/deneb/model.go
+--- cmd/deneb/model.go	2026-11-08 18:05:04
++++ cmd/deneb/model.go	2026-11-08 18:20:45
+@@ -108,6 +108,13 @@
+ 	// turnedDown: mine, it waited and the owner turned it away. It keeps
+ 	// its dashed look on its way back to the tray.
+ 	turnedDown bool
++	// closed is the service of this computer it was using that was just
++	// closed to it (scene 5), told of at closedAt on the view's clock: a
++	// short red light runs on its link, and its second line says so for a
++	// moment. closedSeen is the store's moment of that cut, to tell a new
++	// one from it.
++	closed               string
++	closedAt, closedSeen time.Time
+ 	// elem keys its element while it moves from region to region in the
+ 	// "全部" view (rekey): the element, and its springs, stay with it.
+ 	elem string
+@@ -386,6 +393,10 @@
+ 		return "需要重新登录"
+ 	case d.stale:
+ 		return "旧的那台 · 很久没上线"
++	case d.closed != "" && a.now().Sub(d.closedAt) < closedSay:
++		// Using a service of this computer that was just closed to it
++		// (scene 5): "命令行被关了", for a moment.
++		return d.closed + "被关了"
+ 	case !d.using.IsZero() && linked(d.path):
+ 		return "已连接 " + clock(a.now().Sub(d.using))
+ 	}
+diff -ruN -x .mygo -x *.png a/cmd/deneb/real2_test.go b/cmd/deneb/real2_test.go
+--- cmd/deneb/real2_test.go	2026-11-08 18:05:04
++++ cmd/deneb/real2_test.go	2026-11-08 18:28:01
+@@ -1,6 +1,8 @@
+ package main
+ 
+ import (
++	"context"
++	"encoding/base64"
+ 	"encoding/json"
+ 	"fmt"
+ 	"image/jpeg"
+@@ -14,6 +16,7 @@
+ 	"sync/atomic"
+ 	"testing"
+ 	"time"
++	"unicode/utf16"
+ 
+ 	"github.com/egoist/mygo/ui"
+ 	"github.com/kittors/deneb/client/model"
+@@ -53,7 +56,7 @@
+ 	r := newRealRig(t)
+ 	r.until("the engine, logged in", func() bool { return r.a.snap.Engine && r.a.snap.LoggedIn && r.a.snap.Loaded })
+ 	for _, s := range strings.Split(items, ",") {
+-		fn := map[string]func(*realRig){"2": m2netchange, "3": m2join, "11": m2approve, "12": m2panel, "12r": m2renew}[strings.TrimSpace(s)]
++		fn := map[string]func(*realRig){"2": m2netchange, "3": m2join, "4": m2cut, "5t": m2using, "11": m2approve, "12": m2panel, "12r": m2renew}[strings.TrimSpace(s)]
+ 		if fn == nil {
+ 			t.Fatalf("no item %q", s)
+ 		}
+@@ -82,6 +85,38 @@
+ 	return `ssh -o BatchMode=yes -o ConnectTimeout=15 -o ProxyCommand=none -o IdentitiesOnly=yes -i "$HOME/.ssh/id_ed25519" Administrator@100.122.56.85 "%USERPROFILE%\deneb\denebd.exe ` + args + `"`
+ }
+ 
++// onPCRaw is the command that runs a command on 阿杰的台式机 as it is.
++func onPCRaw(command string) string {
++	return `ssh -o BatchMode=yes -o ConnectTimeout=15 -o ProxyCommand=none -o IdentitiesOnly=yes -i "$HOME/.ssh/id_ed25519" Administrator@100.122.56.85 "` + command + `"`
++}
++
++// shellOut runs command as shell does, and returns what it said.
++func (r *realRig) shellOut(command string) string {
++	r.t.Helper()
++	r.logf("running %s", command)
++	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
++	defer cancel()
++	var out []byte
++	done := make(chan error, 1)
++	go func() {
++		var err error
++		out, err = exec.CommandContext(ctx, "/bin/sh", "-c", command).Output()
++		done <- err
++	}()
++	for {
++		select {
++		case err := <-done:
++			if err != nil {
++				r.t.Fatalf("item %s: %s: %v\n%s", r.step, command, err, out)
++			}
++			r.logf("it said: %s", strings.TrimSpace(string(out)))
++			return strings.TrimSpace(strings.ReplaceAll(string(out), "\r", ""))
++		default:
++			r.tick()
++		}
++	}
++}
++
+ // opArgs is `op <kind> '<args as JSON>'`, for the command line.
+ func opArgs(kind string, args map[string]any) string {
+ 	b, _ := json.Marshal(args)
+@@ -363,6 +398,141 @@
+ 		r.t.Errorf("item 12: 打开 Deneb brought the window %d times", shown.Load())
+ 	}
+ 	r.logf("打开 Deneb brought the window")
++}
++
++// Item 4: 阿杰's desktop holds a connection to this computer's web page
++// (deneb open on it, and a PowerShell client through the port it gives,
++// asking every second); this computer closes that service to 周末联机 from
++// its card. A short red light runs on the desktop's link, and its second
++// line says the service was closed (scene 5); then the service is opened
++// again, as it was.
++func m2cut(r *realRig) {
++	r.lan("周末联机")
++	pc := r.named("阿杰的台式机")
++	if r.a.device(pc) == nil {
++		r.t.Fatal("item 4: 阿杰的台式机 is not in 周末联机")
++	}
++	web := ""
++	for _, v := range r.a.store.Snapshot().LAN(r.a.lan).Services[model.DeviceID(r.a.self)] {
++		if v.Proto == "tcp" && v.Port == 80 && v.On {
++			web = v.Name
++		}
++	}
++	if web == "" {
++		r.t.Fatal("item 4: this computer's port 80 is not open to 周末联机")
++	}
++	opened := r.shellOut(onPC("open " + r.a.snap.Devices[model.DeviceID(r.a.self)].FQDN + " 80"))
++	_, port, ok := strings.Cut(strings.TrimSpace(opened), ":")
++	if !ok {
++		r.t.Fatalf("item 4: deneb open said %q", opened)
++	}
++	ps := "$c=New-Object Net.Sockets.TcpClient('127.0.0.1'," + port + ");$s=$c.GetStream();" +
++		"for($i=0;$i -lt 60;$i++){$b=[Text.Encoding]::ASCII.GetBytes(\"HEAD / HTTP/1.1`r`nHost: x`r`n`r`n\");$s.Write($b,0,$b.Length);" +
++		"while($s.DataAvailable){[void]$s.ReadByte()};Start-Sleep 1};$c.Close()"
++	u := utf16.Encode([]rune(ps))
++	b := make([]byte, 2*len(u))
++	for i, v := range u {
++		b[2*i], b[2*i+1] = byte(v), byte(v>>8)
++	}
++	hold := exec.Command("/bin/sh", "-c", onPCRaw("powershell -NoProfile -EncodedCommand "+base64.StdEncoding.EncodeToString(b)))
++	if err := hold.Start(); err != nil {
++		r.t.Fatal(err)
++	}
++	defer hold.Process.Kill()
++	using := func() bool {
++		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
++		defer cancel()
++		st, err := r.lc.State(ctx)
++		if err != nil {
++			return false
++		}
++		for _, u := range st.Usage {
++			if string(u.DeviceID) == pc && u.Port == 80 {
++				return true
++			}
++		}
++		return false
++	}
++	r.until("阿杰的台式机 using "+web, using)
++	r.logf("阿杰的台式机 uses %s", web)
++	r.card(r.a.self)
++	r.record()
++	r.hold(time.Second)
++	r.logf("closing %s", web)
++	r.toggleService(web)
++	closed := time.Now()
++	r.t.Cleanup(func() {
++		// Opened again, as it was, whatever happened.
++		on := false
++		for _, v := range r.a.store.Snapshot().LAN(r.lanID("周末联机")).Services[model.DeviceID(r.a.self)] {
++			on = on || v.Port == 80 && v.On
++		}
++		if !on {
++			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
++			defer cancel()
++			r.a.store.Do(ctx, model.Op{Kind: model.OpServiceSet, LAN: r.lanID("周末联机"), Device: model.DeviceID(r.a.self), Service: "tcp/80", On: true})
++		}
++	})
++	r.until("the red light", func() bool { d := r.a.device(pc); return d != nil && d.closed != "" })
++	r.logf("cut: 阿杰的台式机 says %q, %s after the switch", r.a.status(r.a.device(pc)), since(time.Now(), closed))
++	r.hold(450 * time.Millisecond)
++	r.still("red-light")
++	r.record()
++	r.hold(1500 * time.Millisecond)
++	r.still("closed")
++	r.record()
++	r.hold(3 * time.Second)
++	r.logf("opening %s again", web)
++	r.toggleService(web)
++	r.hold(3 * time.Second)
++	r.still("opened-again")
++}
++
++// Item 5's "已连接": this computer uses 构建服务器's web page over one long
++// connection (longconn, from DENEB_LONGCONN, through this computer's
++// SOCKS5): on 工作室's canvas its second line counts from when it began,
++// and says how it connects again once it ends.
++func m2using(r *realRig) {
++	bin := os.Getenv("DENEB_LONGCONN")
++	if bin == "" {
++		r.t.Fatal("item 5: set DENEB_LONGCONN to a longconn built for this computer")
++	}
++	r.lan("工作室")
++	build := r.named("构建服务器")
++	if !linkedPath(r.a.device(build)) {
++		r.t.Fatal("item 5: 构建服务器 is not connected in 工作室")
++	}
++	addr := r.a.snap.Devices[model.DeviceID(build)].Addr
++	hold := exec.Command(bin, "-socks", "127.0.0.1:41080", "-active", "20s", "-pause", "1s", "-total", "20s", addr)
++	r.record()
++	r.hold(time.Second)
++	if err := hold.Start(); err != nil {
++		r.t.Fatal(err)
++	}
++	began := time.Now()
++	done := make(chan error, 1)
++	go func() { done <- hold.Wait() }()
++	counting := func() bool { return strings.HasPrefix(r.a.status(r.a.device(build)), "已连接") }
++	r.until("已连接", counting)
++	r.logf("构建服务器 says %q, %s after the connection began", r.a.status(r.a.device(build)), since(time.Now(), began))
++	r.hold(6 * time.Second)
++	r.logf("构建服务器 says %q", r.a.status(r.a.device(build)))
++	r.still("counting")
++	r.record()
++	r.until("the connection over", func() bool {
++		select {
++		case err := <-done:
++			r.logf("longconn ended: %v", err)
++			return true
++		default:
++			return false
++		}
++	})
++	ended := time.Now()
++	r.until("构建服务器 not counting", func() bool { return !counting() })
++	r.logf("构建服务器 says %q, %s after the connection ended", r.a.status(r.a.device(build)), since(time.Now(), ended))
++	r.hold(2 * time.Second)
++	r.still("done")
+ }
+ 
+ // Item 12's 续上: a login of mine due, renewed from the menu bar's panel.
+diff -ruN -x .mygo -x *.png a/cmd/deneb/sync.go b/cmd/deneb/sync.go
+--- cmd/deneb/sync.go	2026-11-08 18:05:04
++++ cmd/deneb/sync.go	2026-11-08 18:20:45
+@@ -160,6 +160,13 @@
+ 	}
+ 	d.online, d.refusesMe, d.addr, d.fqdn = m.Online, m.RefusesMe, m.Addr, m.FQDN
+ 	d.login, d.lastSeen, d.using = m.Login, m.LastSeen, s.Using[m.ID]
++	for _, c := range s.Cuts {
++		if c.Device == m.ID && c.At.After(d.closedSeen) {
++			// Cut just now: its red light and its sentence start as the
++			// view learns of it.
++			d.closed, d.closedSeen, d.closedAt = c.Service, c.At, a.now()
++		}
++	}
+ 	d.pending = l != nil && l.HasPending(m.ID)
+ 	refused := make(map[string]bool, len(m.Refused))
+ 	for who, on := range m.Refused {
+diff -ruN a/client/demo.go b/client/demo.go
+--- client/demo.go	2026-11-08 15:10:30
++++ client/demo.go	2026-11-08 18:20:23
+@@ -29,6 +29,19 @@
+ // a timer, so that a recording knows when each comes.
+ func (d *Demo) Manual() { d.manual = true }
+ 
++// demoUses are who uses which of this computer's services in the demo's
++// world: 阿杰's desktop, its 远程桌面.
++var demoUses = []struct {
++	by  model.DeviceID
++	key string
++}{{"jdesk", "tcp/3389"}}
++
++// recentCuts are the cuts of the last few seconds (cutKeep, as the live
++// store keeps them): the view has played the others.
++func recentCuts(cuts []model.Cut) []model.Cut {
++	return slices.DeleteFunc(slices.Clone(cuts), func(c model.Cut) bool { return time.Since(c.At) > cutKeep })
++}
++
+ // NewDemo returns the demo's store, as the design's sample shows it.
+ func NewDemo() *Demo { return &Demo{snap: demoSnapshot(), subs: map[int]func(*model.Snapshot){}} }
+ 
+@@ -117,6 +130,23 @@
+ 				n.Paths[op.Device] = model.Path{Kind: model.PathDirect, RTT: 4 * time.Millisecond, Since: time.Now()}
+ 			}
+ 			return &n
++		case model.OpServiceSet:
++			// 阿杰's desktop uses this computer's 远程桌面 (scene 5): closing
++			// it to 周末联机 cuts him off, a red light on his link.
++			n := s.With(op)
++			if n == s || op.On || op.Device != s.Self {
++				return n
++			}
++			l := s.LAN(op.LAN)
++			for _, use := range demoUses {
++				i := slices.IndexFunc(l.Services[s.Self], func(v model.Service) bool { return v.Key == op.Service })
++				if use.key == op.Service && i >= 0 && l.Has(use.by) {
++					c := *n
++					c.Cuts = append(recentCuts(s.Cuts), model.Cut{Device: use.by, Service: l.Services[s.Self][i].Name, At: time.Now()})
++					n = &c
++				}
++			}
++			return n
+ 		case model.OpLANAddRelay:
+ 			// The LAN's devices that nothing reaches go through 香港.
+ 			l := s.LAN(op.LAN)
+diff -ruN a/client/live.go b/client/live.go
+--- client/live.go	2026-11-08 14:01:59
++++ client/live.go	2026-11-08 18:20:11
+@@ -34,6 +34,7 @@
+ 	view    *proto.UserView
+ 	local   []apitype.LocalService // what this computer listens on, as the engine last found
+ 	down    bool                   // the engine stopped answering
++	cuts    []cutUse               // the uses this computer cut, the last few seconds'
+ 	deb     debouncer
+ 	snap    *model.Snapshot
+ 	subs    map[int]func(*model.Snapshot)
+@@ -106,6 +107,10 @@
+ 				}
+ 			case apitype.EventPaths:
+ 				l.takePaths(ev.Paths)
++			case apitype.EventUsage:
++				l.takeUsage(ev.Usage, ev.Using)
++			case apitype.EventCut:
++				l.takeCut(ev.Cut)
+ 			}
+ 			return nil
+ 		})
+@@ -155,6 +160,40 @@
+ 	})
+ }
+ 
++// takeUsage takes in who uses what now, both ways: the engine says it apart
++// from the state, as it changes.
++func (l *Live) takeUsage(usage, using []apitype.ServiceUse) {
++	l.update(func(time.Time) {
++		if l.state == nil {
++			return
++		}
++		st := *l.state
++		st.Usage, st.Using = usage, using
++		l.state = &st
++	})
++}
++
++// cutUse is a use this computer cut, as the engine told of it, and when.
++type cutUse struct {
++	use apitype.ServiceUse
++	at  time.Time
++}
++
++// cutKeep is how long a cut stays in the snapshots: the red light and the
++// sentence that go with it are over by then (scene 5).
++const cutKeep = 6 * time.Second
++
++// takeCut takes in the uses this computer just cut, closing a service or
++// refusing someone.
++func (l *Live) takeCut(cut []apitype.ServiceUse) {
++	l.update(func(now time.Time) {
++		l.cuts = slices.DeleteFunc(l.cuts, func(c cutUse) bool { return now.Sub(c.at) > cutKeep })
++		for _, u := range cut {
++			l.cuts = append(l.cuts, cutUse{use: u, at: now})
++		}
++	})
++}
++
+ // update changes what Live knows with fn, makes the snapshot anew and tells
+ // the subscribers.
+ func (l *Live) update(fn func(now time.Time)) {
+@@ -320,10 +359,87 @@
+ 	for _, ls := range l.local {
+ 		s.Local = append(s.Local, service(localService(ls), false))
+ 	}
++	// What this computer uses now, and since when: the "已连接" count, from
++	// the oldest of its connections to each device (DESIGN §6.7).
++	for _, u := range st.Using {
++		if s.Using == nil {
++			s.Using = map[model.DeviceID]time.Time{}
++		}
++		id := model.DeviceID(u.DeviceID)
++		if t, ok := s.Using[id]; !ok || u.Since.Before(t) {
++			s.Using[id] = u.Since
++		}
++	}
++	// Another program's tunnel takes Deneb's connections: the amber pill
++	// (DESIGN §6.8). The engine cannot tell which program; Clash is the one
++	// people have.
++	for _, p := range st.Engine.Problems {
++		if p.Code == apitype.ProblemProxy {
++			s.Notices = append(s.Notices, model.Notice{Code: p.Code, Short: "Clash 可能挡住连接",
++				Message: "Clash 一类的软件正在接管网络，局域网里的设备可能连不上", Rule: p.Rule})
++		}
++	}
+ 	paths, next := l.deb.at(now)
+ 	s.Paths = paths
++	// The uses just cut, each service named as the card names it.
++	for _, c := range l.cuts {
++		if until := c.at.Add(cutKeep); now.Before(until) {
++			s.Cuts = append(s.Cuts, model.Cut{Device: model.DeviceID(c.use.DeviceID), Service: cutService(s, c.use), At: c.at})
++			if next.IsZero() || until.Before(next) {
++				next = until
++			}
++		}
++	}
+ 	l.wakeAtLocked(next)
+ 	return s
++}
++
++// cutService is the name of this computer's service a cut use was of: as
++// the card of a LAN it was opened to lists it, else as the engine names it.
++func cutService(s *model.Snapshot, u apitype.ServiceUse) string {
++	for _, sc := range u.Scopes {
++		lan, ok := proto.ScopeID(sc).LAN()
++		if !ok {
++			continue
++		}
++		l := s.LAN(model.LANID(lan))
++		if l == nil {
++			continue
++		}
++		for _, v := range l.Services[s.Self] {
++			if v.Proto == u.Proto && slices.Contains(portsOf(v), u.Port) {
++				return v.Name
++			}
++		}
++	}
++	if u.Name != "" {
++		return u.Name
++	}
++	return "这项服务"
++}
++
++// portsOf are the ports of a service, as its key lists them ("tcp/80",
++// "udp/27015-27030").
++func portsOf(v model.Service) []uint16 {
++	ports := []uint16{v.Port}
++	_, spec, _ := strings.Cut(v.Key, "/")
++	for _, part := range strings.Split(spec, ",") {
++		lo, hi, ok := strings.Cut(part, "-")
++		a, err := strconv.Atoi(lo)
++		if err != nil {
++			continue
++		}
++		b := a
++		if ok {
++			if b, err = strconv.Atoi(hi); err != nil {
++				continue
++			}
++		}
++		for p := a; p <= b && p-a < 1024; p++ {
++			ports = append(ports, uint16(p))
++		}
++	}
++	return ports
+ }
+ 
+ // wakeAtLocked makes the snapshot anew at next, when a debounced path is due
+diff -ruN a/client/live_cut_test.go b/client/live_cut_test.go
+--- client/live_cut_test.go	1970-01-01 07:30:00
++++ client/live_cut_test.go	2026-11-08 18:23:12
+@@ -0,0 +1,44 @@
++package client
++
++import (
++	"encoding/json"
++	"testing"
++	"time"
++
++	"github.com/kittors/deneb/client/model"
++	"github.com/kittors/deneb/engine/localapi/apitype"
++	"github.com/kittors/deneb/engine/localapi/localclient"
++	"github.com/kittors/deneb/proto"
++)
++
++// A use this computer cuts comes through, for a few seconds, as the
++// device that used it and the service as the card names it (scene 5); the
++// usage the engine pushes apart from its state changes the "已连接" count.
++func TestLiveTakesCutsAndUsage(t *testing.T) {
++	now := time.Date(2026, 11, 8, 18, 0, 0, 0, time.UTC)
++	l := NewLive(localclient.New("/nowhere"))
++	l.now = func() time.Time { return now }
++	raw, _ := json.Marshal(proto.UserView{Version: 3, Me: "me",
++		People: []proto.Person{{ID: "me", Name: "me"}, {ID: "jie", Name: "jie", DisplayName: "阿杰"}},
++		LANs: []proto.LANView{{ID: "weekend", Name: "周末联机", Owner: "jie",
++			Members: []proto.Member{{Person: "jie", State: proto.MemberJoined}, {Person: "me", State: proto.MemberJoined}},
++			Devices: []proto.LANDevice{{Device: "mac", Services: []proto.ServiceState{{Service: proto.Service{Kind: "web", Name: "网页",
++				Ports: []proto.PortRange{proto.Port(proto.TCP, 80)}}, On: true}}}, {Device: "pc"}}}},
++		Devices: []proto.DeviceView{{ID: "mac", Owner: "me", Name: "mac"}, {ID: "pc", Owner: "jie", Name: "pc", DisplayName: "阿杰的台式机"}},
++	})
++	l.takeState(&apitype.State{Version: 3, LoggedIn: true, User: "me", SelfDeviceID: "mac", UserView: raw})
++	l.takeUsage(nil, []apitype.ServiceUse{{DeviceID: "pc", Proto: "tcp", Port: 3389, Since: now.Add(-time.Minute)}})
++	if s := l.Snapshot(); !s.Using["pc"].Equal(now.Add(-time.Minute)) {
++		t.Errorf("using %v", s.Using)
++	}
++	l.takeCut([]apitype.ServiceUse{{DeviceID: "pc", Scopes: []apitype.ScopeID{apitype.ScopeID(proto.LANScope("weekend"))}, Proto: "tcp", Port: 80}})
++	s := l.Snapshot()
++	if len(s.Cuts) != 1 || s.Cuts[0] != (model.Cut{Device: "pc", Service: "网页", At: now}) {
++		t.Fatalf("cuts %+v", s.Cuts)
++	}
++	now = now.Add(cutKeep + time.Second)
++	l.update(func(time.Time) {})
++	if s := l.Snapshot(); len(s.Cuts) != 0 {
++		t.Errorf("a cut kept past its time: %+v", s.Cuts)
++	}
++}
+diff -ruN a/client/live_test.go b/client/live_test.go
+--- client/live_test.go	2026-11-08 14:01:59
++++ client/live_test.go	2026-11-08 18:23:29
+@@ -7,6 +7,7 @@
+ 	"os"
+ 	"path/filepath"
+ 	"slices"
++	"strings"
+ 	"testing"
+ 	"time"
+ 
+@@ -374,4 +375,31 @@
+ 	waitFor(t, l, "阿杰's desktop back", func(s *model.Snapshot) bool {
+ 		return !s.LAN(weekend).Paused && s.Path(model.DeviceID(fakeworld.JiePC)).Kind != model.PathPaused
+ 	})
++}
++
++// What this computer uses now comes through as since when, for the "已连接"
++// count, the oldest connection to each device; another program's tunnel
++// taking Deneb's connections comes through as the amber pill's notice, its
++// rule with it (DESIGN §6.7, §6.8).
++func TestLiveUsingAndProxy(t *testing.T) {
++	w, l := live(t, fakeworld.Ready)
++	waitFor(t, l, "the world", func(s *model.Snapshot) bool { return len(s.LANs) == 2 })
++	t0 := time.Date(2026, 11, 8, 18, 0, 0, 0, time.UTC)
++	build := apitype.DeviceID(fakeworld.Build)
++	w.E.Update(func(s *apitype.State) {
++		s.Using = []apitype.ServiceUse{
++			{DeviceID: build, Proto: "tcp", Port: 80, Conns: 1, Since: t0.Add(time.Minute)},
++			{DeviceID: build, Proto: "tcp", Port: 22, Conns: 2, Since: t0},
++		}
++		s.Engine.Problems = append(s.Engine.Problems, apitype.Problem{Code: apitype.ProblemProxy, Message: "别的程序的网卡 utun7 接走了…", Rule: "IP-CIDR,10.48.0.0/16,DIRECT"})
++	})
++	s := waitFor(t, l, "the using and the notice", func(s *model.Snapshot) bool { return len(s.Using) > 0 && len(s.Notices) > 0 })
++	if got := s.Using[model.DeviceID(build)]; !got.Equal(t0) {
++		t.Errorf("构建服务器 used since %v, want the oldest, %v", got, t0)
++	}
++	if n := s.Notices[0]; n.Code != "proxy" || n.Short != "Clash 可能挡住连接" || n.Rule != "IP-CIDR,10.48.0.0/16,DIRECT" || strings.Contains(n.Message, "utun") {
++		t.Errorf("the notice: %+v", n)
++	}
++	w.E.Update(func(s *apitype.State) { s.Using, s.Engine.Problems = nil, nil })
++	waitFor(t, l, "nothing used, nothing to tell", func(s *model.Snapshot) bool { return len(s.Using) == 0 && len(s.Notices) == 0 })
+ }
+diff -ruN a/client/model/model.go b/client/model/model.go
+--- client/model/model.go	2026-11-08 14:01:59
++++ client/model/model.go	2026-11-08 18:19:35
+@@ -74,6 +74,11 @@
+ 	// Using is since when this computer has used a service of each device it
+ 	// uses one of now, for the "已连接" count (DESIGN §6.7).
+ 	Using map[DeviceID]time.Time
++	// Cuts are the uses of this computer's services it cut just now, a
++	// service closed or a person refused while they used it (scene 5): each
++	// plays a short red light on that device's link, and its second line
++	// says so for a moment. The store keeps them a few seconds.
++	Cuts []Cut
+ 	// Features are what the control server does beyond M1 (Feature…), as
+ 	// its user view lists them: the view shows a control only where the
+ 	// server takes what it sends. An M1 server lists none, and neither does
+@@ -154,6 +159,14 @@
+ 	LANName string
+ 	Inviter Person
+ 	Expires time.Time
++}
++
++// Cut is a use of one of this computer's services cut off: who used it,
++// the service as the card names it, and when.
++type Cut struct {
++	Device  DeviceID
++	Service string
++	At      time.Time
+ }
+ 
+ // Notice is something the engine found that the person should know: the

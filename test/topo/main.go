@@ -45,7 +45,24 @@ var (
 	only      = flag.String("only", "", "comma-separated checks to run (default: all)")
 	verbose   = flag.Bool("v", false, "print every docker command")
 	repeat    = flag.Int("repeat", 1, "run the chosen checks this many times (to catch a flaky one)")
+	// Mixed runs: during a rollout M1 and M2 engines meet (the real
+	// machines' engines are M1 while this Mac's goes M2, then the other way
+	// round). An M1 binary for linux/amd64 runs under colima's QEMU.
+	m1Bin   = flag.String("m1", "", "an M1 engine binary (linux) under the home directory: the nodes in -m1-nodes run it")
+	m1Nodes = flag.String("m1-nodes", "build,nas", "with -m1: the nodes that run the M1 engine")
 )
+
+// controlPin is the control server's pin, for the checks that start a
+// Deneb relay of their own (M4).
+var controlPin string
+
+// isM1 reports whether node n runs the M1 engine in this run.
+func isM1(n string) bool {
+	if *m1Bin == "" {
+		return false
+	}
+	return slices.Contains(strings.Split(*m1Nodes, ","), n)
+}
 
 const (
 	image   = "deneb-topo:latest"
@@ -87,38 +104,69 @@ func main() {
 	run := filepath.Join(dir, ".run", "fake")
 	os.RemoveAll(run)
 	os.MkdirAll(filepath.Join(run, "certs"), 0o755)
+	if *m1Bin != "" {
+		abs, err := filepath.Abs(*m1Bin)
+		if err != nil {
+			fatal("-m1: %v", err)
+		}
+		if _, err := os.Stat(abs); err != nil {
+			fatal("-m1: %v", err)
+		}
+		*m1Bin = abs
+	}
 	step("up", func() error { return up(run) })
+	if *m1Bin != "" {
+		for _, n := range nodes {
+			s, err := state(n.name)
+			if err == nil {
+				fmt.Printf("     %s runs %s\n", n.name, s.Engine.Version)
+			}
+		}
+	}
 	if !*keep {
 		defer teardown()
 	}
 	step("login", login)
 	step("lans", setupLANs)
 
-	checks := []struct {
+	type check struct {
 		name string
 		fn   func() error
-	}{
-		{"visibility", checkVisibility},
-		{"ping-matrix", checkPingMatrix},
-		{"paths", checkPaths},
-		{"services", checkServices},
-		{"transit", checkTransit},
-		{"spoof", checkSpoof},
-		{"pause", checkPause},
-		{"add-remove-undo", checkAddRemoveUndo},
-		{"refuse", checkRefuse},
-		{"udp-block", checkUDPBlock},
-		{"two-lans-long-connections", checkTwoLANs},
-		{"control-down", checkControlDown},
-		{"logout-login", checkLogoutLogin},
-		{"restart", checkRestart},
+		m2   []string // nodes it drives through M2-only hooks: skipped when one runs M1
+	}
+	checks := []check{
+		{"visibility", checkVisibility, nil},
+		{"ping-matrix", checkPingMatrix, nil},
+		{"paths", checkPaths, nil},
+		{"services", checkServices, nil},
+		{"transit", checkTransit, nil},
+		{"spoof", checkSpoof, nil},
+		{"pause", checkPause, nil},
+		{"add-remove-undo", checkAddRemoveUndo, nil},
+		{"refuse", checkRefuse, nil},
+		{"udp-block", checkUDPBlock, nil},
+		{"two-lans-long-connections", checkTwoLANs, nil},
+		{"control-down", checkControlDown, nil},
+		{"logout-login", checkLogoutLogin, nil},
+		{"restart", checkRestart, nil},
 		// M2
-		{"idle", checkIdle},
-		{"lossy-line", checkLossy},
-		{"pause-resume", checkPauseResume},
-		{"cross-relay", checkCrossRelay},
-		{"net-change", checkNetChange},
-		{"sleep", checkSleep},
+		{"idle", checkIdle, []string{"mac"}},
+		{"lossy-line", checkLossy, []string{"mac", "build"}},
+		{"lossy-both", checkLossyBoth, []string{"mac", "build"}},
+		{"pause-resume", checkPauseResume, []string{"mac"}},
+		{"cross-relay", checkCrossRelay, []string{"mac", "nas"}},
+		{"net-change", checkNetChange, []string{"mac"}},
+		{"sleep", checkSleep, []string{"mac"}},
+		{"long-idle", checkLongIdle, nil},
+		{"pause-shared", checkPauseShared, []string{"mac"}},
+		{"relay-first", checkRelayFirst, []string{"nas"}},
+		// M3
+		{"share", checkShare, nil},
+		// M4
+		{"own-relay", checkOwnRelay, []string{"mac", "build"}},
+	}
+	for _, c := range m5Checks() { // M5: only with -m5
+		checks = append(checks, check{c.name, c.fn, nil})
 	}
 	want := map[string]bool{}
 	for _, s := range strings.Split(*only, ",") {
@@ -127,15 +175,16 @@ func main() {
 		}
 	}
 	var failed []string
-	var runs []struct {
-		name string
-		fn   func() error
-	}
+	var runs []check
 	for i := 0; i < max(*repeat, 1); i++ {
 		runs = append(runs, checks...)
 	}
 	for _, c := range runs {
 		if len(want) > 0 && !want[c.name] {
+			continue
+		}
+		if i := slices.IndexFunc(c.m2, isM1); i >= 0 {
+			fmt.Printf("skip %-28s %s runs M1\n", c.name, c.m2[i])
 			continue
 		}
 		start := time.Now()
@@ -220,6 +269,8 @@ func build(root, dir string) error {
 		{"denebd", "./cmd/denebd", "denebtest"},
 		{"deneb-control", "./cmd/deneb-control", ""},
 		{"derper", "./test/topo/derper", ""},
+		{"longconn", "./test/topo/longconn", ""},
+		{"deneb-relay", "./cmd/deneb-relay", ""},
 	} {
 		args := []string{"build", "-o", filepath.Join(bin, b.out)}
 		if b.tags != "" {
@@ -306,12 +357,14 @@ func up(run string) error {
 		}
 	}
 	pin, err := waitFor(20*time.Second, func() (string, error) {
+		// (kept in controlPin for the checks that start relays: M4)
 		out, err := docker("exec", "dnb-control", "cat", "/data/tls/pin.txt")
 		return strings.TrimSpace(out), err
 	})
 	if err != nil {
 		return fmt.Errorf("control server pin: %w", err)
 	}
+	controlPin = pin
 	var both []byte
 	for _, f := range []string{filepath.Join(certs, "derper.pem"), filepath.Join(certs+"2", "derper.pem")} {
 		b, err := waitFor(10*time.Second, func() (string, error) {
@@ -327,12 +380,25 @@ func up(run string) error {
 		return err
 	}
 	for _, n := range nodes {
-		// -idle 6s: M2's idle check need not wait the default 45 s.
-		// -path-by-loss: M2's lossy-line check (off by default for now).
 		args := []string{"node", n.gw, "-control", "https://" + ctlIP + ":" + ctlPort, "-control-pin", pin,
-			"-relay-ca", "/certs/relays.pem", "-name", n.display, "-kind", n.kind, "-userview=false", "-idle", "6s", "-path-by-loss"}
-		args = append(args, n.extra...)
-		if err := runc(n.name, n.net, n.ip, []string{"--cap-add", "NET_ADMIN", "-v", certs + ":/certs:ro"}, args...); err != nil {
+			"-relay-ca", "/certs/relays.pem", "-name", n.display, "-kind", n.kind, "-userview=false"}
+		extra := []string{"--cap-add", "NET_ADMIN", "-v", certs + ":/certs:ro"}
+		if os.Getenv("DENEB_WG_VERBOSE") != "" {
+			extra = append(extra, "-e", "DENEB_WG_VERBOSE=1") // every WireGuard line in the engines' logs
+		}
+		if isM1(n.name) {
+			// The M1 binary replaces the image's, for its command line too.
+			// An amd64 one runs under QEMU, where Go's preemption signals
+			// can crash a program (an M1 engine died once with SIGSEGV at a
+			// garbage address; on real amd64 it has run for days).
+			extra = append(extra, "-v", *m1Bin+":/usr/local/bin/denebd:ro", "-e", "GODEBUG=asyncpreemptoff=1")
+		} else {
+			// -idle 6s: M2's idle check need not wait the default 45 s.
+			// -path-by-loss: M2's lossy-line check (off by default for now).
+			args = append(args, "-idle", "6s", "-path-by-loss")
+			args = append(args, n.extra...)
+		}
+		if err := runc(n.name, n.net, n.ip, extra, args...); err != nil {
 			return err
 		}
 	}
@@ -551,6 +617,20 @@ func checkPaths() error {
 			return err
 		}
 	}
+	// Handshake messages go both ways only between engines that both drop
+	// repeats (proto.CapHandshakeDedupe), passed on by the control server.
+	for _, c := range [][2]string{{"mac", "build"}, {"build", "mac"}, {"mac", "nas"}, {"desktop", "nas"}, {"nas", "desktop"}} {
+		if isM1(c[0]) {
+			continue // no such field
+		}
+		p, err := debugPath(c[0], c[1])
+		if err != nil {
+			return err
+		}
+		if want := !isM1(c[1]); p.HSBoth != want {
+			return fmt.Errorf("%s to %s: hsBoth %v, want %v: handshakes both ways only when both engines drop repeats", c[0], c[1], p.HSBoth, want)
+		}
+	}
 	return nil
 }
 
@@ -700,22 +780,39 @@ func checkPause() error {
 	if _, err := deneb("mac", "lan", "pause", "周末联机"); err != nil {
 		return err
 	}
+	resumed := false
+	defer func() { // a failed step must not leave 周末联机 paused for the checks after it
+		if !resumed {
+			deneb("mac", "lan", "resume", "周末联机")
+		}
+	}()
 	if err := pingFails("mac", "nas"); err != nil {
 		return err
 	}
 	if err := pingOK("mac", "build", 2*time.Second); err != nil {
 		return err
 	}
-	// The pause reaches the server, and nas stops seeing the Mac too.
+	// The pause reaches the server, and nas no longer shares anything with
+	// the Mac: an M2 server keeps the Mac in nas's map with the LAN under
+	// pausedScopes (an M1 server took it out), and nas cannot reach it.
 	if _, err := waitFor(5*time.Second, func() (string, error) {
-		got, err := peersOf("nas")
-		if err == nil && slices.Contains(got, "mac") {
-			err = errors.New("nas still sees the Mac")
+		s, err := state("nas")
+		if err != nil {
+			return "", err
 		}
-		return "", err
+		for _, p := range s.Peers {
+			if p.Name == "mac" && len(p.Scopes) > 0 {
+				return "", fmt.Errorf("nas still shares %v with the Mac", p.Scopes)
+			}
+		}
+		return "", nil
 	}); err != nil {
 		return err
 	}
+	if err := pingFails("nas", "mac"); err != nil {
+		return err
+	}
+	resumed = true
 	if _, err := deneb("mac", "lan", "resume", "周末联机"); err != nil {
 		return err
 	}
@@ -727,10 +824,11 @@ func checkPause() error {
 
 // tick holds a long connection for secs seconds and returns its report.
 type tickResult struct {
-	Lines    int    `json:"lines"`
-	MaxGapMs int64  `json:"maxGapMs"`
-	Broken   bool   `json:"broken"`
-	Error    string `json:"error"`
+	Lines      int    `json:"lines"`
+	MaxGapMs   int64  `json:"maxGapMs"`
+	Broken     bool   `json:"broken"`
+	Error      string `json:"error"`
+	DurationMs int64  `json:"durationMs"`
 }
 
 func tick(from, to string, secs int) (tickResult, error) {
@@ -829,7 +927,9 @@ func checkUDPBlock() error {
 	if _, err := deneb("mac", "debug", "block", "build"); err != nil {
 		return err
 	}
-	if err := waitPath("mac", "build", apitype.PathRelay, 6*time.Second); err != nil {
+	// Packets also go through the relay from the trust time (2.5 s) on; the
+	// path is shown as the relay once the hold (6.5 s) runs out.
+	if err := waitPath("mac", "build", apitype.PathRelay, 9*time.Second); err != nil {
 		return err
 	}
 	toRelay := time.Since(t0)
@@ -846,8 +946,15 @@ func checkUDPBlock() error {
 	}
 	fmt.Printf("     udp-block: relay after %s, direct again after %s, long connection %d lines, longest stall %d ms\n",
 		toRelay.Round(100*time.Millisecond), back.Round(100*time.Millisecond), r.Lines, r.MaxGapMs)
-	if r.Broken || r.MaxGapMs > 4000 {
-		return fmt.Errorf("long connection: %+v", r)
+	// M2 engines on both ends, with traffic: the relay copies start after a
+	// second of silence (M1: 2.5 s; its item 10 stalled 2.6 s on the real
+	// machines). With an M1 end, that end still waits 2.5 s.
+	limit := int64(2000)
+	if isM1("mac") || isM1("build") {
+		limit = 4000
+	}
+	if r.Broken || r.MaxGapMs > limit {
+		return fmt.Errorf("long connection (limit %d ms): %+v", limit, r)
 	}
 	return nil
 }

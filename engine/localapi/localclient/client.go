@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
@@ -26,6 +27,12 @@ import (
 // ErrNotRunning means nothing listens on the socket: the engine is not
 // started, or it is listening somewhere else.
 var ErrNotRunning = errors.New("deneb engine is not running")
+
+// ErrNotAllowed means an engine is there but this user may not use it:
+// it runs for another user of this computer (a system service or daemon
+// installed for them), or the endpoint is someone else's. Starting a
+// user-space engine would not help, so the window says so instead.
+var ErrNotAllowed = errors.New("deneb engine here is not this user's")
 
 // Client is safe for concurrent use.
 type Client struct {
@@ -73,8 +80,14 @@ func (c *Client) dial(ctx context.Context) (net.Conn, string, error) {
 	}
 	user := socket.UserPath()
 	if sys := socket.SystemPath(); sys != "" && sys != user && socket.Exists(sys) {
-		if conn, err := socket.Dial(ctx, sys); err == nil {
+		conn, err := socket.Dial(ctx, sys)
+		if err == nil {
 			return conn, sys, nil
+		}
+		if errors.Is(err, fs.ErrPermission) {
+			// The system's engine runs for another user: this one's own
+			// would not be this computer's (M6: ErrNotAllowed).
+			return nil, sys, err
 		}
 		// A socket file nobody answers on: a kernel-mode engine that did not
 		// stop cleanly. Fall back to this user's engine.
@@ -151,8 +164,11 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 }
 
 func wrapDialErr(err error) error {
+	if errors.Is(err, fs.ErrPermission) || errors.Is(err, socket.ErrNotOurs) {
+		return fmt.Errorf("%w (%v)", ErrNotAllowed, err)
+	}
 	var oe *net.OpError
-	if errors.As(err, &oe) && oe.Op == "dial" {
+	if errors.As(err, &oe) && oe.Op == "dial" || errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("%w (%v)", ErrNotRunning, err)
 	}
 	return err
@@ -316,6 +332,7 @@ func (c *Client) Ping(ctx context.Context, to string, o PingOptions, each func(a
 		return nil, decodeError(resp)
 	}
 	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(make([]byte, 64<<10), 16<<20) // the summary of 1000 pings is one line of about 120 KB
 	for sc.Scan() {
 		var line apitype.PingLine
 		if err := json.Unmarshal(sc.Bytes(), &line); err != nil {
@@ -351,11 +368,51 @@ func (c *Client) UserView(ctx context.Context) (json.RawMessage, error) {
 	return raw, c.do(ctx, "GET", "/v1/userview", nil, &raw)
 }
 
+// RelayUsage fetches what my relays carried this month (proto.RelayUsage as
+// JSON), for the relay cards (M4). Ask when a card opens; it is not pushed.
+func (c *Client) RelayUsage(ctx context.Context) (json.RawMessage, error) {
+	var raw json.RawMessage
+	return raw, c.do(ctx, "GET", "/v1/relay-usage", nil, &raw)
+}
+
 // PreviewInvite asks what an invite link is for, without accepting it. The
 // answer is proto.InvitePreview as JSON. Read-only, so no idempotency key.
 func (c *Client) PreviewInvite(ctx context.Context, invite string) (json.RawMessage, error) {
 	var raw json.RawMessage
 	return raw, c.do(ctx, "POST", "/v1/invite/preview", apitype.InvitePreviewRequest{Invite: invite}, &raw)
+}
+
+// Shutdown stops a user-space engine, as the window does when the system
+// service takes its place. The engine answers first, then stops.
+func (c *Client) Shutdown(ctx context.Context) error {
+	return c.do(ctx, "POST", "/v1/shutdown", nil, nil)
+}
+
+// UpdateEngine asks the engine, when it is the Windows service, to replace
+// itself with the executable at path (absolute). The window calls it at
+// start when the engine it ships is not the one running.
+func (c *Client) UpdateEngine(ctx context.Context, path string) (*apitype.UpdateResult, error) {
+	var res apitype.UpdateResult
+	return &res, c.do(ctx, "POST", "/v1/engine/update", apitype.UpdateRequest{Path: path}, &res)
+}
+
+// Diagnostics writes the engine's diagnostics zip to w: state, paths,
+// counters and the log, without keys or traffic.
+func (c *Client) Diagnostics(ctx context.Context, w io.Writer) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", base+"/v1/diagnostics", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return wrapDialErr(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return decodeError(resp)
+	}
+	_, err = io.Copy(w, resp.Body)
+	return err
 }
 
 // RawStream sends a GET and calls fn for each line of the answer: the test
@@ -374,6 +431,7 @@ func (c *Client) RawStream(ctx context.Context, path string, fn func([]byte) err
 		return decodeError(resp)
 	}
 	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(make([]byte, 64<<10), 16<<20)
 	for sc.Scan() {
 		if err := fn(sc.Bytes()); err != nil {
 			return err

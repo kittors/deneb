@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/binary"
+	"fmt"
 	"net/netip"
 	"os"
 	"sync"
@@ -233,6 +234,177 @@ func TestKernelModeDataPath(t *testing.T) {
 	}
 }
 
+// fragment splits an IPv4 packet as the system does for an interface MTU
+// of mtu: pieces of the same datagram (IP ID id), all but the last with
+// more-fragments set, data in multiples of 8 bytes.
+func fragment(p []byte, id uint16, mtu int) [][]byte {
+	data, step := p[20:], (mtu-20)&^7
+	var out [][]byte
+	for off := 0; off < len(data); off += step {
+		end := min(off+step, len(data))
+		f := make([]byte, 20+end-off)
+		copy(f, p[:20])
+		copy(f[20:], data[off:end])
+		binary.BigEndian.PutUint16(f[2:], uint16(len(f)))
+		binary.BigEndian.PutUint16(f[4:], id)
+		frag := uint16(off / 8)
+		if end < len(data) {
+			frag |= 0x2000
+		}
+		binary.BigEndian.PutUint16(f[6:], frag)
+		binary.BigEndian.PutUint16(f[10:], 0)
+		binary.BigEndian.PutUint16(f[10:], csum(f[:20], 0))
+		out = append(out, f)
+	}
+	return out
+}
+
+// awaitDatagram reassembles what the engine hands the system from src with
+// protocol proto, as the system would: the IP payload of the first
+// datagram that arrives whole within d, or nil.
+func (f *fakeTUN) awaitDatagram(d time.Duration, src netip.Addr, proto uint8) []byte {
+	type parts struct {
+		data map[int][]byte
+		last int // end of the piece without more-fragments; -1 until it comes
+	}
+	got := map[uint16]*parts{}
+	deadline := time.After(d)
+	for {
+		select {
+		case p := <-f.fromEngine:
+			if p[9] != proto || from(p) != src {
+				continue
+			}
+			frag := binary.BigEndian.Uint16(p[6:])
+			off, more := int(frag&0x1fff)*8, frag&0x2000 != 0
+			if off == 0 && !more {
+				return p[20:]
+			}
+			id := binary.BigEndian.Uint16(p[4:])
+			ps := got[id]
+			if ps == nil {
+				ps = &parts{data: map[int][]byte{}, last: -1}
+				got[id] = ps
+			}
+			ps.data[off] = p[20:]
+			if !more {
+				ps.last = off + len(p) - 20
+			}
+			var whole []byte
+			for next := 0; ps.last >= 0; {
+				b, ok := ps.data[next]
+				if !ok {
+					break
+				}
+				whole = append(whole, b...)
+				if next += len(b); next == ps.last {
+					return whole
+				}
+			}
+		case <-deadline:
+			return nil
+		}
+	}
+}
+
+// TestKernelModeLargePackets: a ping or a UDP datagram larger than the
+// MTU leaves the system in pieces, crosses to a user-space peer, and its
+// answer, as large, comes back in pieces, which the system puts together.
+// The filter lets each piece after the first through on the strength of
+// the first, which it judged: a large ping's reply was once refused there,
+// in both engines, and never arrived (Windows w2, 11-09).
+func TestKernelModeLargePackets(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs two engines")
+	}
+	fake := newFakeTUN()
+	old := openKernel
+	openKernel = func(tun.Config, func(string, ...any)) (*tun.Kernel, error) { return tun.Fake(fake, "fake0"), nil }
+	defer func() { openKernel = old }()
+
+	relay, pool := testRelay(t)
+	w := &world{relay: relay, members: map[proto.ScopeID][]*tnode{}, open: map[proto.ScopeID]map[*tnode][]proto.Service{}, refuses: map[[2]*tnode]bool{}}
+	mk := func(i int, name string, mode apitype.Mode) *tnode {
+		e, err := New(Options{StateDir: t.TempDir(), Mode: mode, BindInterface: "none", RelayRoots: pool, Logf: quiet, Version: "test"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(e.Close)
+		n := &tnode{e: e, id: proto.DeviceID("dev-" + name), name: name, owner: "kittors", person: "p-kittors",
+			addr: netip.AddrFrom4([4]byte{10, 77, 0, byte(i)})}
+		w.nodes = append(w.nodes, n)
+		return n
+	}
+	mac := mk(1, "mac", apitype.ModeKernel)
+	build := mk(2, "build", apitype.ModeUserspace)
+	w.members["lan/studio"] = []*tnode{mac, build}
+	game := proto.Service{Kind: proto.ServiceGame, Name: "游戏", Ports: []proto.PortRange{{Proto: proto.UDP, First: 27015, Last: 27015}}}
+	w.open["lan/studio"] = map[*tnode][]proto.Service{build: {game}}
+	w.push()
+	for _, n := range w.nodes {
+		n.e.Start()
+	}
+	pc, err := build.e.stack.ListenUDP(27015)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pc.Close()
+	go func() { // echoes datagrams back
+		buf := make([]byte, 65535)
+		for {
+			n, from, err := pc.ReadFrom(buf)
+			if err != nil {
+				return
+			}
+			pc.WriteTo(buf[:n], from)
+		}
+	}()
+
+	// try sends the pieces until the whole answer comes back: the first
+	// tries may go before WireGuard's handshake.
+	try := func(what string, pieces [][]byte, proto uint8, check func([]byte) bool) {
+		t.Helper()
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			for _, p := range pieces {
+				fake.toEngine <- p
+			}
+			if got := fake.awaitDatagram(time.Second, build.addr, proto); got != nil {
+				if !check(got) {
+					t.Fatalf("%s: the answer differs from what was sent", what)
+				}
+				return
+			}
+		}
+		t.Fatalf("%s: no whole answer (drops here %v, at build %v)", what, mac.e.f.Drops(), build.e.f.Drops())
+	}
+	for i, size := range []int{1400, 3000} {
+		data := make([]byte, size)
+		for j := range data {
+			data[j] = byte(j * 7)
+		}
+		echo := append([]byte{8, 0, 0, 0, 0x12, 0x34, 0, byte(i + 1)}, data...)
+		binary.BigEndian.PutUint16(echo[2:], csum(echo, 0))
+		pieces := fragment(ip4(1, mac.addr, build.addr, echo), uint16(0x100+i), 1280)
+		if len(pieces) < 2 {
+			t.Fatalf("ping of %d bytes: %d pieces", size, len(pieces))
+		}
+		try(fmt.Sprintf("ping of %d bytes in %d pieces", size, len(pieces)), pieces, 1, func(r []byte) bool {
+			return r[0] == 0 && string(r[8:]) == string(data)
+		})
+
+		dgram := make([]byte, 8+size)
+		binary.BigEndian.PutUint16(dgram[0:], 40000)
+		binary.BigEndian.PutUint16(dgram[2:], 27015)
+		binary.BigEndian.PutUint16(dgram[4:], uint16(len(dgram)))
+		copy(dgram[8:], data)
+		pieces = fragment(ip4(17, mac.addr, build.addr, dgram), uint16(0x200+i), 1280)
+		try(fmt.Sprintf("UDP datagram of %d bytes in %d pieces", size, len(pieces)), pieces, 17, func(r []byte) bool {
+			return binary.BigEndian.Uint16(r[2:]) == 40000 && string(r[8:]) == string(data)
+		})
+	}
+}
+
 // lookup asks the engine's DNS (kernel mode, through the fake utun) for an
 // A record, as the system resolver would, and returns the answer.
 func lookup(t *testing.T, fake *fakeTUN, self, dnsAddr netip.Addr, name string, id uint16) dnsmessage.Message {
@@ -335,5 +507,54 @@ func TestKernelModeNamesFollowMembership(t *testing.T) {
 	case <-flushed:
 		t.Fatal("flushed again with nothing new")
 	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// Kernel mode that cannot start here runs in user space instead (plan
+// §2.3): the block already taken by another network, no administrator
+// rights, or Linux without systemd-resolved. The state says user space, and
+// the device works through its SOCKS5 and its own ping.
+func TestKernelModeFallsBackToUserSpace(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs two engines")
+	}
+	for _, why := range []error{
+		fmt.Errorf("%w: an existing route for 10.77.3.0/24 is inside 10.77.0.0/16", tun.ErrConflict),
+		fmt.Errorf("%w: it creates an interface and a route", tun.ErrNoPermission),
+		tun.ErrNoResolver,
+	} {
+		t.Run(why.Error(), func(t *testing.T) {
+			old := openKernel
+			openKernel = func(tun.Config, func(string, ...any)) (*tun.Kernel, error) { return nil, why }
+			defer func() { openKernel = old }()
+			relay, pool := testRelay(t)
+			w := &world{relay: relay, members: map[proto.ScopeID][]*tnode{}, open: map[proto.ScopeID]map[*tnode][]proto.Service{}, refuses: map[[2]*tnode]bool{}}
+			mk := func(i int, name string, mode apitype.Mode) *tnode {
+				e, err := New(Options{StateDir: t.TempDir(), Mode: mode, BindInterface: "none", RelayRoots: pool, Logf: quiet, Version: "test"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(e.Close)
+				n := &tnode{e: e, id: proto.DeviceID("dev-" + name), name: name, owner: "kittors", person: "p-kittors",
+					addr: netip.AddrFrom4([4]byte{10, 77, 0, byte(i)})}
+				w.nodes = append(w.nodes, n)
+				return n
+			}
+			mac := mk(1, "mac", apitype.ModeKernel)
+			build := mk(2, "build", apitype.ModeUserspace)
+			w.members["lan/studio"] = []*tnode{mac, build}
+			w.open["lan/studio"] = map[*tnode][]proto.Service{}
+			w.push()
+			for _, n := range w.nodes {
+				n.e.Start()
+			}
+			pingOK(t, mac, "build", 5*time.Second)
+			if m := mac.e.State().Mode; m != apitype.ModeUserspace {
+				t.Fatalf("mode %q, want userspace", m)
+			}
+			if mac.e.stack == nil || mac.e.kern != nil {
+				t.Fatal("no user-space stack, or a kernel interface")
+			}
+		})
 	}
 }

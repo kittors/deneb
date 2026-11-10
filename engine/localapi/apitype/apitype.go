@@ -69,6 +69,10 @@ type State struct {
 	Relays []Relay      `json:"relays"`
 	Paths  []PeerPath   `json:"paths"`
 	Usage  []ServiceUse `json:"usage"` // services of this device in use now
+	// Using are the peers' services this device uses now: connections it
+	// started to a peer's port (M2: "已连接 2:14" on the line to it).
+	// Kind and Name are empty; the user view has the names.
+	Using []ServiceUse `json:"using"`
 
 	Engine EngineInfo `json:"engine"`
 
@@ -94,8 +98,12 @@ type Device struct {
 // Peer is another device this one can see.
 type Peer struct {
 	Device
-	Scopes []ScopeID `json:"scopes"` // only the scopes both devices are in
-	Online bool      `json:"online"` // as the control server last saw it
+	Scopes []ScopeID `json:"scopes"` // only the scopes both devices are in, minus the ones the peer paused
+	// PausedScopes are scopes both devices are in that the peer paused on
+	// itself (M2). With Scopes empty the peer is kept only to come back at
+	// once: it sends nothing while paused, and its name does not resolve.
+	PausedScopes []ScopeID `json:"pausedScopes,omitempty"`
+	Online       bool      `json:"online"` // as the control server last saw it
 	// RefusedByPeer: the peer's owner does not let my owner use it, so this
 	// engine does not dial it. RefusedByMe: my owner does not let the peer's
 	// owner use this device, so this engine drops what the peer starts.
@@ -110,6 +118,16 @@ type Scope struct {
 	Paused bool      `json:"paused"` // set on this device only
 	Open   []Service `json:"open"`   // what this device opens to the scope's other members
 	Relays []RelayID `json:"relays"`
+	// Kind is "lan" or "share" (M3), for display. NoInbound: this device
+	// only connects out through the scope (a share's receiving side):
+	// nothing its peers start comes in, not even a ping.
+	Kind      string `json:"kind,omitempty"`
+	NoInbound bool   `json:"noInbound,omitempty"`
+	// Relay is the relay this device keeps for the scope (M4): the first
+	// on the scope's list it could connect to. Not that list's first when
+	// the first turned the device away or cannot be reached: the client
+	// shows "改走公共中转站".
+	Relay RelayID `json:"relay,omitempty"`
 }
 
 // Service is one port a device opens. Kind is proto.ServiceKind: screen,
@@ -148,8 +166,9 @@ type PeerPath struct {
 	Relay    RelayID  `json:"relay,omitempty"`    // when Kind is relay
 	Endpoint string   `json:"endpoint,omitempty"` // when Kind is direct: the peer's ip:port
 	RTTMs    int      `json:"rttMs"`              // 0 when unknown
-	// Loss over the last 10 s on the path in use: a direct path can answer
-	// and still lose a fifth of the packets (multi-lan-tech §6.8).
+	// Loss over the last 30 s on the path in use, 0 until at least 20
+	// pings were judged: a direct path can answer and still lose a fifth
+	// of the packets (multi-lan-tech §6.8).
 	Loss  float32   `json:"loss"`
 	Since time.Time `json:"since"` // when this Kind began; scene 3 counts "已连接 2:14:08" from it
 	// Idle: no traffic lately, so no probing either (M2: a heartbeat only
@@ -165,11 +184,12 @@ type PeerPath struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// ServiceUse is a service of this device that a peer uses right now: its
-// connections to one port. When the service is closed, or the person
-// refused, scene 5 runs a short red light down these lines.
+// ServiceUse is a service in use right now: in State.Usage one of this
+// device's, used by a peer (when it is closed, or the person refused,
+// scene 5 runs a short red light down these lines); in State.Using a
+// peer's, used by this device. Either way, the connections to one port.
 type ServiceUse struct {
-	DeviceID DeviceID  `json:"deviceID"` // the peer using it
+	DeviceID DeviceID  `json:"deviceID"` // the peer: using it (Usage), or offering it (Using)
 	Scopes   []ScopeID `json:"scopes"`   // the LANs it is opened to that the peer shares
 	Kind     string    `json:"kind,omitempty"`
 	Name     string    `json:"name,omitempty"` // the service as opened, if it was
@@ -197,7 +217,29 @@ type EngineInfo struct {
 type Problem struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	// Rule, for ProblemProxy, is the line to add in the other program so
+	// it leaves Deneb's addresses alone, e.g. "IP-CIDR,10.48.0.0/16,DIRECT".
+	Rule string `json:"rule,omitempty"`
 }
+
+// ProblemProxy: in kernel mode, another program's tunnel (Clash, Surge or
+// v2rayN in TUN mode, a VPN) takes the connections to the LAN devices
+// (DESIGN §6.8). Problem.Rule is what to add in that program.
+const ProblemProxy = "proxy"
+
+// ProblemNoNetwork: this computer has no network at all: no default
+// route, or the interface it goes through (the one the engine is bound to,
+// when the default route is a proxy's tunnel) has no address. Reported the
+// moment the system says so, before any peer times out, and taken back as
+// soon as the network returns.
+const ProblemNoNetwork = "no-network"
+
+// ProblemLocalNetwork: the system refuses this device's packets to
+// local-network addresses: macOS's local network privacy, for a program
+// without the permission. Devices on the same LAN are then reached only
+// the long way, through the home's public address or a relay. Taken back
+// once a device on the local network answers.
+const ProblemLocalNetwork = "local-network"
 
 // EventType tells the kinds of GET /v1/watch events apart.
 type EventType string
@@ -209,7 +251,8 @@ const (
 	// EventPaths carries the PeerPath of every peer whose path changed.
 	// Path kinds go out as they happen; RTT and loss at most every 2 s.
 	EventPaths EventType = "paths"
-	// EventUsage carries State.Usage when it changed (at most every 2 s).
+	// EventUsage carries State.Usage and State.Using when either changed
+	// (at most every 2 s).
 	EventUsage EventType = "usage"
 	// EventCut carries the uses just cut: a service of this device closed
 	// to a LAN, or a person refused, while they were using it.
@@ -222,6 +265,7 @@ type Event struct {
 	State *State       `json:"state,omitempty"`
 	Paths []PeerPath   `json:"paths,omitempty"`
 	Usage []ServiceUse `json:"usage,omitempty"` // EventUsage (may be empty: nobody uses anything now)
+	Using []ServiceUse `json:"using,omitempty"` // EventUsage too: State.Using as it is now
 	Cut   []ServiceUse `json:"cut,omitempty"`
 }
 
@@ -376,4 +420,31 @@ type InvitePreviewRequest struct {
 type VersionInfo struct {
 	API    int    `json:"api"`
 	Engine string `json:"engine"`
+	// PID is the engine's process: `deneb shutdown` waits for it to end,
+	// so that an installer may then replace its executable.
+	PID int `json:"pid,omitempty"`
 }
+
+// UpdateRequest asks the engine to replace itself with the executable at
+// Path, where it is a system service that can (M6: Windows; the window
+// asks at every start when the engine it ships is not the one running).
+type UpdateRequest struct {
+	Path string `json:"path"`
+}
+
+// UpdateResult says what came of an UpdateRequest.
+type UpdateResult struct {
+	Result  string `json:"result"`            // one of the Update… values
+	Version string `json:"version,omitempty"` // the executable's version, once read
+	Message string `json:"message,omitempty"`
+}
+
+const (
+	UpdateDone         = "updated"       // replaced: the service starts again on it in 2–3 s
+	UpdateSame         = "same"          // that version is the one running
+	UpdateOlder        = "older"         // refused: older than the one running
+	UpdateBadSignature = "bad-signature" // refused: not signed by this engine's publisher
+	UpdateNeedsInstall = "needs-install" // unsigned releases: the window installs the service again (one UAC prompt)
+	UpdateNotService   = "not-service"   // this engine is not a system service: restarting it updates it
+	UpdateFailed       = "failed"        // see Message
+)

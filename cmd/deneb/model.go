@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strconv"
 	"sync"
 	"time"
 
@@ -33,7 +34,11 @@ type service struct {
 // as each snapshot comes (refresh) and changes them only by sending ops, so
 // that a device on its way out of the LAN still shows as it was.
 type facts struct {
+	// id keys it on the canvas: the device's own id, or in the "全部" view,
+	// for its second region and on, the LAN's and the device's (spot).
 	id, kind, owner, name string
+	dev                   model.DeviceID // the device, as the snapshot names it
+	lan                   model.LANID    // the LAN it shows in: the canvas's, or its region's
 	// path is how this computer reaches it: "self", "direct", "relay",
 	// "connecting", "unreachable", "offline", "paused" or "refused".
 	path      string
@@ -46,6 +51,14 @@ type facts struct {
 	services  []service       // what it opens in this LAN
 	addr      string
 	fqdn      string
+
+	// M2 (DESIGN §6.7–§6.8).
+	pending  bool        // it waits for the owner to let it into this LAN
+	login    model.Login // when its login runs out: mine only, another's only whether it has
+	lastSeen time.Time   // when the server last heard from it, while offline
+	using    time.Time   // since when this computer uses one of its services
+	twin     int         // 2, 3…: the second, third device of its name on the canvas
+	stale    bool        // mine, of a name another of mine has, and gone for 30 days
 }
 
 // device is a tile on the canvas: its facts, and how the view shows it.
@@ -66,6 +79,7 @@ type device struct {
 	aimed           bool      // on its way into the tray, and the tray's slot is known
 	dim             float32   // how far its link has faded, as it is held over the tray (0 to 1)
 	cut             float32   // how far its link is cut, its owner refused on this computer (0 to 1)
+	faded           float32   // how far it dims with its region while another LAN has the focus (0 to 1)
 	way             ui.Point  // the way it steps aside for a dragged one
 	push            ui.Point  // how far it is stepping aside now
 	// popped is when it came onto the canvas without the hand, joined
@@ -87,6 +101,31 @@ type device struct {
 	// oldGeo is the shape of the link it had before it went from direct to
 	// the relay, or back: it fades as the new one grows out.
 	oldGeo *linkGeo
+	// waited: it was waiting to be let in as the canvas was last brought to
+	// the snapshot; approved is when it was let in, to spring up full.
+	waited   bool
+	approved time.Time
+	// turnedDown: mine, it waited and the owner turned it away. It keeps
+	// its dashed look on its way back to the tray.
+	turnedDown bool
+	// closed is the service of this computer it was using that was just
+	// closed to it (scene 5), told of at closedAt on the view's clock: a
+	// short red light runs on its link, and its second line says so for a
+	// moment. closedSeen is the store's moment of that cut, to tell a new
+	// one from it.
+	closed               string
+	closedAt, closedSeen time.Time
+	// elem keys its element while it moves from region to region in the
+	// "全部" view (rekey): the element, and its springs, stay with it.
+	elem string
+}
+
+// key is what its element is keyed by: its id as it came onto the canvas.
+func (d *device) key() string {
+	if d.elem != "" {
+		return d.elem
+	}
+	return d.id
 }
 
 // at is where the device rests: its base moved by the user.
@@ -95,7 +134,7 @@ func (d *device) at() ui.Point { return ui.Point{X: d.base.X + d.off.X, Y: d.bas
 // tileColor is the color of a device's tile: its owner's, or grey while it
 // is offline (DESIGN §3.4).
 func (a *app) tileColor(d *device) ui.Color {
-	if d.path == "offline" {
+	if d.path == "offline" || d.path == "paused" {
 		return offlineGrey
 	}
 	return a.people[d.owner].color
@@ -115,6 +154,11 @@ type relayStop struct {
 	way, push       ui.Point
 	side            string // where its name goes: the side no track leaves from
 	unplaced        bool   // it has no place on this LAN's canvas yet
+	// byHand: the person put it where it is, on this LAN's canvas, now or
+	// before; a place it took by itself is looked at again as it comes to
+	// show (checked), and changed if a track through it would cross a
+	// name or a tile there (relayClear).
+	byHand, checked bool
 	// shown: it was on the canvas in the frame before. It pops in when a
 	// link comes to go through it (popFirst, poppedAt), and shrinks away
 	// from leftAt, once the last link through it goes.
@@ -132,6 +176,9 @@ type notice struct {
 	undo  func()
 	until time.Time
 	top   bool // shown at the top, so as not to cover the device it is about
+	// commit sends what the toast holds back, once it goes without undo
+	// (hold).
+	commit func(c *ui.Context)
 }
 
 // pending is an op the view sent that the store has not confirmed yet. It
@@ -142,6 +189,7 @@ type pending struct {
 	done bool   // the store answered
 	ver  uint64 // the version it took effect in
 	err  error
+	held bool // shown, but not sent until its toast goes (hold)
 }
 
 // app is the client's view: the LAN on the canvas, as the store's snapshot
@@ -196,6 +244,7 @@ type app struct {
 	trayOut       time.Time // when the tray, going away, is gone
 
 	cardAt    ui.Rect               // where the card shows, in the canvas, from the last layout: drops keep clear of it
+	cardLeft  bool                  // the card shows at the canvas's left (cardOnLeft)
 	trayAt    ui.Rect               // where the tray shows, in the canvas, from the last layout: drops go into it
 	geos      map[string]*linkGeo   // each link's shape, while its ends stay put
 	beamPath  ui.Path               // the path a beam is drawn with, reused
@@ -206,6 +255,65 @@ type app struct {
 	// unreconciled: the snapshot changed since the canvas was last brought
 	// to it.
 	unreconciled bool
+	// clock is the view's clock as the frame being built has it (now).
+	clock time.Time
+
+	renaming *renaming       // a name edited in place (DESIGN §6.9)
+	picking  bool            // the card's row of kinds is open
+	watching map[string]bool // devices to tell of as they come online (DESIGN §6.8)
+	// seenInvitations are the invites by name whose card has shown once:
+	// one put off stays in the sidebar, rather than show again by itself.
+	seenInvitations map[string]bool
+	noticesDone     map[string]bool // notices put away with "知道了", by code
+
+	// A person's ball dragged from the header onto a LAN's row in the
+	// sidebar invites them there (DESIGN §6.7).
+	person     *personDrag
+	personOver model.LANID              // the row it would be let go on
+	ballOffs   map[string]*ui.Point     // each ball's drag offset
+	ballHome   map[string]ui.Point      // where each ball rests, in the window
+	stackWas   map[string]int           // how each person was in the stack, last frame
+	stackIn    map[string]time.Time     // when each was let in, to spring up full
+	remedyWas  map[string]string        // the card's last remedy for each device, kept while it folds shut
+	rows       map[model.LANID]*ui.Rect // where the sidebar's LAN rows are
+
+	// The "全部" view (DESIGN §9 scene 3): each LAN's region as it shows
+	// (regionRects) and as its devices rest (regionRest), how far the hand
+	// moved one (regionOff), the generation of its springs, when it came in
+	// and went, how it was painted last, and which one the hand holds.
+	regionRects  map[model.LANID]ui.Rect
+	regionRest   map[model.LANID]ui.Rect
+	regionOff    map[model.LANID]ui.Point
+	regionGen    map[model.LANID]int
+	regionBorn   map[model.LANID]time.Time
+	regionLeft   map[model.LANID]time.Time
+	regionLast   map[model.LANID]regionPaint
+	regionPaints []regionPaint
+	regionsLaid  bool
+	regionHeld   model.LANID
+	// focus is the LAN whose sidebar row the pointer is on, the others
+	// dimmed, until unfocusAt once it is off the rows.
+	focus     model.LANID
+	unfocusAt time.Time
+	// Built from the devices, a frame late: the region a device held would
+	// move into, and why another's stops at its region's edge.
+	dropOver, dropNext model.LANID
+	edgeNote, edgeNext *edgeNote
+	edgeHit            string // the device of another's that reached its region's edge in this drag
+
+	// The menu bar's panel (DESIGN §7.1): the chores it just did, said in
+	// their place for a moment; why something it did went wrong; how tall
+	// it last asked to be; and what the app gives it: the window brought to
+	// the front, the panel resized. panelShown is set while it shows, and
+	// systemPanel where the system's flyout draws its shadow and outline.
+	panelDone   map[string]*doneRow
+	panelNote   panelNote
+	panelHeight int
+	foldH       map[string]float32 // each folding group's height, as last laid out
+	showMain    func()
+	resizePanel func(height int)
+	panelShown  bool
+	systemPanel bool
 
 	naming *naming // a new LAN being named in the sidebar
 	// wantLAN is a LAN made or joined here that the snapshot does not have
@@ -266,8 +374,31 @@ func (a *app) device(id string) *device {
 
 // status is a device's second line: how it is connected, in a few words.
 func (a *app) status(d *device) string {
-	if a.cutOff(d) {
+	switch {
+	case a.all() && d.id == a.self:
+		// In no region of the "全部" view: how many it is in (scene 3).
+		if n := a.inLANs(); n > 0 {
+			return "在 " + strconv.Itoa(n) + " 个局域网里"
+		}
+		return "还没加进局域网"
+	case d.pending && d.mine:
+		return "等" + spaced(a.ownerName()) + "同意"
+	case d.pending:
+		return "等你同意"
+	case a.cutOff(d):
 		return "用不了这台电脑"
+	case d.login.Expired:
+		return "登录过期了"
+	case d.mine && d.login.Due(a.now()):
+		return "需要重新登录"
+	case d.stale:
+		return "旧的那台 · 很久没上线"
+	case d.closed != "" && a.now().Sub(d.closedAt) < closedSay:
+		// Using a service of this computer that was just closed to it
+		// (scene 5): "命令行被关了", for a moment.
+		return d.closed + "被关了"
+	case !d.using.IsZero() && linked(d.path):
+		return "已连接 " + clock(a.now().Sub(d.using))
 	}
 	switch d.path {
 	case "self":
@@ -280,6 +411,8 @@ func (a *app) status(d *device) string {
 		return "连不上"
 	case "offline":
 		return "不在线"
+	case "nonet":
+		return "等这台电脑联网"
 	case "paused":
 		return "已暂停"
 	case "refused":
@@ -305,4 +438,11 @@ func spaced(name string) string {
 		return " " + name + " "
 	}
 	return name
+}
+
+// personDrag is a person's ball in the hand: whose, and where the pointer
+// is, in the window.
+type personDrag struct {
+	id string
+	at ui.Point
 }

@@ -24,6 +24,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/net/http2"
+
 	"github.com/kittors/deneb/engine/bind"
 	"github.com/kittors/deneb/proto"
 )
@@ -32,9 +34,8 @@ import (
 type Client struct {
 	base    *url.URL
 	machine proto.MachinePrivate
-	hc      *http.Client // short requests
-	stream  *http.Client // the long-lived stream and long polls: no timeout
-	tr      *http.Transport
+	conns   atomic.Pointer[conns] // replaced whole when the network changes
+	newTr   func() *http.Transport
 	logf    func(format string, args ...any)
 	bindIf  atomic.Pointer[string] // interface dials are pinned to; "" for none
 
@@ -48,6 +49,11 @@ type Options struct {
 	// URL is the control server, "https://host:port" (or "http://..." for
 	// the development server on this machine or in the test topology).
 	URL string
+	// PlainHTTPAnywhere lets a plain-http URL name any host (test builds:
+	// the test topology). Otherwise plain http is for this machine only
+	// (localhost, 127.0.0.0/8, ::1): anywhere else, a network in between
+	// could rewrite the network map (M7 review).
+	PlainHTTPAnywhere bool
 	// Pin is the server key's fingerprint, "sha256:<hex>"; required for
 	// https. The certificate is self-signed, so the pin is the whole trust.
 	Pin     string
@@ -87,14 +93,7 @@ func New(o Options) (*Client, error) {
 		}
 		return plain.DialContext(ctx, network, addr)
 	}
-	tr := &http.Transport{
-		Proxy:               nil, // never through a system proxy: the pin is checked end to end
-		DialContext:         dial,
-		TLSHandshakeTimeout: 10 * time.Second,
-		ForceAttemptHTTP2:   true,
-		MaxIdleConns:        4,
-		IdleConnTimeout:     90 * time.Second,
-	}
+	var tlsCfg *tls.Config
 	if u.Scheme == "https" {
 		if o.Pin == "" {
 			return nil, errors.New("an https control server needs its pin (sha256:...)")
@@ -103,26 +102,81 @@ func New(o Options) (*Client, error) {
 		if err != nil {
 			return nil, err
 		}
-		tr.TLSClientConfig = cfg
+		tlsCfg = cfg
+	} else if !o.PlainHTTPAnywhere && !isLoopback(u.Hostname()) {
+		return nil, fmt.Errorf("control server %s: plain http only for this machine; use https and its pin", u.Redacted())
 	} else if !isLocalDev(u.Hostname()) {
 		// Plain http is for the development server only. Anything else
 		// would let a network in between rewrite the network map.
 		log.Printf("[control] WARNING: %s is plain http; only use this for development", u.Redacted())
 	}
-	c.tr = tr
-	c.hc = &http.Client{Transport: tr, Timeout: 30 * time.Second}
-	c.stream = &http.Client{Transport: tr}
+	c.newTr = func() *http.Transport {
+		tr := &http.Transport{
+			Proxy:               nil, // never through a system proxy: the pin is checked end to end
+			DialContext:         dial,
+			TLSHandshakeTimeout: 10 * time.Second,
+			MaxIdleConns:        4,
+			IdleConnTimeout:     90 * time.Second,
+			TLSClientConfig:     tlsCfg,
+		}
+		if tlsCfg != nil {
+			// One HTTP/2 connection carries the stream and every request.
+			// When it dies quietly (the network under it changed and
+			// nothing told us), pings find out within 20 s instead of
+			// each request timing out on it for good.
+			if h2, err := http2.ConfigureTransports(tr); err == nil {
+				h2.ReadIdleTimeout, h2.PingTimeout = 15*time.Second, 5*time.Second
+			} else {
+				tr.ForceAttemptHTTP2 = true
+			}
+		}
+		return tr
+	}
+	c.conns.Store(newConns(c.newTr()))
 	return c, nil
 }
 
+// conns are the HTTP clients over one transport.
+type conns struct {
+	tr     *http.Transport
+	hc     *http.Client // short requests
+	stream *http.Client // the long-lived stream and long polls: no timeout
+}
+
+func newConns(tr *http.Transport) *conns {
+	return &conns{tr: tr, hc: &http.Client{Transport: tr, Timeout: 30 * time.Second}, stream: &http.Client{Transport: tr}}
+}
+
 // SetBindInterface pins later connections to another interface (the
-// default route moved, say from Wi-Fi to Ethernet) and drops idle ones made
-// on the old one.
+// default route moved, say from Wi-Fi to Ethernet) and starts over on new
+// connections (see ResetConnections).
 func (c *Client) SetBindInterface(ifname string) {
 	c.bindIf.Store(&ifname)
-	if c.tr != nil {
-		c.tr.CloseIdleConnections()
+	c.ResetConnections()
+}
+
+// ResetConnections makes later requests dial afresh, on a new transport:
+// after a network change the old connection may be dead without knowing it
+// (11-08: every request timed out on it for minutes after a move between
+// networks, while the peers were back in 2.5 s). Requests under way on the
+// old one finish or fail by themselves; its idle connections are closed.
+func (c *Client) ResetConnections() {
+	if c.newTr == nil {
+		return
 	}
+	old := c.conns.Swap(newConns(c.newTr()))
+	if old != nil {
+		old.tr.CloseIdleConnections()
+		time.AfterFunc(35*time.Second, old.tr.CloseIdleConnections) // once the last request on it is done
+	}
+}
+
+func isLoopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func isLocalDev(host string) bool {
@@ -166,12 +220,12 @@ func IsOffline(err error) bool {
 func (c *Client) authenticate(ctx context.Context) error {
 	var ch proto.AuthChallenge
 	pub := c.machine.Public()
-	if err := c.call(ctx, c.hc, "POST", proto.PathAuthChallenge, proto.AuthChallengeRequest{MachineKey: pub}, &ch, false); err != nil {
+	if err := c.call(ctx, c.conns.Load().hc, "POST", proto.PathAuthChallenge, proto.AuthChallengeRequest{MachineKey: pub}, &ch, false); err != nil {
 		return err
 	}
 	var tok proto.AuthToken
 	req := proto.AuthTokenRequest{MachineKey: pub, Challenge: ch.Challenge, Signature: c.machine.SignChallenge(ch.Challenge)}
-	if err := c.call(ctx, c.hc, "POST", proto.PathAuthToken, req, &tok, false); err != nil {
+	if err := c.call(ctx, c.conns.Load().hc, "POST", proto.PathAuthToken, req, &tok, false); err != nil {
 		return err
 	}
 	c.mu.Lock()
@@ -283,7 +337,7 @@ func decode(resp *http.Response, out any) error {
 // is logged in on it, the answer carries the link to open in a browser.
 func (c *Client) Login(ctx context.Context, req proto.LoginRequest) (*proto.LoginState, error) {
 	var st proto.LoginState
-	return &st, c.call(ctx, c.hc, "POST", proto.PathLogin, req, &st, true)
+	return &st, c.call(ctx, c.conns.Load().hc, "POST", proto.PathLogin, req, &st, true)
 }
 
 // LoginWait long-polls until someone logs in in the browser, or about 25
@@ -292,19 +346,19 @@ func (c *Client) LoginWait(ctx context.Context) (*proto.LoginState, error) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	var st proto.LoginState
-	return &st, c.call(ctx, c.stream, "POST", proto.PathLoginWait, nil, &st, true)
+	return &st, c.call(ctx, c.conns.Load().stream, "POST", proto.PathLoginWait, nil, &st, true)
 }
 
 // Logout logs the device out on the server.
 func (c *Client) Logout(ctx context.Context) error {
-	return c.call(ctx, c.hc, "POST", proto.PathLogout, nil, nil, true)
+	return c.call(ctx, c.conns.Load().hc, "POST", proto.PathLogout, nil, nil, true)
 }
 
 // Report replaces what the server knows of this device's endpoints, home
 // relay and paused scopes.
 func (c *Client) Report(ctx context.Context, r proto.Report) (uint64, error) {
 	var res proto.ReportResult
-	err := c.call(ctx, c.hc, "POST", proto.PathReport, r, &res, true)
+	err := c.call(ctx, c.conns.Load().hc, "POST", proto.PathReport, r, &res, true)
 	return res.Version, err
 }
 
@@ -322,7 +376,7 @@ func (c *Client) Op(ctx context.Context, id string, op string, args json.RawMess
 		Version uint64          `json:"version"`
 		Result  json.RawMessage `json:"result,omitempty"`
 	}
-	if err := c.call(ctx, c.hc, "POST", proto.PathOps, body, &res, true); err != nil {
+	if err := c.call(ctx, c.conns.Load().hc, "POST", proto.PathOps, body, &res, true); err != nil {
 		return 0, nil, err
 	}
 	return res.Version, res.Result, nil
@@ -331,13 +385,20 @@ func (c *Client) Op(ctx context.Context, id string, op string, args json.RawMess
 // UserView fetches the owner's view, for engines that do not stream it.
 func (c *Client) UserView(ctx context.Context) (json.RawMessage, error) {
 	var raw json.RawMessage
-	return raw, c.call(ctx, c.hc, "GET", proto.PathUserView, nil, &raw, true)
+	return raw, c.call(ctx, c.conns.Load().hc, "GET", proto.PathUserView, nil, &raw, true)
+}
+
+// RelayUsage fetches what the owner's relays carried this month (M4), for
+// the relay cards. Not pushed: the card asks when it opens.
+func (c *Client) RelayUsage(ctx context.Context) (json.RawMessage, error) {
+	var raw json.RawMessage
+	return raw, c.call(ctx, c.conns.Load().hc, "GET", proto.PathRelayUsage, nil, &raw, true)
 }
 
 // PreviewInvite asks what an invite link is for.
 func (c *Client) PreviewInvite(ctx context.Context, invite string) (json.RawMessage, error) {
 	var raw json.RawMessage
-	return raw, c.call(ctx, c.hc, "POST", proto.PathInvite, proto.InviteLookup{Invite: invite}, &raw, true)
+	return raw, c.call(ctx, c.conns.Load().hc, "POST", proto.PathInvite, proto.InviteLookup{Invite: invite}, &raw, true)
 }
 
 // Frame is one stream frame, with the user view kept as raw JSON so the
@@ -363,7 +424,7 @@ func (c *Client) Stream(ctx context.Context, since uint64, userView bool, fn fun
 	if userView {
 		q.Set("userView", "1")
 	}
-	resp, err := c.send(ctx, c.stream, "GET", proto.PathStream+"?"+q.Encode(), nil, true)
+	resp, err := c.send(ctx, c.conns.Load().stream, "GET", proto.PathStream+"?"+q.Encode(), nil, true)
 	if err != nil {
 		return err
 	}

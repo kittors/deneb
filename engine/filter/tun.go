@@ -33,6 +33,7 @@ type TUN struct {
 	out    chan []byte // from the local stack
 	send   chan []byte // made by the engine; filtered like everything else
 	inject chan []byte // test builds only: skips the filter on purpose
+	reset  chan []byte // resets answering stale TCP (In's StaleTCP); made by the filter, not filtered again
 	errc   chan error
 	done   chan struct{}
 	once   sync.Once
@@ -44,14 +45,44 @@ type TUN struct {
 
 // NewTUN wraps inner. Set the hooks, then call Start.
 func NewTUN(inner tun.Device, f *Filter) *TUN {
-	return &TUN{
+	t := &TUN{
 		inner:  inner,
 		F:      f,
 		out:    make(chan []byte, 512),
 		send:   make(chan []byte, 64),
 		inject: make(chan []byte, 16),
+		reset:  make(chan []byte, 64),
 		errc:   make(chan error, 1),
 		done:   make(chan struct{}),
+	}
+	f.OnReset = t.resetCut
+	return t
+}
+
+// resetCut sends the resets of connections a policy change cut: to this
+// device's stack (off the caller's goroutine: SetPolicy runs under the
+// engine's lock) and towards the peers.
+func (t *TUN) resetCut(toStack, toPeers [][]byte) {
+	if len(toStack) > 0 {
+		go func() {
+			for _, r := range toStack {
+				t.WriteToStack(r)
+			}
+		}()
+	}
+	for _, r := range toPeers {
+		select {
+		case t.reset <- r:
+		default:
+		}
+	}
+}
+
+// resetStack answers a segment this device's stack sent on a cut
+// connection (CutTCPOut) with a reset to the stack.
+func (t *TUN) resetStack(pkt []byte) {
+	if rst := ResetFor(pkt); rst != nil {
+		go t.WriteToStack(rst)
 	}
 }
 
@@ -138,6 +169,8 @@ func (t *TUN) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
 		case pkt = <-t.send:
 		case pkt = <-t.inject:
 			filtered = false
+		case pkt = <-t.reset:
+			filtered = false
 		case err := <-t.errc:
 			return 0, err
 		case <-t.done:
@@ -146,6 +179,9 @@ func (t *TUN) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
 		if filtered {
 			if ok, why := t.F.Out(pkt); !ok {
 				t.traced("drop-out:"+why, pkt)
+				if why == CutTCPOut {
+					t.resetStack(pkt)
+				}
 				continue
 			}
 		}
@@ -164,6 +200,9 @@ func (t *TUN) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
 		}
 		if ok, why := t.F.Out(pkt); !ok {
 			t.traced("drop-out:"+why, pkt)
+			if why == CutTCPOut {
+				t.resetStack(pkt)
+			}
 			continue
 		}
 		t.traced("out", pkt)
@@ -211,6 +250,14 @@ func (t *TUN) Write(bufs [][]byte, offset int) (int, error) {
 		pkt := b[offset:]
 		if ok, why := t.F.In(pkt); !ok {
 			t.traced("drop-in:"+why, pkt)
+			if why == StaleTCP || why == CutTCP {
+				if rst := ResetFor(pkt); rst != nil {
+					select {
+					case t.reset <- rst:
+					default: // a burst: the next segment draws one again
+					}
+				}
+			}
 			continue
 		}
 		t.traced("in", pkt)

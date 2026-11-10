@@ -79,6 +79,15 @@ type Node struct {
 	// LastSeen is when it last dropped its stream, for "对方离线" and how
 	// long ago. (M2)
 	LastSeen time.Time `json:"lastSeen,omitzero"`
+	// PublicLAN is set on a public device: it belongs to this LAN, not to
+	// a person, and the LAN's owner manages it. Engines do not use it; the
+	// interface reads it from the view. (M3)
+	PublicLAN LANID `json:"publicLAN,omitempty"`
+	// Caps are the capabilities the device claimed when its engine last
+	// logged in (LoginRequest.Caps), sorted, without repeats. On Self they
+	// echo what the server took. Missing means none: an old engine, or a
+	// server before M4. (M4)
+	Caps []string `json:"caps,omitempty"`
 }
 
 // Peer is another device this one may reach.
@@ -89,15 +98,24 @@ type Peer struct {
 	// when PausedScopes is not.
 	Scopes []ScopeID `json:"scopes"`
 	// PausedScopes are the scopes both devices are in that the peer paused
-	// on itself. The pausing device enforces its pause; this side keeps the
-	// peer known, shows it as paused, and lets nothing through for those
-	// scopes until they come back in Scopes. (M2)
+	// on itself. The pausing device enforces its pause, dropping those
+	// scopes' packets both ways; this side keeps the peer known (keys,
+	// paths), shows it as paused, and keeps letting those scopes through as
+	// before, so traffic flows again the moment the peer resumes, before
+	// the server's next map arrives. (M2)
 	PausedScopes []ScopeID `json:"pausedScopes,omitempty"`
 	// Refusals are kept per device (DESIGN §6.5) and both ends are told: the
 	// refused end stops dialing, and the refusing end's filter drops it
 	// anyway.
 	RefusedByPeer bool `json:"refusedByPeer,omitempty"` // the peer's owner refused my owner on it
 	RefusedByMe   bool `json:"refusedByMe,omitempty"`   // my owner refused the peer's owner on me
+	// Relays are where to reach the peer through a relay, best first: the
+	// relays it is connected to (Report.Relays) that are on the lists of
+	// the scopes both devices are in and the peer has not paused, so each
+	// one lets both in (admission, implementation.md §2.6.3). Node.HomeRelay
+	// is the first of them, and empty when there is none: then only a
+	// direct path reaches the peer. (M4)
+	Relays []RelayID `json:"relays,omitempty"`
 }
 
 // Scope is one scope this device is in, as this device should enforce it.
@@ -115,7 +133,38 @@ type Scope struct {
 	Paused bool `json:"paused,omitempty"`
 	// Relays are the relays of the scope, most preferred first.
 	Relays []RelayID `json:"relays"`
+
+	// Kind is what the scope is: a LAN, or a share (one device given to one
+	// person). Engines pass it on for display only. (M3)
+	Kind ScopeKind `json:"kind,omitempty"`
+	// NoInbound closes the scope to anything its peers start: this side
+	// only connects out. The server sets it on a share's receiver side, so
+	// the shared device cannot reach the receiver's devices (DESIGN §12
+	// item 12, "只有他能连你，反过来不行"). (M3)
+	//
+	//   - It blocks only what the peer starts: replies to connections this
+	//     side started pass as ever (the receiver uses the device's
+	//     services, the device answers).
+	//   - It is per scope, and scopes add up: if the two devices also share
+	//     a LAN, what that LAN lets in still comes in; NoInbound only keeps
+	//     out what would come in through this scope.
+	//   - With NoInbound set, the scope's Open is not looked at: nothing
+	//     opens this side through it, whatever Open says.
+	//   - Pauses, refusals and PausedScopes work on it as on any scope.
+	//
+	// An engine from before M3 does not know it and goes by Open, which the
+	// server sends empty on this side: the only difference is that the
+	// shared device can still ping in.
+	NoInbound bool `json:"noInbound,omitempty"`
 }
+
+// ScopeKind is what a scope is.
+type ScopeKind string
+
+const (
+	ScopeLAN   ScopeKind = "lan"
+	ScopeShare ScopeKind = "share"
+)
 
 // Service is something a device opens to others: a kind people recognize,
 // and the ports the filter lets in for it.
@@ -320,6 +369,16 @@ type Relay struct {
 	IPv6     netip.Addr `json:"ipv6,omitzero"`
 	DERPPort uint16     `json:"derpPort"`           // TCP, TLS
 	STUNPort uint16     `json:"stunPort,omitempty"` // UDP; zero means no STUN
+	// Pin is the SPKI fingerprint of a Deneb relay's self-signed
+	// certificate, "sha256:<hex>" as the control server's: the engine
+	// trusts the relay by it, not by a CA. Empty for a relay whose
+	// certificate a CA signed, as the derper on hk-spare. (M4)
+	Pin string `json:"pin,omitempty"`
+	// RateLimit is the most each connection may send through the relay,
+	// in bytes a second; zero is no limit. Only public relays have one,
+	// and their card says so: a limit is never silent (implementation.md
+	// §3 M4). (M4)
+	RateLimit int64 `json:"rateLimit,omitempty"`
 }
 
 // RelaySource is where a relay comes from (implementation.md §2.2).

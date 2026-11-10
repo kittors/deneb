@@ -71,12 +71,17 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := s.now()
-	if err := s.keys.useChallenge(req.MachineKey, req.Challenge, now); err != nil {
+	if err := s.keys.checkChallenge(req.MachineKey, req.Challenge, now); err != nil {
 		s.writeErr(w, r, newErr(http.StatusUnauthorized, proto.ErrUnauthorized, "挑战无效或已过期，请重新获取"))
 		return
 	}
 	if !req.MachineKey.VerifyChallenge(req.Challenge, req.Signature) {
 		s.writeErr(w, r, newErr(http.StatusUnauthorized, proto.ErrUnauthorized, "签名不对"))
+		return
+	}
+	// Only now, signed by the machine key, is the challenge used up.
+	if err := s.keys.useChallenge(req.MachineKey, req.Challenge, now); err != nil {
+		s.writeErr(w, r, newErr(http.StatusUnauthorized, proto.ErrUnauthorized, "挑战无效或已过期，请重新获取"))
 		return
 	}
 	tok, exp := s.keys.newToken(req.MachineKey, now)
@@ -132,7 +137,47 @@ func checkLoginRequest(req *proto.LoginRequest) error {
 	if len(req.EngineVersion) > 64 {
 		req.EngineVersion = req.EngineVersion[:64]
 	}
+	req.Caps = checkCaps(req.Caps)
 	return nil
+}
+
+// maxCaps bounds what one device may claim: the claim goes into the map of
+// every peer it has.
+const maxCaps = 32
+
+// checkCaps keeps the well-formed capabilities an engine claims, sorted and
+// without repeats, so the same claim always makes the same map and an
+// engine listing them in another order changes nothing. A malformed name
+// is dropped, not refused: a newer engine must not fail to log in over a
+// name this server has no rule for. None comes out as nil.
+func checkCaps(caps []string) []string {
+	var out []string
+	for _, c := range caps {
+		if validCap(c) {
+			out = append(out, c)
+		}
+	}
+	slices.Sort(out)
+	out = slices.Compact(out)
+	if len(out) > maxCaps {
+		out = out[:maxCaps]
+	}
+	return out
+}
+
+// validCap is the format of a capability's name (proto.LoginRequest.Caps).
+func validCap(c string) bool {
+	if c == "" || len(c) > 64 {
+		return false
+	}
+	for i := 0; i < len(c); i++ {
+		switch b := c[i]; {
+		case 'a' <= b && b <= 'z', '0' <= b && b <= '9', b == '-', b == '.':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request, c *caller) {
@@ -147,10 +192,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request, c *caller) 
 	}
 	if c.dev != nil {
 		// Someone is logged in: take the newer keys and facts. A new node
-		// key is news for every peer, so it goes out as a new version.
+		// key is news for every peer, so it goes out as a new version;
+		// so are new capabilities, which peers act on.
 		d := c.dev
 		if d.NodeKey != req.NodeKey || d.DiscoKey != req.DiscoKey || d.Hostname != req.Hostname ||
-			d.OS != req.OS || d.EngineVersion != req.EngineVersion {
+			d.OS != req.OS || d.EngineVersion != req.EngineVersion || !slices.Equal(d.Caps, req.Caps) {
 			_, err := s.change("", func(tx *sql.Tx, w *World) error {
 				return updateDeviceFacts(tx, d.ID, req, time.Time{})
 			})
@@ -162,7 +208,12 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request, c *caller) 
 		writeJSON(w, http.StatusOK, proto.LoginState{LoggedIn: true, Device: d.ID, Person: d.Owner, LoginExpiresAt: s.state.Load().w.devices[d.ID].ExpiresAt})
 		return
 	}
-	pl, fresh := s.logins.start(c.machine, req, remoteIP(r), s.now())
+	pl, fresh, err := s.logins.start(c.machine, req, remoteIP(r), s.now())
+	if err != nil {
+		s.logf("login: refused a new link for %q from %s: %v", req.Hostname, remoteIP(r), err)
+		s.writeErr(w, r, err)
+		return
+	}
 	if fresh {
 		s.logf("login: link %s for %q (%s) from %s, good until %s", shortCode(pl.code), req.Hostname, req.OS, remoteIP(r),
 			pl.expires.UTC().Format("15:04:05"))
@@ -231,15 +282,12 @@ func (s *Server) completeLogin(pl *pendingLogin, p proto.PersonID, how string) (
 				// The same person again, after a logout: the device comes
 				// back as it was, with its address, LANs and switches.
 				id = d.ID
-				return updateDeviceFacts(tx, d.ID, pl.req, now.Add(s.cfg.LoginLifetime))
+				return updateDeviceFacts(tx, d.ID, pl.facts.Load().req, now.Add(s.cfg.LoginLifetime))
 			}
 			// Someone else on this machine: the old device goes, with
 			// what it opened and whom it refused, and its address cools
 			// down before anyone gets it again.
-			if _, err := tx.Exec(`DELETE FROM devices WHERE id = ?`, d.ID); err != nil {
-				return err
-			}
-			if err := releaseAddr(tx, d.IPv4, now); err != nil {
+			if err := deleteDevice(tx, d, now); err != nil {
 				return err
 			}
 		}
@@ -248,7 +296,7 @@ func (s *Server) completeLogin(pl *pendingLogin, p proto.PersonID, how string) (
 		return err
 	})
 	if err != nil {
-		s.logf("login: link %s for %q as %s %s failed: %v", shortCode(pl.code), pl.req.Hostname, p, how, err)
+		s.logf("login: link %s for %q as %s %s failed: %v", shortCode(pl.code), pl.facts.Load().req.Hostname, p, how, err)
 		return "", keyConflict(err)
 	}
 	s.logins.finish(pl)
@@ -257,6 +305,22 @@ func (s *Server) completeLogin(pl *pendingLogin, p proto.PersonID, how string) (
 		s.logf("login: device %s (%s, %q) logged in as %s %s", d.ID, d.Name, d.Hostname, st.w.people[p].Email, how)
 	}
 	return id, nil
+}
+
+// deleteDevice takes device d out for good: its place in its LANs (waiting
+// ones too), its catalog and what it opened, whom it refused and its
+// shares go with its row (ON DELETE CASCADE); its kicks, which name it
+// with no key, go here. Its relay usage stays in the month's totals, as
+// no one's. Its address cools down before anyone gets it again. Its
+// streams end with LoggedOut when the change is published.
+func deleteDevice(tx *sql.Tx, d *device, now time.Time) error {
+	if _, err := tx.Exec(`DELETE FROM relay_kicks WHERE device = ?`, d.ID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM devices WHERE id = ?`, d.ID); err != nil {
+		return err
+	}
+	return releaseAddr(tx, d.IPv4, now)
 }
 
 // keyConflict turns the database refusing a second device with the same
@@ -272,8 +336,8 @@ func keyConflict(err error) error {
 // (expires set) also brings a logged-out or expired device back, with a
 // fresh lifetime.
 func updateDeviceFacts(tx *sql.Tx, id proto.DeviceID, req proto.LoginRequest, expires time.Time) error {
-	q := `UPDATE devices SET node_key = ?, disco_key = ?, hostname = ?, os = ?, engine_version = ?`
-	args := []any{req.NodeKey.String(), req.DiscoKey.String(), req.Hostname, req.OS, req.EngineVersion}
+	q := `UPDATE devices SET node_key = ?, disco_key = ?, hostname = ?, os = ?, engine_version = ?, caps = ?`
+	args := []any{req.NodeKey.String(), req.DiscoKey.String(), req.Hostname, req.OS, req.EngineVersion, capsJSON(req.Caps)}
 	if !expires.IsZero() {
 		q += `, logged_out = 0, expires_at = ?`
 		args = append(args, ms(expires))
@@ -283,7 +347,7 @@ func updateDeviceFacts(tx *sql.Tx, id proto.DeviceID, req proto.LoginRequest, ex
 }
 
 func insertDevice(tx *sql.Tx, w *World, owner proto.PersonID, pl *pendingLogin, now time.Time, life time.Duration) (proto.DeviceID, error) {
-	req := pl.req
+	req := pl.facts.Load().req
 	kind := req.Kind
 	if kind == "" {
 		kind = guessKind(req.OS, req.Hostname)
@@ -312,10 +376,19 @@ func insertDevice(tx *sql.Tx, w *World, owner proto.PersonID, pl *pendingLogin, 
 	}
 	id := proto.DeviceID(newID("d"))
 	_, err = tx.Exec(`INSERT INTO devices (id, owner, machine_key, node_key, disco_key, name, display_name, kind, os, hostname,
-			ipv4, ipv6, engine_version, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			ipv4, ipv6, engine_version, caps, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, owner, pl.machine.String(), req.NodeKey.String(), req.DiscoKey.String(), label, display, kind, req.OS, req.Hostname,
-		v4.String(), v6.String(), req.EngineVersion, ms(now), ms(now.Add(life)))
+		v4.String(), v6.String(), req.EngineVersion, capsJSON(req.Caps), ms(now), ms(now.Add(life)))
 	return id, err
+}
+
+// capsJSON is how the devices table keeps a device's capabilities.
+func capsJSON(caps []string) string {
+	if len(caps) == 0 {
+		return "[]"
+	}
+	b, _ := json.Marshal(caps)
+	return string(b)
 }
 
 // guessKind picks a device's kind when the engine did not say.
@@ -351,7 +424,12 @@ func remoteIP(r *http.Request) string {
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request, c *caller) {
 	rc := http.NewResponseController(w)
 	sb := &sub{device: c.dev.ID, view: r.URL.Query().Get("userView") == "1", notify: make(chan struct{}, 1)}
-	if s.hub.add(sb) {
+	cameOnline, ok := s.hub.add(sb)
+	if !ok {
+		s.writeErr(w, r, errTooManyStreams)
+		return
+	}
+	if cameOnline {
 		s.markOnline(c.dev.ID, true)
 	}
 	defer s.hub.remove(sb, func(id proto.DeviceID) { s.markOnline(id, false) })
@@ -399,7 +477,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request, c *caller)
 // markOnline publishes a device coming online or going offline. Going
 // offline also stamps when it was last seen.
 func (s *Server) markOnline(id proto.DeviceID, on bool) {
-	_, err := s.change("", func(tx *sql.Tx, w *World) error {
+	v, err := s.change("", func(tx *sql.Tx, w *World) error {
 		if on || w.devices[id] == nil {
 			return nil
 		}
@@ -408,11 +486,30 @@ func (s *Server) markOnline(id proto.DeviceID, on bool) {
 	})
 	if err != nil {
 		s.logf("mark %s online=%v: %v", id, on, err)
+		return
+	}
+	// Who comes and goes, with what engine: after a restart this is how one
+	// sees every device come back.
+	st := s.state.Load()
+	if d := st.w.devices[id]; d != nil {
+		owner := ""
+		if p := st.w.people[d.Owner]; p != nil {
+			owner = p.Email
+		}
+		state := "offline"
+		if on {
+			state = "online"
+		}
+		s.logf("device %s (%s, %q, %s) %s, engine %q; version %d", d.ID, d.Name, d.DisplayName, owner, state, d.EngineVersion, v)
 	}
 }
 
 // maxEndpoints bounds what a report may carry; an engine has a handful.
 const maxEndpoints = 32
+
+// maxReportRelays bounds the relays a report may carry: one per scope at
+// most, and scopes share most of them.
+const maxReportRelays = 16
 
 func (s *Server) handleReport(w http.ResponseWriter, r *http.Request, c *caller) {
 	var rep proto.Report
@@ -437,6 +534,21 @@ func (s *Server) handleReport(w http.ResponseWriter, r *http.Request, c *caller)
 	if home != "" && c.st.w.relays[home] == nil {
 		home = ""
 	}
+	// The relays it is connected to, home first; ones that no longer
+	// exist are left out. Whom they let in is the views' business.
+	var relays []proto.RelayID
+	if home != "" {
+		relays = append(relays, home)
+	}
+	for _, rl := range rep.Relays {
+		if c.st.w.relays[rl] != nil && !slices.Contains(relays, rl) && len(relays) < maxReportRelays {
+			relays = append(relays, rl)
+		}
+	}
+	if len(rep.Relays) == 0 {
+		// An engine from before M4 reports only its home.
+		relays = nil
+	}
 	v, err := s.change(c.dev.ID, func(tx *sql.Tx, w *World) error {
 		d := w.devices[c.dev.ID]
 		if d == nil {
@@ -447,13 +559,14 @@ func (s *Server) handleReport(w http.ResponseWriter, r *http.Request, c *caller)
 			was = append(was, sc)
 		}
 		slices.Sort(was)
-		if slices.Equal(d.Endpoints, eps) && d.HomeRelay == home && slices.Equal(was, paused) {
+		if slices.Equal(d.Endpoints, eps) && d.HomeRelay == home && slices.Equal(was, paused) && slices.Equal(d.Relays, relays) {
 			return errNoChange
 		}
 		epsJSON, _ := json.Marshal(nonNil(eps))
 		pausedJSON, _ := json.Marshal(nonNil(paused))
-		_, err := tx.Exec(`UPDATE devices SET endpoints = ?, home_relay = ?, paused = ? WHERE id = ?`,
-			string(epsJSON), home, string(pausedJSON), d.ID)
+		relaysJSON, _ := json.Marshal(nonNil(relays))
+		_, err := tx.Exec(`UPDATE devices SET endpoints = ?, home_relay = ?, relays = ?, paused = ? WHERE id = ?`,
+			string(epsJSON), home, string(relaysJSON), string(pausedJSON), d.ID)
 		return err
 	})
 	if err != nil {
@@ -503,6 +616,7 @@ func (s *Server) invitePreview(w *World, link string, asker proto.PersonID) (*pr
 		return nil, err
 	}
 	p := w.preview(i, asker, s.now())
+	w.withLAN(&p)
 	return &p, nil
 }
 

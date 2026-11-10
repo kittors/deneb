@@ -67,12 +67,30 @@ func testRelayInto(t *testing.T, id proto.RelayID, name string, pool *x509.CertP
 }
 
 type tnode struct {
+	// old: an engine from before proto.CapHandshakeDedupe: it claims
+	// nothing, and does not drop repeated handshake messages.
+	old    bool
 	e      *Engine
 	id     proto.DeviceID
 	name   string
 	owner  string
 	person proto.PersonID
 	addr   netip.Addr
+}
+
+// caps is what the node's engine claims, as the server copies it into the
+// map (proto.Node.Caps).
+func (n *tnode) caps() []string {
+	if n.old {
+		return nil
+	}
+	return []string{proto.CapHandshakeDedupe}
+}
+
+// makeOld turns n into an engine from before proto.CapHandshakeDedupe.
+func (n *tnode) makeOld() {
+	n.old = true
+	n.e.ms.SetHandshakeDedupe(false)
 }
 
 func (n *tnode) node() proto.Node {
@@ -83,6 +101,7 @@ func (n *tnode) node() proto.Node {
 		DiscoKey: proto.DiscoPublic(magicsock.DiscoPublic(n.e.discoPriv)),
 		Addrs:    []netip.Prefix{netip.PrefixFrom(n.addr, 32)},
 		Online:   true, HomeRelay: n.home(),
+		Caps: n.caps(),
 	}
 }
 
@@ -104,7 +123,16 @@ type world struct {
 	open    map[proto.ScopeID]map[*tnode][]proto.Service
 	refuses map[[2]*tnode]bool // [owner's device, refused device]
 	paused  map[*tnode]map[proto.ScopeID]bool
-	version uint64
+	// noInbound marks the receiving side of a share (M3): it only
+	// connects out through that scope.
+	noInbound map[proto.ScopeID]map[*tnode]bool
+	// scopeRelays are a scope's relays, best first (M4); default: the
+	// local relay. peerRelays, when set, has netmapFor fill Peer.Relays as
+	// the server does: the peer's resident relays that are on the lists of
+	// the scopes both share.
+	scopeRelays map[proto.ScopeID][]proto.RelayID
+	peerRelays  bool
+	version     uint64
 }
 
 func (w *world) netmapFor(n *tnode) *proto.NetMap {
@@ -118,7 +146,7 @@ func (w *world) netmapFor(n *tnode) *proto.NetMap {
 		nm.Relays = w.relays
 	}
 	shared := map[*tnode][]proto.ScopeID{}
-	for _, id := range []proto.ScopeID{"lan/studio", "lan/weekend"} {
+	for _, id := range []proto.ScopeID{"lan/studio", "lan/weekend", "share/s1"} {
 		in := false
 		for _, m := range w.members[id] {
 			if m == n {
@@ -128,7 +156,16 @@ func (w *world) netmapFor(n *tnode) *proto.NetMap {
 		if !in {
 			continue
 		}
-		nm.Scopes = append(nm.Scopes, proto.Scope{ID: id, Name: string(id), Open: w.open[id][n], Relays: []proto.RelayID{"relay-local"}})
+		kind := proto.ScopeLAN
+		if _, ok := id.Share(); ok {
+			kind = proto.ScopeShare
+		}
+		srel := w.scopeRelays[id]
+		if srel == nil {
+			srel = []proto.RelayID{"relay-local"}
+		}
+		nm.Scopes = append(nm.Scopes, proto.Scope{ID: id, Name: string(id), Open: w.open[id][n], Relays: srel,
+			Kind: kind, NoInbound: w.noInbound[id][n]})
 		for _, m := range w.members[id] {
 			if m != n {
 				shared[m] = append(shared[m], id)
@@ -136,14 +173,47 @@ func (w *world) netmapFor(n *tnode) *proto.NetMap {
 		}
 	}
 	for _, m := range w.nodes {
-		// As the control server does: a device that paused a LAN is gone
-		// from the other members' maps for it.
-		shared[m] = slices.DeleteFunc(shared[m], func(id proto.ScopeID) bool { return w.paused[m][id] })
-		if len(shared[m]) == 0 {
+		// As the control server does (M2): the scopes a device paused move
+		// to PausedScopes, and a device that paused all it shares with n
+		// stays, with empty Scopes, so its resume needs no new handshake.
+		var paused []proto.ScopeID
+		shared[m] = slices.DeleteFunc(shared[m], func(id proto.ScopeID) bool {
+			if w.paused[m][id] {
+				paused = append(paused, id)
+				return true
+			}
+			return false
+		})
+		if len(shared[m]) == 0 && len(paused) == 0 {
 			continue
 		}
-		nm.Peers = append(nm.Peers, proto.Peer{Node: m.node(), Scopes: shared[m],
-			RefusedByMe: w.refuses[[2]*tnode{n, m}], RefusedByPeer: w.refuses[[2]*tnode{m, n}]})
+		peer := proto.Peer{Node: m.node(), Scopes: append([]proto.ScopeID{}, shared[m]...), PausedScopes: paused,
+			RefusedByMe: w.refuses[[2]*tnode{n, m}], RefusedByPeer: w.refuses[[2]*tnode{m, n}]}
+		if w.peerRelays {
+			// As the server does (M4): the peer's resident relays on the
+			// lists of the scopes both share; HomeRelay the first of them.
+			onLists := map[proto.RelayID]bool{}
+			for _, id := range shared[m] {
+				srel := w.scopeRelays[id]
+				if srel == nil {
+					srel = []proto.RelayID{"relay-local"}
+				}
+				for _, r := range srel {
+					onLists[r] = true
+				}
+			}
+			peer.Relays = nil
+			for _, r := range m.e.ms.ResidentRelays() {
+				if onLists[r] {
+					peer.Relays = append(peer.Relays, r)
+				}
+			}
+			peer.HomeRelay = ""
+			if len(peer.Relays) > 0 {
+				peer.HomeRelay = peer.Relays[0]
+			}
+		}
+		nm.Peers = append(nm.Peers, peer)
 	}
 	return nm
 }
@@ -392,7 +462,9 @@ func TestDirectLostFallsBackToRelay(t *testing.T) {
 	}()
 	t0 := time.Now()
 	mac.e.ms.SetBlocked(build.node().NodeKey, true)
-	waitPath(t, mac, build, "relay", 6*time.Second)
+	// Packets go through the relay too from Trust (2.5 s) on; the path is
+	// shown as the relay once Hold (6.5 s) passes without an answer.
+	waitPath(t, mac, build, "relay", 9*time.Second)
 	t.Logf("on the relay %s after UDP was blocked", time.Since(t0).Round(time.Millisecond))
 	time.Sleep(2 * time.Second)
 	mac.e.ms.SetBlocked(build.node().NodeKey, false)

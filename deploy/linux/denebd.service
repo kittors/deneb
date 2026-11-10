@@ -1,0 +1,26 @@
+# Deneb's engine as a system service. /etc/default/denebd says the mode:
+# kernel on a desktop (a tun interface, a /32 route per peer, and
+# systemd-resolved for deneb.internal, so ordinary programs reach peers by
+# name), userspace on a server (no interface; SOCKS5 on 127.0.0.1:41080).
+[Unit]
+Description=Deneb networking engine
+Wants=network-online.target
+After=network-online.target systemd-resolved.service
+
+[Service]
+Type=simple
+Environment=DENEB_MODE=userspace
+# DENEB_ALLOW_UID: the desktop user the package was installed by (postinst),
+# whose window and `deneb` command may use the engine without sudo.
+EnvironmentFile=-/var/lib/deneb/desktop-user.env
+EnvironmentFile=-/etc/default/denebd
+ExecStart=/usr/bin/denebd run -mode ${DENEB_MODE} -state /var/lib/deneb -socket /var/run/deneb/denebd.sock $DENEB_FLAGS
+Restart=on-failure
+RestartSec=2s
+RuntimeDirectory=deneb
+RuntimeDirectoryMode=0755
+StateDirectory=deneb
+StateDirectoryMode=0700
+
+[Install]
+WantedBy=multi-user.target

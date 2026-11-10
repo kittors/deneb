@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,6 +34,7 @@ type Live struct {
 	view    *proto.UserView
 	local   []apitype.LocalService // what this computer listens on, as the engine last found
 	down    bool                   // the engine stopped answering
+	cuts    []cutUse               // the uses this computer cut, the last few seconds'
 	deb     debouncer
 	snap    *model.Snapshot
 	subs    map[int]func(*model.Snapshot)
@@ -105,6 +107,10 @@ func (l *Live) watch(ctx context.Context) {
 				}
 			case apitype.EventPaths:
 				l.takePaths(ev.Paths)
+			case apitype.EventUsage:
+				l.takeUsage(ev.Usage, ev.Using)
+			case apitype.EventCut:
+				l.takeCut(ev.Cut)
 			}
 			return nil
 		})
@@ -150,6 +156,40 @@ func (l *Live) takePaths(paths []apitype.PeerPath) {
 	l.update(func(now time.Time) {
 		for _, p := range paths {
 			l.deb.report(model.DeviceID(p.DeviceID), toPath(p), now)
+		}
+	})
+}
+
+// takeUsage takes in who uses what now, both ways: the engine says it apart
+// from the state, as it changes.
+func (l *Live) takeUsage(usage, using []apitype.ServiceUse) {
+	l.update(func(time.Time) {
+		if l.state == nil {
+			return
+		}
+		st := *l.state
+		st.Usage, st.Using = usage, using
+		l.state = &st
+	})
+}
+
+// cutUse is a use this computer cut, as the engine told of it, and when.
+type cutUse struct {
+	use apitype.ServiceUse
+	at  time.Time
+}
+
+// cutKeep is how long a cut stays in the snapshots: the red light and the
+// sentence that go with it are over by then (scene 5).
+const cutKeep = 6 * time.Second
+
+// takeCut takes in the uses this computer just cut, closing a service or
+// refusing someone.
+func (l *Live) takeCut(cut []apitype.ServiceUse) {
+	l.update(func(now time.Time) {
+		l.cuts = slices.DeleteFunc(l.cuts, func(c cutUse) bool { return now.Sub(c.at) > cutKeep })
+		for _, u := range cut {
+			l.cuts = append(l.cuts, cutUse{use: u, at: now})
 		}
 	})
 }
@@ -214,8 +254,21 @@ func (l *Live) buildLocked(now time.Time) *model.Snapshot {
 	for _, r := range st.Relays {
 		s.Relays[model.RelayID(r.ID)] = &model.Relay{ID: model.RelayID(r.ID), Name: r.Name}
 	}
+	// The LANs this computer paused on itself: the engine's, not the
+	// server's (DESIGN §9 scene 3).
+	paused := map[apitype.ScopeID]bool{}
+	for _, sc := range st.Scopes {
+		paused[sc.ID] = sc.Paused
+	}
 	if v := l.view; v != nil && st.LoggedIn {
 		s.Loaded = true
+		if len(v.Features) > 0 {
+			// What the server does beyond M1 (M2 on).
+			s.Features = make(map[string]bool, len(v.Features))
+			for _, f := range v.Features {
+				s.Features[f] = true
+			}
+		}
 		if v.Me != "" {
 			s.Me = model.PersonID(v.Me)
 		}
@@ -241,6 +294,9 @@ func (l *Live) buildLocked(now time.Time) *model.Snapshot {
 			for _, p := range d.Refused {
 				md.Refused[model.PersonID(p)] = true
 			}
+			// M2: when it was last online, and how long its login lasts.
+			md.LastSeen = d.LastSeen
+			md.Login = model.Login{Expires: d.Login.ExpiresAt, RenewFrom: d.Login.RenewFrom, Expired: d.Login.Expired}
 			for _, svc := range d.Services {
 				md.Catalog = append(md.Catalog, service(svc, false))
 			}
@@ -254,17 +310,32 @@ func (l *Live) buildLocked(now time.Time) *model.Snapshot {
 		}
 		for _, lv := range v.LANs {
 			ml := &model.LAN{ID: model.LANID(lv.ID), Name: lv.Name, Owner: model.PersonID(lv.Owner),
-				Services: map[model.DeviceID][]model.Service{}}
+				Services: map[model.DeviceID][]model.Service{},
+				// M2: its two switches, and whether I wait to be let in.
+				ApproveDevices: lv.ApproveDevices, ApproveMembers: lv.ApproveMembers, Waiting: lv.Pending,
+				Paused: paused[apitype.ScopeID(proto.LANScope(lv.ID))]}
 			for _, m := range lv.Members {
-				// Only those in: someone invited, or waiting to be let in
-				// (M2), is not in the LAN yet.
-				if m.State == proto.MemberJoined || m.State == "" {
+				// Only those in are members: someone invited is not in yet,
+				// and one who waits for me to let them in shows apart (M2).
+				switch m.State {
+				case proto.MemberJoined, "":
 					ml.Members = append(ml.Members, model.PersonID(m.Person))
+				case proto.MemberPending:
+					ml.PendingMembers = append(ml.PendingMembers, model.PersonID(m.Person))
 				}
+			}
+			for _, iv := range lv.Invited {
+				ml.Invited = append(ml.Invited, model.Invited{Person: model.PersonID(iv.Person), By: model.PersonID(iv.InvitedBy),
+					Invite: string(iv.Invite), Expires: iv.ExpiresAt})
 			}
 			for _, d := range lv.Devices {
 				id := model.DeviceID(d.Device)
-				ml.Devices = append(ml.Devices, id)
+				if d.Pending {
+					// Waits for the owner: a dashed tile, not in the LAN yet.
+					ml.Pending = append(ml.Pending, id)
+				} else {
+					ml.Devices = append(ml.Devices, id)
+				}
 				svcs := make([]model.Service, 0, len(d.Services))
 				for _, ss := range d.Services {
 					svcs = append(svcs, service(ss.Service, ss.On))
@@ -276,14 +347,132 @@ func (l *Live) buildLocked(now time.Time) *model.Snapshot {
 			}
 			s.LANs = append(s.LANs, ml)
 		}
+		for _, iv := range v.Invitations {
+			// Invites made out to me that wait for my answer (M2).
+			if iv.State != "" && iv.State != proto.InvitePending {
+				continue
+			}
+			s.Invitations = append(s.Invitations, model.Invitation{ID: string(iv.Invite), LAN: model.LANID(iv.LAN),
+				LANName: iv.LANName, Inviter: *person(iv.Inviter, s.Me), Expires: iv.ExpiresAt})
+		}
 	}
 	for _, ls := range l.local {
 		s.Local = append(s.Local, service(localService(ls), false))
 	}
+	// What this computer uses now, and since when: the "已连接" count, from
+	// the oldest of its connections to each device (DESIGN §6.7).
+	for _, u := range st.Using {
+		if s.Using == nil {
+			s.Using = map[model.DeviceID]time.Time{}
+		}
+		id := model.DeviceID(u.DeviceID)
+		if t, ok := s.Using[id]; !ok || u.Since.Before(t) {
+			s.Using[id] = u.Since
+		}
+	}
+	// Another program's tunnel takes Deneb's connections: the amber pill
+	// (DESIGN §6.8). The engine cannot tell which program; Clash is the one
+	// people have.
+	for _, p := range st.Engine.Problems {
+		if p.Code == apitype.ProblemProxy {
+			s.Notices = append(s.Notices, model.Notice{Code: p.Code, Short: "Clash 可能挡住连接",
+				Message: "Clash 一类的软件正在接管网络，局域网里的设备可能连不上", Rule: p.Rule})
+		}
+	}
 	paths, next := l.deb.at(now)
 	s.Paths = paths
+	s.NoNetwork = noNetwork(st, s)
+	// The uses just cut, each service named as the card names it.
+	for _, c := range l.cuts {
+		if until := c.at.Add(cutKeep); now.Before(until) {
+			s.Cuts = append(s.Cuts, model.Cut{Device: model.DeviceID(c.use.DeviceID), Service: cutService(s, c.use), At: c.at})
+			if next.IsZero() || until.Before(next) {
+				next = until
+			}
+		}
+	}
 	l.wakeAtLocked(next)
 	return s
+}
+
+// problemNoNetwork is the engine's problem for a computer without a
+// network of its own (DESIGN §6.10).
+const problemNoNetwork = "no-network"
+
+// noNetwork reports whether this computer has no network: as its engine
+// says it outright; or, from an engine that does not, as the control server
+// and every device it shares a LAN with go out of reach at once, which no
+// trouble over there does. A device that connects says there is a network;
+// one being connected to, as all are as the engine starts, says nothing,
+// and neither does one that is just off.
+func noNetwork(st *apitype.State, s *model.Snapshot) bool {
+	for _, p := range st.Engine.Problems {
+		if p.Code == problemNoNetwork {
+			return true
+		}
+	}
+	if st.ControlConnected || !st.LoggedIn {
+		return false
+	}
+	out := 0
+	for id, p := range s.Paths {
+		switch {
+		case id == s.Self:
+		case p.Kind.Connected():
+			return false
+		case p.Kind == model.PathUnreachable:
+			out++
+		}
+	}
+	return out > 0
+}
+
+// cutService is the name of this computer's service a cut use was of: as
+// the card of a LAN it was opened to lists it, else as the engine names it.
+func cutService(s *model.Snapshot, u apitype.ServiceUse) string {
+	for _, sc := range u.Scopes {
+		lan, ok := proto.ScopeID(sc).LAN()
+		if !ok {
+			continue
+		}
+		l := s.LAN(model.LANID(lan))
+		if l == nil {
+			continue
+		}
+		for _, v := range l.Services[s.Self] {
+			if v.Proto == u.Proto && slices.Contains(portsOf(v), u.Port) {
+				return v.Name
+			}
+		}
+	}
+	if u.Name != "" {
+		return u.Name
+	}
+	return "这项服务"
+}
+
+// portsOf are the ports of a service, as its key lists them ("tcp/80",
+// "udp/27015-27030").
+func portsOf(v model.Service) []uint16 {
+	ports := []uint16{v.Port}
+	_, spec, _ := strings.Cut(v.Key, "/")
+	for _, part := range strings.Split(spec, ",") {
+		lo, hi, ok := strings.Cut(part, "-")
+		a, err := strconv.Atoi(lo)
+		if err != nil {
+			continue
+		}
+		b := a
+		if ok {
+			if b, err = strconv.Atoi(hi); err != nil {
+				continue
+			}
+		}
+		for p := a; p <= b && p-a < 1024; p++ {
+			ports = append(ports, uint16(p))
+		}
+	}
+	return ports
 }
 
 // wakeAtLocked makes the snapshot anew at next, when a debounced path is due
@@ -343,9 +532,13 @@ func toPath(p apitype.PeerPath) model.Path {
 // whose answer was lost to an engine starting over is sent again with the
 // same key, so that it takes effect once.
 func (l *Live) Do(ctx context.Context, op model.Op) (model.Result, error) {
+	if op.Kind == model.OpLANPause {
+		return l.pause(ctx, op.LAN, op.On)
+	}
 	args := proto.OpArgs{
 		LAN: proto.LANID(op.LAN), Device: proto.DeviceID(op.Device), Person: proto.PersonID(op.Person),
 		Name: op.Name, Invite: op.Invite, On: op.On, Refuse: op.Refuse,
+		Kind: proto.DeviceKind(op.DevKind), Invitation: proto.InviteID(op.Invitation),
 	}
 	if op.Kind == model.OpServiceSet {
 		svc := l.service(op.Device, op.LAN, op.Service)
@@ -394,6 +587,37 @@ func (l *Live) Do(ctx context.Context, op model.Op) (model.Result, error) {
 		}
 	}
 	return r, nil
+}
+
+// pause pauses a LAN on this computer, or resumes it: the engine does it on
+// its own, at once, as `deneb lan pause` does, and tells the server after.
+// The snapshot says so from now on, rather than wait for the engine's next
+// state, so that the switch does not flip back in between.
+func (l *Live) pause(ctx context.Context, lan model.LANID, on bool) (model.Result, error) {
+	scope := apitype.ScopeID(proto.LANScope(proto.LANID(lan)))
+	if err := l.lc.Pause(ctx, scope, on); err != nil {
+		if _, ok := localclient.AsError(err); ok || errors.Is(err, localclient.ErrNotRunning) || errors.Is(err, context.DeadlineExceeded) {
+			return model.Result{}, modelError(err)
+		}
+		// An engine older than the switch answers without an error of its
+		// own: in plain words, never the HTTP status.
+		return model.Result{}, &model.Error{Code: model.ErrInvalid, Message: "这台电脑上的 Deneb 还不能暂停，更新以后再试"}
+	}
+	l.update(func(time.Time) {
+		st := l.state
+		if st == nil {
+			return
+		}
+		n := *st
+		n.Scopes = slices.Clone(st.Scopes)
+		for i := range n.Scopes {
+			if n.Scopes[i].ID == scope {
+				n.Scopes[i].Paused = on
+			}
+		}
+		l.state = &n
+	})
+	return model.Result{}, nil
 }
 
 // service finds the service of dev with key, as service.set names it to the
@@ -497,6 +721,11 @@ func modelError(err error) error {
 		return &model.Error{Code: model.ErrTimeout, Message: "等了太久，没办成"}
 	}
 	if e, ok := localclient.AsError(err); ok {
+		if strings.HasPrefix(e.Message, "不认识的操作") {
+			// A server older than this client: in plain words, never the
+			// op's name (the view hides what it knows the server lacks).
+			return &model.Error{Code: model.ErrorCode(e.Code), Message: "服务器还没更新，暂时用不了"}
+		}
 		msg := strings.TrimRight(e.Message, "。.")
 		if msg == "" {
 			msg = "没办成，等一下再试试"

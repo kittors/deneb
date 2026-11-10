@@ -9,8 +9,11 @@
 #
 # Redeploying keeps the data directory, so the TLS key and with it the pin
 # clients ship stay the same; the replaced container's log goes to
-# /opt/deneb-control/logs. A redeploy restarts the server: engines reconnect
-# within seconds, and login links not used yet stop working.
+# /opt/deneb-control/logs, a copy of the data taken while the old server is
+# stopped to /opt/deneb-control/backups, and the old image is kept as
+# deneb-control:prev (rollback-hk155.sh puts it back). A redeploy restarts
+# the server: engines reconnect within seconds, and login links not used
+# yet stop working.
 set -eu
 HOST=${HOST:-hk-155}
 PORT=${PORT:-47443}
@@ -40,13 +43,31 @@ ssh "$HOST" "
 	chown -R 65534:65534 $REMOTE/data
 	chmod 700 $REMOTE/data
 	chmod 600 $REMOTE/data/seed.json
-	docker build -q -t $TAG $REMOTE/image
-	# A container's log goes with it: keep the old one's, logins and
-	# approvals included, before replacing it.
-	mkdir -p $REMOTE/logs
+	# The image running now stays as deneb-control:prev, for
+	# rollback-hk155.sh.
 	if docker inspect $NAME >/dev/null 2>&1; then
-		docker logs $NAME > $REMOTE/logs/$NAME-\$(date -u +%Y%m%d-%H%M%S).log 2>&1
+		docker tag \$(docker inspect -f '{{.Image}}' $NAME) deneb-control:prev
+	fi
+	docker build -q -t $TAG $REMOTE/image
+	stamp=\$(date -u +%Y%m%d-%H%M%S)
+	mkdir -p $REMOTE/logs $REMOTE/backups
+	if docker inspect $NAME >/dev/null 2>&1; then
+		# A container's log goes with it: keep the old one's, logins and
+		# approvals included, before replacing it.
+		docker logs $NAME > $REMOTE/logs/$NAME-\$stamp.log 2>&1
 		ls -1t $REMOTE/logs/$NAME-*.log | tail -n +31 | xargs -r rm -f
+		# Stopped, the database is quiet: copy it as it is, for a rollback
+		# to the exact state before this deploy.
+		docker stop -t 10 $NAME >/dev/null
+		rm -f $REMOTE/data/admin.sock # the new server makes its own
+		if ! cp -a $REMOTE/data $REMOTE/backups/data-\$stamp; then
+			# No backup, no deploy: bring the old server back up.
+			docker start $NAME
+			echo 'backup failed; the old server is running again' >&2
+			exit 1
+		fi
+		ls -1dt $REMOTE/backups/data-* | tail -n +11 | xargs -r rm -rf
+		echo "backup: $REMOTE/backups/data-\$stamp"
 	fi
 	docker rm -f $NAME >/dev/null 2>&1 || true
 	docker run -d --name $NAME \

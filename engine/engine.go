@@ -74,6 +74,15 @@ type Options struct {
 	// Idle: a peer without traffic this long gets no more heartbeat until
 	// traffic comes back (M2; default 45 s).
 	Idle time.Duration
+	// IdleReprobe: an idle peer shown on the relay or as unreachable is
+	// asked again this soon, then less and less often (tests; default 30 s).
+	IdleReprobe time.Duration
+	// FlakyBackoff: how long a direct address that keeps dropping soon
+	// after being taken up is left alone at first (tests; default 2 min).
+	FlakyBackoff time.Duration
+	// RelayRetry: how long a relay that failed is skipped at first (tests;
+	// default 15 s).
+	RelayRetry time.Duration
 	// HomeRelay, if the network map has it, is where this device stays
 	// reachable instead of the first relay of its first LAN (tests: peers
 	// homed on different relays). RelayIdle closes other relays' unused
@@ -81,12 +90,23 @@ type Options struct {
 	HomeRelay proto.RelayID
 	RelayIdle time.Duration
 	// PathByLoss lets a lossy or slow direct path give way to the relay
-	// (M2). Off by default until proven on real networks.
+	// when the relay is clearly cleaner (M2). denebd's -path-by-loss, on by
+	// default.
 	PathByLoss bool
+	// DupSmall: small packets twice on a lossy direct path ("auto", the
+	// default; "on"; "off"). See magicsock.Options.DupSmall.
+	DupSmall string
 	// LockWait is how long to wait for another engine on the same state
 	// directory to stop (0: refuse at once). A kernel-mode engine taking over
 	// from the user-space one waits; everything else refuses.
 	LockWait time.Duration
+	// SelfUpdate replaces this engine with another executable, where it
+	// runs as a system service that can (the Windows service). Nil
+	// elsewhere: UpdateEngine answers UpdateNotService.
+	SelfUpdate func(ctx context.Context, path string) apitype.UpdateResult
+	// LogPath is the engine's log file, for diagnostics (empty: the
+	// state directory's denebd.log).
+	LogPath string
 }
 
 // ErrStateBusy means another engine runs on the same state directory.
@@ -111,6 +131,8 @@ type Engine struct {
 
 	netMu         sync.Mutex // one reconnect at a time
 	lastNetChange time.Time
+	lastWake      time.Time     // when the last sleep was handled (woke)
+	ctlWake       chan struct{} // kickControl: retry the control server now
 	netmon        *netmon.Monitor
 	bus           *eventbus.Bus
 	streamKick    func()     // ends the current control stream
@@ -150,7 +172,6 @@ type Engine struct {
 	problems   map[string]apitype.Problem
 	socksOn    bool
 	portmaps   map[string]*portmap
-	homeRelay  proto.RelayID
 	lastReport string
 
 	subs      map[int]func(apitype.Event)
@@ -222,6 +243,7 @@ func New(opts Options) (*Engine, error) {
 		versionCh: make(chan struct{}),
 		wgPeers:   map[proto.NodePublic]wgPeer{},
 		problems:  map[string]apitype.Problem{},
+		ctlWake:   make(chan struct{}, 1),
 		portmaps:  map[string]*portmap{},
 		subs:      map[int]func(apitype.Event){},
 		lastPaths: map[proto.DeviceID]apitype.PeerPath{},
@@ -257,22 +279,26 @@ func New(opts Options) (*Engine, error) {
 		port = e.st.Port // keep the port across restarts: NAT mappings and firewall rules stay valid
 	}
 	ms, err := magicsock.New(e.nodePriv, e.discoPriv, magicsock.Options{
-		Port:            port,
-		BindInterface:   ifname,
-		Heartbeat:       opts.Heartbeat,
-		Trust:           opts.Trust,
-		Idle:            opts.Idle,
-		RelayIdle:       opts.RelayIdle,
-		PathByLoss:      opts.PathByLoss,
-		StaticEndpoints: opts.StaticEndpoints,
-		RelayRoots:      opts.RelayRoots,
-		Logf:            logf,
-		OnEndpoints:     e.requestReport,
-		OnPath:          func(proto.DeviceID) { e.wakePaths() },
-		OnPeerRestart:   func(k proto.NodePublic) { go e.rekey(k) },
-		OnTimeJump: func(d time.Duration) {
-			go e.netChanged(fmt.Sprintf("woke after %s", d.Round(time.Second)))
-		},
+		Port:             port,
+		BindInterface:    ifname,
+		Heartbeat:        opts.Heartbeat,
+		Trust:            opts.Trust,
+		Idle:             opts.Idle,
+		IdleReprobe:      opts.IdleReprobe,
+		FlakyBackoff:     opts.FlakyBackoff,
+		RelayRetry:       opts.RelayRetry,
+		RelayIdle:        opts.RelayIdle,
+		PathByLoss:       opts.PathByLoss,
+		DupSmall:         opts.DupSmall,
+		StaticEndpoints:  opts.StaticEndpoints,
+		RelayRoots:       opts.RelayRoots,
+		Logf:             logf,
+		OnEndpoints:      e.requestReport,
+		OnPath:           func(proto.DeviceID) { e.wakePaths() },
+		OnPeerRestart:    func(k proto.NodePublic) { go e.rekey(k) },
+		OnTimeJump:       func(d time.Duration) { go e.woke(d) },
+		OnStaleHandshake: func(k proto.NodePublic) { go e.newHandshake(k) },
+		OnLocalNetwork:   e.localNetwork,
 	})
 	if err != nil {
 		return nil, err
@@ -306,6 +332,7 @@ func (e *Engine) Start() {
 	go e.gcLoop()
 	go e.pathLoop()
 	go e.reportLoop()
+	go e.proxyLoop()
 	e.mu.Lock()
 	// With a control server configured, the control loop always runs: a
 	// logged-in device streams its map; one that is not keeps a current

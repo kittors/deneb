@@ -184,6 +184,93 @@ var migrations = []string{
 	ALTER TABLE devices ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0;`,
 	// 2 (M2): a DNS label set by hand stays when the device is renamed.
 	`ALTER TABLE devices ADD COLUMN name_pinned INTEGER NOT NULL DEFAULT 0;`,
+	// 3 (M3): shares, one device to one person; public devices. A revoked
+	// share keeps its row, so sharing again (undo) brings it back as it was,
+	// services and all; what it opens is in opens, scope share/<id>.
+	`CREATE TABLE shares (
+		id         TEXT PRIMARY KEY,
+		device     TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+		receiver   TEXT NOT NULL REFERENCES people(id),
+		sharer     TEXT NOT NULL REFERENCES people(id),
+		state      TEXT NOT NULL,
+		created_at INTEGER NOT NULL,
+		revoked_at INTEGER NOT NULL DEFAULT 0,
+		UNIQUE (device, receiver)
+	);
+	ALTER TABLE devices ADD COLUMN public_lan TEXT NOT NULL DEFAULT '';`,
+	// 4 (M3): how long a revoked share keeps its seat (until the client
+	// says the undo is gone, ten seconds at most); a LAN's mode.
+	`ALTER TABLE shares ADD COLUMN hold_until INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE lans ADD COLUMN mode TEXT NOT NULL DEFAULT 'lan';`,
+	// 5 (M4): relays people make (relay.create) and register; the relays
+	// each device says it is connected to; what each device sent and
+	// received through each relay, per day (UTC), never who with whom.
+	`ALTER TABLE relays ADD COLUMN pin TEXT NOT NULL DEFAULT '';
+	ALTER TABLE relays ADD COLUMN rate_limit INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE relays ADD COLUMN token_hash TEXT NOT NULL DEFAULT '';
+	ALTER TABLE relays ADD COLUMN token_expires INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE relays ADD COLUMN secret_hash TEXT NOT NULL DEFAULT '';
+	ALTER TABLE relays ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE devices ADD COLUMN relays TEXT NOT NULL DEFAULT '[]';
+	CREATE TABLE relay_usage (
+		relay    TEXT NOT NULL REFERENCES relays(id) ON DELETE CASCADE,
+		device   TEXT NOT NULL,
+		day      INTEGER NOT NULL, -- days since 1970-01-01, UTC
+		sent     INTEGER NOT NULL DEFAULT 0,
+		received INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (relay, device, day)
+	);`,
+	// 6 (M4): join codes get a table of their own: one can stand for a
+	// relay not made yet (relay.join), which comes into being when the
+	// code is used. A relay remembers when it first registered.
+	`CREATE TABLE relay_joins (
+		id         TEXT PRIMARY KEY,
+		owner      TEXT NOT NULL DEFAULT '', -- whose relay it makes; empty for a public one
+		relay      TEXT REFERENCES relays(id) ON DELETE CASCADE, -- the relay it sets up again; NULL for a new one
+		source     TEXT NOT NULL,
+		name       TEXT NOT NULL DEFAULT '', -- the new relay's name; empty: from its region
+		rate_limit INTEGER NOT NULL DEFAULT 0,
+		token_hash TEXT NOT NULL UNIQUE,
+		created_at INTEGER NOT NULL,
+		expires_at INTEGER NOT NULL
+	);
+	INSERT INTO relay_joins (id, owner, relay, source, token_hash, created_at, expires_at)
+		SELECT 'j_' || id, owner, id, source, token_hash, created_at, token_expires FROM relays WHERE token_hash != '';
+	ALTER TABLE relays DROP COLUMN token_hash;
+	ALTER TABLE relays DROP COLUMN token_expires;
+	ALTER TABLE relays ADD COLUMN registered_at INTEGER NOT NULL DEFAULT 0;`,
+	// 7 (M4): a relay's weight and capacity, set by its owner; who was
+	// kicked off which relay, by whom and when, and when it was lifted.
+	`ALTER TABLE relays ADD COLUMN weight INTEGER NOT NULL DEFAULT 1;
+	ALTER TABLE relays ADD COLUMN capacity INTEGER NOT NULL DEFAULT 0;
+	CREATE TABLE relay_kicks (
+		id        TEXT PRIMARY KEY,
+		relay     TEXT NOT NULL REFERENCES relays(id) ON DELETE CASCADE,
+		person    TEXT NOT NULL DEFAULT '',
+		device    TEXT NOT NULL DEFAULT '',
+		by_person TEXT NOT NULL DEFAULT '', -- empty: the deployment's admin
+		at        INTEGER NOT NULL,
+		lifted_at INTEGER NOT NULL DEFAULT 0,
+		lifted_by TEXT NOT NULL DEFAULT ''
+	);`,
+	// 8: one person's seat limit, set by the operator for a test
+	// (deneb-control seats), 0 meaning the deployment's; browsers'
+	// sessions for the Web app (/api/v1), kept as hashes.
+	`ALTER TABLE people ADD COLUMN seat_limit INTEGER NOT NULL DEFAULT 0;
+	CREATE TABLE web_sessions (
+		id         TEXT PRIMARY KEY, -- the hash of the cookie's token
+		person     TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+		created_at INTEGER NOT NULL,
+		expires_at INTEGER NOT NULL,
+		from_ip    TEXT NOT NULL DEFAULT ''
+	);`,
+	// 9 (M4): what a device's engine said it can do at its last login,
+	// a JSON list, so peers keep seeing it across a restart of the server
+	// (the engine only claims again when it starts).
+	`ALTER TABLE devices ADD COLUMN caps TEXT NOT NULL DEFAULT '[]';`,
+	// 10 (M4): the deployment's operators (deneb-control operators), who
+	// manage the public relays on the ops page.
+	`ALTER TABLE people ADD COLUMN operator INTEGER NOT NULL DEFAULT 0;`,
 }
 
 func migrate(db *sql.DB) error {

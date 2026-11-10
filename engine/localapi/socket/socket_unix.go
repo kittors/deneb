@@ -36,6 +36,11 @@ func userPath() string {
 
 func isPrivileged() bool { return os.Geteuid() == 0 }
 
+func exists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
 func listen(path string, opts ListenOptions) (net.Listener, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err

@@ -141,6 +141,8 @@ func (e *Engine) TestHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/test/block", e.testBlock)
 	mux.HandleFunc("POST /v1/test/loss", e.testLoss)
+	mux.HandleFunc("POST /v1/test/dup", e.testDup)
+	mux.HandleFunc("POST /v1/test/relaylate", e.testRelayLate)
 	mux.HandleFunc("POST /v1/test/dnsflush", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Mode string `json:"mode"` // off, on, now
@@ -279,6 +281,46 @@ func (e *Engine) testLoss(w http.ResponseWriter, r *http.Request) {
 	}
 	e.ms.SetLoss(p.NodeKey, req.Tx, req.Rx)
 	writeJSON(w, map[string]any{"peer": p.FQDN, "tx": req.Tx, "rx": req.Rx})
+}
+
+// testRelayLate makes a share of a peer's relay pongs come late: a line
+// that loses TCP too, where the relay is no cleaner than the direct path.
+func (e *Engine) testRelayLate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Peer string  `json:"peer"`
+		Frac float64 `json:"frac"`
+		Ms   int     `json:"ms"`
+	}
+	if !readBody(w, r, &req) {
+		return
+	}
+	p, err := e.peerByName(req.Peer)
+	if err != nil {
+		localapi.WriteError(w, err)
+		return
+	}
+	e.ms.SetRelayLate(p.NodeKey, req.Frac, time.Duration(req.Ms)*time.Millisecond)
+	writeJSON(w, map[string]any{"peer": p.FQDN, "frac": req.Frac, "ms": req.Ms})
+}
+
+// testDup switches "small packets twice on a lossy direct path" at run
+// time: auto, on or off (an A/B on a real line without a restart).
+func (e *Engine) testDup(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Mode string `json:"mode"`
+	}
+	if !readBody(w, r, &req) {
+		return
+	}
+	switch req.Mode {
+	case "auto", "on", "off":
+	default:
+		localapi.WriteError(w, &apitype.Error{Code: apitype.ErrInvalid, Message: "要 auto、on 或 off"})
+		return
+	}
+	e.ms.SetDupSmall(req.Mode)
+	e.logf("[test] small packets twice: %s", req.Mode)
+	writeJSON(w, map[string]any{"mode": req.Mode})
 }
 
 // testAttackRoute makes this device route a prefix to a peer and send to
@@ -524,7 +566,7 @@ func (e *Engine) testPaths(w http.ResponseWriter, r *http.Request) {
 			out[p.FQDN] = map[string]any{
 				"kind": st.Kind, "endpoint": st.Endpoint.String(), "relay": st.Relay, "rttMs": st.RTT.Milliseconds(),
 				"loss": st.Loss, "since": st.Since, "candidates": cands, "blocked": st.Blocked,
-				"idle": st.Idle, "reason": st.Reason, "prev": st.Prev, "pingsTx": st.PingsTx,
+				"idle": st.Idle, "held": st.Held, "dup": st.Dup, "txDup": st.TxDup, "txWake": st.TxWake, "hsBoth": st.HSBoth, "txHSBoth": st.TxHSBoth, "rxHSDupes": st.RxHSDupes, "localRefused": st.LocalRefused, "backedOff": st.BackedOff, "reason": st.Reason, "prev": st.Prev, "pingsTx": st.PingsTx, "pingsRelay": st.PingsRelay,
 				"txDirect": st.TxDirect, "txRelay": st.TxRelay, "rxDirect": st.RxDirect, "rxRelay": st.RxRelay,
 			}
 		}

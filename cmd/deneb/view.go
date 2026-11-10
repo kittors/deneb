@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -37,10 +39,15 @@ func (a *app) view(c *ui.Context) {
 	root.Children(func() {
 		a.sidebar(c, p, bar)
 		ui.Column(c).Grow(1).Background(p.bg).Children(func() {
-			a.header(c, p)
+			if a.all() {
+				a.allHeader(c, p)
+			} else {
+				a.header(c, p)
+			}
 			a.canvas(c, p)
 			a.inviteLayer(c, p)
 		})
+		a.personChip(c, p)
 	})
 }
 
@@ -96,9 +103,58 @@ func (a *app) sidebar(c *ui.Context, p *palette, bar ui.TitleBar) {
 				})
 			}
 		}
+		if len(a.shownLANs()) > 1 {
+			// Every LAN at once, each in a region (scene 3).
+			people := func() { ui.Icon(c, uiGlyphs["people"]).Size(18, 18).TextColor(p.ink3) }
+			if navRowWith(c, p, "all", "全部", a.all(), people, rowOpts{}) {
+				a.show(c, allLANs, false)
+			}
+		}
+		over := model.LANID("")
 		for _, l := range a.snap.LANs {
-			if navRow(c, p, "lan-"+string(l.ID), l.Name, l.ID == a.lan, dots(l.Members), "", a.flash(c, l.ID)) {
+			count := ""
+			if l.Waiting {
+				count = "等同意"
+			}
+			// Something waits for me there: a small blue dot at the row's end,
+			// until I let it in or turn it away (DESIGN §6.7).
+			waits := l.Owner == a.snap.Me && len(l.Pending)+len(l.PendingMembers) > 0
+			o := rowOpts{count: count, flash: a.flash(c, l.ID), dot: waits, ring: a.personOver == l.ID, at: a.rowAt(l.ID)}
+			if !l.Waiting && l.Has(a.snap.Self) {
+				// Its switch: on, it connects; off, it is paused on this
+				// computer, which must be in it (scene 3).
+				lan, name, paused := l.ID, l.Name, l.Paused
+				o.trail = func() bool {
+					flipped := miniToggle(c, p, "pause-"+string(lan), "暂停"+name, !paused)
+					if flipped {
+						a.pause(c, lan, !paused)
+					}
+					return flipped
+				}
+			}
+			hover := false
+			o.hover = &hover
+			if navRowWith(c, p, "lan-"+string(l.ID), l.Name, l.ID == a.lan, dots(l.Members), o) {
 				a.show(c, l.ID, false)
+			}
+			if hover {
+				over = l.ID
+			}
+		}
+		a.updateFocus(c, over)
+		// Invites sent to me by name that I put off: a grey row each, which
+		// shows the invite again (DESIGN §6.7).
+		for _, inv := range a.snap.Invitations {
+			if a.invite != nil && a.invite.invitation == inv.ID {
+				continue
+			}
+			who := a.people[string(inv.Inviter.ID)]
+			if who == nil {
+				who = &person{id: string(inv.Inviter.ID), name: inv.Inviter.Name, ch: inv.Inviter.Initial, color: ownerColors[inv.Inviter.Color%model.NumColors]}
+			}
+			label := strings.TrimLeft(spaced(short(who.name)), " ") + "邀请你 · " + short(inv.LANName)
+			if navRow(c, p, "invitation-"+inv.ID, label, false, func() { ball(c, who, 16, false) }, "", 0) {
+				a.showInvitation(inv)
 			}
 		}
 		a.newLANRow(c, p)
@@ -131,7 +187,47 @@ func group(c *ui.Context, p *palette, s string) {
 // that just came in opens out and lights up, flash (1 to 0) of the way. It
 // reports whether it was clicked.
 func navRow(c *ui.Context, p *palette, key, label string, on bool, lead func(), count string, flash float32) bool {
+	return navRowDot(c, p, key, label, on, lead, count, flash, false)
+}
+
+// navRowDot is navRow with a small blue dot at its end, as dot asks.
+func navRowDot(c *ui.Context, p *palette, key, label string, on bool, lead func(), count string, flash float32, dot bool) bool {
+	return navRowAt(c, p, key, label, on, lead, count, flash, dot, false, nil)
+}
+
+// navRowAt is navRowDot that rings blue while what the hand holds can be
+// let go on it (ring), and tells where it is in the window (at).
+func navRowAt(c *ui.Context, p *palette, key, label string, on bool, lead func(), count string, flash float32, dot, ring bool, at *ui.Rect) bool {
+	return navRowWith(c, p, key, label, on, lead, rowOpts{count: count, flash: flash, dot: dot, ring: ring, at: at})
+}
+
+// rowOpts are what a row of the sidebar shows besides its label: a count, a
+// blue dot, a blue ring while what the hand holds can be let go on it, and
+// at its end a switch (trail), which reports whether it was flipped; at and
+// hover tell where the row is in the window and whether the pointer is on
+// it.
+type rowOpts struct {
+	count     string
+	flash     float32
+	dot, ring bool
+	at        *ui.Rect
+	trail     func() bool
+	hover     *bool
+}
+
+// navRowWith is a row of the sidebar as o asks.
+func navRowWith(c *ui.Context, p *palette, key, label string, on bool, lead func(), o rowOpts) bool {
+	count, flash, dot := o.count, o.flash, o.dot
 	row := ui.ButtonBase(c.Key(key)).Height(36).Padding(0, 10).Gap(10).Radius(10).FocusRing(false)
+	if o.at != nil {
+		*o.at = row.Bounds()
+	}
+	if o.hover != nil {
+		*o.hover = row.Hovered()
+	}
+	if o.ring {
+		row.Border(1.5, p.primary)
+	}
 	if flash > 0 {
 		row.Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: &ui.Motion{Collapse: true}})
 	}
@@ -149,14 +245,22 @@ func navRow(c *ui.Context, p *palette, key, label string, on bool, lead func(), 
 	if on {
 		color = p.ink
 	}
+	flipped := false
 	row.Children(func() {
 		lead()
 		ui.Text(c, label).FontSize(13).FontWeight(500).TextColor(color).Grow(1).SingleLine()
 		if count != "" {
 			ui.Text(c, count).FontSize(12).TextColor(p.ink3)
 		}
+		if dot {
+			ui.Box(c.Key("dot")).Size(7, 7).Radius(999).Background(p.primary).
+				Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: &ui.Motion{Scale: 0.3}, Exit: &ui.Motion{Scale: 0.3}})
+		}
+		if o.trail != nil && o.trail() {
+			flipped = true
+		}
 	})
-	return row.Clicked()
+	return row.Clicked() && !flipped
 }
 
 func iconButton(c *ui.Context, p *palette, icon, label string) ui.Element {
@@ -187,7 +291,18 @@ func (a *app) header(c *ui.Context, p *palette) {
 	name := l.Name
 	ui.Row(c).Height(headerHeight).Padding(22, 24, 0, 28).AlignItems(ui.Start).Gap(16).DragWindow().Children(func() {
 		ui.Column(c).Gap(4).Children(func() {
-			ui.Text(c, name).FontSize(20).FontWeight(600).SingleLine().MaxWidth(lanNameWidth)
+			// A click on the LAN's name shows its card (DESIGN §6.7).
+			title := ui.ButtonBase(c.Key("lan-title")).FocusRing(false).Cursor(ui.CursorPointer).AlignSelf(ui.Start)
+			title.Children(func() {
+				ui.Text(c, name).FontSize(20).FontWeight(600).SingleLine().MaxWidth(lanNameWidth)
+			})
+			if title.Clicked() {
+				if a.selected == lanCard {
+					a.selected, a.renaming = "", nil
+				} else {
+					a.selected, a.more, a.picking, a.renaming = lanCard, false, false, nil
+				}
+			}
 			ui.Row(c).Gap(6).Children(func() {
 				dot, line := a.summary(p)
 				ui.Box(c).Size(7, 7).Radius(999).Background(dot).Shadow(0, 0, 0, 3, dot.Alpha(0.18))
@@ -195,15 +310,30 @@ func (a *app) header(c *ui.Context, p *palette) {
 			})
 		})
 		ui.Spacer(c)
+		a.noticePill(c, p)
 		ui.Row(c).Gap(14).Children(func() {
 			ui.Row(c).Children(func() {
-				for i, id := range a.members {
-					b := ball(c, a.people[id], 30, false).Shadow(0, 0, 0, 2, p.bg)
-					if i > 0 {
-						b.Margin(0, 0, 0, -6)
-					}
+				// Everyone in the stack keeps one ball: a member's solid, one
+				// who waits for me, or for my invite's answer, dashed (DESIGN
+				// §6.7). Letting someone in fills theirs where it is.
+				i := 0
+				for _, id := range a.members {
+					a.stackBall(c, p, l, id, member, i > 0, model.Invited{})
+					i++
+				}
+				for _, id := range l.PendingMembers {
+					a.stackBall(c, p, l, string(id), waitsForMe, i > 0, model.Invited{})
+					i++
+				}
+				for _, v := range l.Invited {
+					a.stackBall(c, p, l, string(v.Person), invitedByMe, i > 0, v)
+					i++
 				}
 			})
+			if l.Waiting {
+				// Not in yet: there is no one to invite into it.
+				return
+			}
 			btn := ui.ButtonBase(c.Key("invite")).Height(34).Padding(0, 14).Gap(6).Radius(999).Background(p.primary).FocusRing(false).
 				Shadow(0, 1, 2, 0, p.primary.Alpha(0.3)).InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.18))
 			if btn.Hovered() {
@@ -250,9 +380,16 @@ const lanNameWidth = 420
 // summary is the line under the LAN's name and the color of its dot: how
 // many people and devices, and whether all of them are connected.
 func (a *app) summary(p *palette) (ui.Color, string) {
+	if a.snap.NoNetwork && a.snap.Engine {
+		// The trouble is here, not over there (DESIGN §6.10).
+		return p.ink3, "这台电脑没联网，联网后会自动连上"
+	}
+	if a.all() {
+		return a.allSummary(p)
+	}
 	n, up, waiting := 0, 0, 0
 	for _, d := range a.devices {
-		if !d.gone.IsZero() {
+		if !d.gone.IsZero() || d.pending {
 			continue
 		}
 		n++
@@ -268,6 +405,13 @@ func (a *app) summary(p *palette) (ui.Color, string) {
 	switch {
 	case !a.snap.Engine:
 		return p.ink3, "连不上这台电脑上的 Deneb，正在重试…"
+	case l != nil && l.Waiting:
+		// I am not in yet: nothing here is mine to count (DESIGN §6.7).
+		return p.ink3, "等" + spaced(a.ownerName()) + "同意你加入"
+	case l != nil && l.Paused:
+		// Paused on this computer: the canvas shows it as it is, and can
+		// be used as ever (scene 3).
+		return p.ink3, "已暂停，打开开关就恢复"
 	case l != nil && a.self != "" && !l.Has(model.DeviceID(a.self)):
 		// Made on another of my devices: this computer waits in the tray,
 		// and nothing here connects until it is in.
@@ -278,4 +422,115 @@ func (a *app) summary(p *palette) (ui.Color, string) {
 		return p.ink3, fmt.Sprintf("%d 个人，%d 台设备，正在连接…", people, n)
 	}
 	return p.ink3, fmt.Sprintf("%d 个人，%d 台设备，%d 台连上了", people, n, up)
+}
+
+// rowAt is where the sidebar's row of a LAN was in the last frame, in the
+// window: what a person dragged is let go on.
+func (a *app) rowAt(id model.LANID) *ui.Rect {
+	if a.rows == nil {
+		a.rows = map[model.LANID]*ui.Rect{}
+	}
+	r, ok := a.rows[id]
+	if !ok {
+		r = &ui.Rect{}
+		a.rows[id] = r
+	}
+	return r
+}
+
+// personHandle lets a member's ball in the header be dragged onto a LAN's
+// row in the sidebar, which invites them there (DESIGN §6.4, §6.7). While
+// it is dragged, a chip of their ball and name follows the hand in its
+// place (personChip); let go anywhere else, the ball springs back.
+func (a *app) personHandle(c *ui.Context, b ui.Element, id string) {
+	if a.ballOffs == nil {
+		a.ballOffs = map[string]*ui.Point{}
+	}
+	off, ok := a.ballOffs[id]
+	if !ok {
+		off = &ui.Point{}
+		a.ballOffs[id] = off
+	}
+	b.Draggable(off, ui.DraggableOptions{Animation: ui.Snappy})
+	b.Cursor(ui.CursorGrab)
+	if a.ballHome == nil {
+		a.ballHome = map[string]ui.Point{}
+	}
+	if !b.Dragging() && *off == (ui.Point{}) {
+		// Where it rests: its bounds move with the drag, its home does not.
+		if r := b.Bounds(); r.W > 0 {
+			a.ballHome[id] = ui.Point{X: r.X + r.W/2, Y: r.Y + r.H/2}
+		}
+	}
+	if b.Dragging() {
+		b.Cursor(ui.CursorGrabbing).Opacity(0)
+		home, d := a.ballHome[id], b.DragOffset()
+		at := ui.Point{X: home.X + d.X, Y: home.Y + d.Y}
+		a.person = &personDrag{id: id, at: at}
+		a.personOver = ""
+		for lan, row := range a.rows {
+			if at.X >= row.X && at.X <= row.X+row.W && at.Y >= row.Y && at.Y <= row.Y+row.H {
+				a.personOver = lan
+			}
+		}
+		return
+	}
+	if _, _, ended := b.DragEnded(); ended {
+		if lan := a.personOver; lan != "" {
+			a.inviteTo(c, lan, model.PersonID(id))
+		}
+		*off = ui.Point{}
+		a.person, a.personOver = nil, ""
+	}
+}
+
+// personChip is the chip that follows the hand as it drags a person: their
+// ball and name, above everything; over a row it can be let go on, it
+// shrinks around the pointer, so that the row shows (DESIGN §6.1).
+func (a *app) personChip(c *ui.Context, p *palette) {
+	holder := ui.Box(c.Key("person-chip-layer")).Absolute().Left(0).Top(0).Right(0).Bottom(0).PassThrough()
+	holder.Children(func() {
+		d := a.person
+		if d == nil {
+			return
+		}
+		who := a.people[d.id]
+		chip := ui.Row(c.Key("person-chip-"+d.id)).Absolute().Left(d.at.X-17).Top(d.at.Y-17).Height(34).Padding(0, 12, 0, 4).Gap(8).
+			Radius(999).Background(p.bg).Shadow(0, 8, 20, 0, ui.RGBA(9, 9, 11, 0.16)).Shadow(0, 1, 2, 0, ui.RGBA(9, 9, 11, 0.08)).
+			TransformOrigin(0.1, 0.5).PassThrough()
+		pose, name := ui.Pose{Scale: 1.04}, float32(1)
+		if a.personOver != "" {
+			// Over the row: only the ball, smaller, so the row's name shows.
+			pose, name = ui.Pose{Scale: 0.8}, 0
+		}
+		chip.AnimatePose(pose, ui.Snappy)
+		k := chip.AnimateTo("name", name, ui.Animation{Duration: 120 * time.Millisecond})
+		if k < 1 {
+			chip.Padding(0, 4+8*k, 0, 4).Background(p.bg.Alpha(k))
+		}
+		chip.Children(func() {
+			ball(c, who, 26, false)
+			if k > 0.02 {
+				ui.Text(c, who.name).FontSize(13).FontWeight(500).Opacity(k)
+			}
+		})
+	})
+}
+
+// inviteTo invites a person into a LAN by name (DESIGN §6.7): they wait for
+// their answer in its ball stack; undo takes the invite back.
+func (a *app) inviteTo(c *ui.Context, lan model.LANID, who model.PersonID) {
+	l := a.snap.LAN(lan)
+	if l == nil {
+		return
+	}
+	name := strings.TrimLeft(spaced(a.people[string(who)].name), " ")
+	if slices.Contains(l.Members, who) {
+		a.notify(c, nil, name+"已经在「"+short(l.Name)+"」里了", nil)
+		return
+	}
+	a.send(c, model.Op{Kind: model.OpLANInvite, LAN: lan, Person: who})
+	a.notify(c, nil, "已邀请"+spaced(a.people[string(who)].name)+"加入「"+short(l.Name)+"」", func() {
+		a.send(c, model.Op{Kind: model.OpInviteRevoke, LAN: lan, Person: who})
+	})
 }

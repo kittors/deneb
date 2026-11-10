@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>M3-12 · 在手机上接受邀请 · Deneb</title>
+    <link rel="stylesheet" href="../v3/v3.css" />
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="web.css" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script src="../shared/motion.js"></script>
+    <script src="../shared/demo.js"></script>
+    <script src="../v3/glyphs.js"></script>
+    <script src="../v3/links.js"></script>
+    <script src="../v3/app.js"></script>
+    <script src="web.js"></script>
+    <script>
+      // M3-12 (DESIGN.md §14.6): the same link, opened on Leo's phone. He
+      // joins in the same card; then the LAN shows as a list by person (no
+      // canvas on a phone), a device's card rises from the bottom, and the
+      // dock at the bottom says how to get Deneb onto his computer (there
+      // is no Deneb for phones).
+      const P = App.PEOPLE;
+      const $ = (s, r = document) => r.querySelector(s);
+      const phone = App.h(
+        `<div class="phone" data-k="phone"><div class="p-island"></div>` +
+          `<div class="p-status"><span>9:41</span><span class="p-icons">` +
+          `<svg width="18" height="12" viewBox="0 0 18 12"><rect x="0" y="8" width="3" height="4" rx="1" fill="currentColor"/><rect x="5" y="5.5" width="3" height="6.5" rx="1" fill="currentColor"/><rect x="10" y="3" width="3" height="9" rx="1" fill="currentColor"/><rect x="15" y="0" width="3" height="12" rx="1" fill="currentColor"/></svg>` +
+          `<svg width="26" height="12" viewBox="0 0 26 12"><rect x="0.5" y="0.5" width="22" height="11" rx="3.5" fill="none" stroke="currentColor" opacity=".4"/><rect x="2" y="2" width="16" height="8" rx="2" fill="currentColor"/><rect x="24" y="4" width="1.5" height="4" rx=".75" fill="currentColor" opacity=".4"/></svg>` +
+          `</span></div>` +
+          `<div class="p-url">${G.ui('lock', 12)}<span class="url-text">deneb.app</span></div>` +
+          `<div class="p-home"></div></div>`
+      );
+      $('#app').appendChild(phone);
+      const app = new App({ frame: false, stageEl: phone, width: 390, height: 844, trace: ['.page-join', '.join-card', '.field', '.cb', '.pair .ball', '.m-lan', '.m-row', '.m-sheet', '.m-scrim', '.m-dock'] });
+      const url = (u) => ($('.url-text', phone).textContent = u);
+
+      // ---- The LAN, as a list --------------------------------------------------------
+      const ME = 'leo';
+      const GROUPS = [
+        { k: 'leo', devs: [{ id: 'self', type: 'laptop', name: '我的电脑', pending: true }] },
+        { k: 'me', devs: [{ id: 'kmac', type: 'laptop', name: 'kittors 的 MacBook' }, { id: 'game', type: 'console', name: 'kittors 的游戏主机' }] },
+        { k: 'mia', devs: [{ id: 'mia', type: 'laptop', name: 'Mia 的 MacBook' }] },
+        { k: 'jie', devs: [{ id: 'jdesk', type: 'desktop', name: '阿杰的台式机' }, { id: 'jnas', type: 'nas', name: '阿杰的 NAS' }] },
+      ];
+      const SERVICES = {
+        laptop: [['screen', '远程桌面', true], ['folder', '共享文件夹', false]],
+        desktop: [['screen', '远程桌面', true], ['globe', '网页', false]],
+        console: [['globe', '游戏服务器', true]],
+        nas: [['folder', '共享文件夹', true], ['screen', '远程桌面', false], ['globe', '网页', true]],
+      };
+      const DASH = `<svg class="dash" viewBox="0 0 40 40" width="40" height="40" aria-hidden="true"><rect x="0.75" y="0.75" width="38.5" height="38.5" rx="11.25" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="4 3"/></svg>`;
+      const nameOf = (k) => (k === ME ? '我' : P[k].full || P[k].name);
+      const row = (g, d) =>
+        `<div class="m-row ${d.pending ? 'pending' : ''}" data-k="${d.id}" data-owner="${g.k}"><div class="tile-m"><div class="tile" style="--c:${P[g.k].c}">${d.pending ? DASH : ''}${G.device(d.type, 22)}</div></div>` +
+        `<div><b>${App.space(d.name)}</b><small>${d.pending ? '在电脑上装好 Deneb，就会出现在这里' : '在线'}</small></div></div>`;
+      const lanPage = App.h(
+        `<div class="page m-lan" data-k="lan" style="visibility:hidden">` +
+          `<div class="m-head"><div class="m-title">周末联机${G.ui('chevron', 16)}</div><span class="stack">${['me', 'mia', 'jie', 'leo'].map((k) => App.ball(k)).join('')}</span></div>` +
+          `<div class="m-sub"><span class="dot" data-tone="ok"></span><span>4 个人，5 台设备都在线</span></div>` +
+          `<div class="m-list">${GROUPS.map((g) => `<div class="m-gh">${App.ball(g.k)}${App.space(nameOf(g.k))}</div><div class="m-card">${g.devs.map((d) => row(g, d)).join('')}</div>`).join('')}</div>` +
+          `<div class="m-dock" data-k="dock"><span>Deneb 装在电脑上用。<br />在电脑上打开 deneb.app 就能下载</span><button class="btn primary" data-act="copy">${G.ui('copy', 15)}复制链接</button></div>` +
+          `<div class="m-scrim" data-k="scrim"></div>` +
+          `</div>`
+      );
+      phone.insertBefore(lanPage, $('.p-home', phone));
+
+      // A device's card rises from the bottom, as the desktop's opens from
+      // its corner; the scrim and the card go back down together.
+      let sheet = null, scrim = $('.m-scrim', lanPage);
+      function openCard(id) {
+        const g = GROUPS.find((x) => x.devs.some((d) => d.id === id));
+        const d = g.devs.find((x) => x.id === id);
+        if (d.pending) return;
+        const svc = (SERVICES[d.type] || []).map(([icon, name, on]) => (on ? `<div class="row">${G.ui(icon, 18)}<span>${name}</span></div>` : `<div class="row na">${G.ui(icon, 18)}<span>${name}</span><em>没开放</em></div>`));
+        const html =
+          `<div class="top"><div class="tile-s"><div class="tile" style="--c:${P[g.k].c}">${G.device(d.type, 20)}</div></div><div><b>${App.space(d.name)}</b><span>${App.space(nameOf(g.k) + '的设备')}</span></div><button class="icon-btn sheet-close" title="关闭">${G.ui('close', 16)}</button></div>` +
+          `<div class="status"><span class="badge" style="--c:#22C55E">${G.ui('online', 16)}</span><div>在线<small>在装了 Deneb 的电脑上就能用</small></div></div>` +
+          `<div class="label">开放给你的</div><div class="rows">${svc.join('')}</div>`;
+        sheet = App.h(`<div class="sheet m-sheet" data-k="sheet">${html}</div>`);
+        lanPage.appendChild(sheet);
+        sheet.animate([{ transform: 'translateY(100%)' }, { transform: 'none' }], { duration: 420, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+        scrim.classList.add('on');
+        scrim.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, easing: 'ease-out', fill: 'forwards' });
+        $('.sheet-close', sheet).onclick = closeCard;
+        for (const r of lanPage.querySelectorAll('.m-row')) r.classList.toggle('sel', r.dataset.k === id);
+      }
+      function closeCard() {
+        if (!sheet) return;
+        const s = sheet;
+        sheet = null;
+        s.animate([{ transform: 'none' }, { transform: 'translateY(100%)' }], { duration: 300, easing: 'cubic-bezier(0.4, 0, 1, 1)', fill: 'forwards' });
+        scrim.classList.remove('on');
+        scrim.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 300, easing: 'ease-in', fill: 'forwards' });
+        D.after(310, () => s.remove());
+      }
+      scrim.onclick = closeCard;
+      for (const r of lanPage.querySelectorAll('.m-row')) r.onclick = () => openCard(r.dataset.k);
+
+      // Copied: the dock says so itself, as the desktop's tray says what the
+      // hand holds (§6.5); no toast over the list. Back after 3 seconds.
+      const dockText = $('.m-dock span', lanPage), copyBtn = $('[data-act="copy"]', lanPage);
+      const IDLE_DOCK = dockText.innerHTML, IDLE_BTN = copyBtn.innerHTML;
+      const swapText = (el, html) => {
+        if (el.innerHTML === html) return;
+        el.innerHTML = html;
+        el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160, easing: 'ease-out' });
+      };
+      let copiedAt = 0;
+      copyBtn.onclick = () => {
+        const at = (copiedAt = D.now());
+        swapText(dockText, '已复制下载链接，<br />在电脑上打开就行');
+        swapText(copyBtn, `${G.ui('check', 15)}已复制`);
+        D.after(3000, () => {
+          if (copiedAt !== at) return;
+          swapText(dockText, IDLE_DOCK);
+          swapText(copyBtn, IDLE_BTN);
+        });
+      };
+
+      // ---- The invite page, as on the desktop's browser ------------------------------
+      url('deneb.app/join/k3xQ9');
+      const join = Web.joinPage(phone, { from: 'me', lan: '周末联机', members: ['me', 'mia', 'jie'], devices: 5, me: 'leo', email: 'leo.chen@gmail.com', masked: 'l***@gmail.com' });
+      phone.insertBefore(join.page, $('.p-home', phone));
+      window.WEB = {
+        typeEmail: () => join.typeEmail(),
+        typeCode: () =>
+          join.typeCode('482916', () => {
+            join.leave(lanPage);
+            url('deneb.app/#/周末联机');
+          }),
+      };
+
+      window.RECORDING = {
+        title: 'M3-12-在手机上接受邀请',
+        duration: 17200,
+        actions: [
+          { at: 500, glide: { sel: '[data-act="join"]' }, dur: 800 },
+          { at: 1400, shot: '邀请卡', clean: true },
+          { at: 1500, down: true },
+          { at: 1580, up: true },
+          { at: 1700, glide: { sel: '.phone', x: 300, y: 720 }, dur: 600 },
+          { at: 2100, js: 'WEB.typeEmail()' },
+          { at: 4000, glide: { sel: '[data-act="send"]' }, dur: 600 },
+          { at: 4700, shot: '填邮箱', clean: true },
+          { at: 4800, down: true },
+          { at: 4880, up: true },
+          { at: 5000, glide: { sel: '.phone', x: 300, y: 720 }, dur: 600 },
+          { at: 5500, js: 'WEB.typeCode()' },
+          { at: 6250, shot: '输入验证码', clean: true },
+          { at: 7000, shot: '加入了', clean: true },
+          { at: 8700, shot: '手机上的局域网', clean: true },
+          { at: 8900, glide: { sel: '.m-row[data-k="jnas"]', x: 200, y: 33 }, dur: 800 },
+          { at: 9800, down: true },
+          { at: 9880, up: true },
+          { at: 10100, glide: { sel: '.phone', x: 330, y: 380 }, dur: 500 },
+          { at: 11000, shot: '阿杰的NAS', clean: true },
+          { at: 11300, down: true },
+          { at: 11380, up: true },
+          { at: 12000, glide: { sel: '[data-act="copy"]' }, dur: 800 },
+          { at: 12900, down: true },
+          { at: 12980, up: true },
+          { at: 13300, glide: { sel: '.phone', x: 330, y: 300 }, dur: 500 },
+          { at: 13700, shot: '复制下载链接', clean: true },
+        ],
+      };
+      window.__ready = true;
+    </script>
+  </body>
+</html>

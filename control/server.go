@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,6 +41,16 @@ type Config struct {
 	// coming back; zero means DefaultLoginLifetime. Test deployments make
 	// it short to see logins run out.
 	LoginLifetime time.Duration
+	// SeatLimit is how many people each person's LANs and shares may hold,
+	// themselves included (pricing-and-relays §1.4). Zero means
+	// DefaultSeatLimit; below zero, no limit (a deployment of one's own).
+	SeatLimit int
+	// Pin is the server's own certificate pin, which relay join codes
+	// carry so a relay trusts it (M4); empty for plain HTTP.
+	Pin string
+	// RelayImage is the Docker image a relay's install command runs;
+	// empty means DefaultRelayImage.
+	RelayImage string
 	// Now is the clock; nil means time.Now. Tests set it.
 	Now func() time.Time
 	// Logf logs; nil means log.Printf.
@@ -49,6 +60,14 @@ type Config struct {
 // DefaultLoginLifetime is how long a login lasts, as Tailscale's default
 // key expiry: a device that keeps coming back never reaches it.
 const DefaultLoginLifetime = 180 * 24 * time.Hour
+
+// DefaultRelayImage is the relay image an install command runs, until
+// there is a public registry: built on the server with
+// deploy/relay/build.sh.
+const DefaultRelayImage = "deneb-relay:v0"
+
+// DefaultSeatLimit is the free seats per person (pricing-and-relays §1.4).
+const DefaultSeatLimit = 6
 
 // Server is a control server. Its Handler serves every interface.
 type Server struct {
@@ -68,6 +87,10 @@ type Server struct {
 	ops   opCache // guarded by mu
 
 	sweeps sweeper
+	// relayLive is which relays checked in lately (M4).
+	relayLive *relayLive
+	// versions wakes the relays' watches at every change (M4).
+	versions *versionWaiter
 	// keepAlive is how often a stream sends a keep-alive frame
 	// (proto.StreamKeepAlive; tests make it short).
 	keepAlive time.Duration
@@ -93,6 +116,12 @@ func New(cfg Config) (*Server, error) {
 	if cfg.LoginLifetime <= 0 {
 		cfg.LoginLifetime = DefaultLoginLifetime
 	}
+	if cfg.SeatLimit == 0 {
+		cfg.SeatLimit = DefaultSeatLimit
+	}
+	if cfg.RelayImage == "" {
+		cfg.RelayImage = DefaultRelayImage
+	}
 	cfg.PublicURL = strings.TrimRight(cfg.PublicURL, "/")
 	if cfg.PublicURL == "" {
 		return nil, errors.New("control: PublicURL is required")
@@ -101,6 +130,16 @@ func New(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The data directory holds the signing key, the TLS key and the
+	// backups: no one but the server may read it (M7 review). The files in
+	// it are made without regard to that; the directory's mode guards them.
+	if fi, err := os.Stat(cfg.DataDir); err == nil && fi.Mode().Perm()&0o077 != 0 {
+		if err := os.Chmod(cfg.DataDir, 0o700); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("data directory %s is open to others (%v) and cannot be closed: %w", cfg.DataDir, fi.Mode().Perm(), err)
+		}
+		cfg.Logf("data directory %s was open to others (%v): now 0700", cfg.DataDir, fi.Mode().Perm())
+	}
 	s := &Server{
 		cfg:       cfg,
 		db:        db,
@@ -108,6 +147,8 @@ func New(cfg Config) (*Server, error) {
 		logins:    newLoginTable(),
 		codes:     map[string]string{},
 		keepAlive: proto.StreamKeepAlive,
+		relayLive: newRelayLive(),
+		versions:  newVersionWaiter(),
 	}
 	if err := s.init(); err != nil {
 		db.Close()
@@ -173,6 +214,11 @@ func (s *Server) init() error {
 	}
 	s.state.Store(&state{w: w, v: v})
 	s.sweeps.last = s.now()
+	for id, m := range w.relayMeta {
+		if m.SecretHash != "" {
+			s.relayLive.presume(id, s.now())
+		}
+	}
 	return s.applySeed()
 }
 
@@ -185,6 +231,9 @@ func (s *Server) load(q querier, network proto.Network) (*World, error) {
 	// "需要重新登录" shows two weeks ahead, or a quarter of a short test
 	// lifetime ahead.
 	w.renewWindow = min(14*24*time.Hour, s.cfg.LoginLifetime/4)
+	w.seatLimit = max(s.cfg.SeatLimit, 0)
+	w.relayStatus = s.relayLive.status
+	w.relayOffline, w.relayFull = s.relayLive.offline, s.relayLive.isFull
 	return w, nil
 }
 
@@ -244,6 +293,7 @@ func (s *Server) changeLocked(force proto.DeviceID, fn func(tx *sql.Tx, w *World
 	}
 	s.state.Store(&state{w: w, v: v})
 	s.hub.publish(w, v, force)
+	s.versions.changed()
 	return v, nil
 }
 
@@ -276,10 +326,22 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 func (s *Server) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	var ae *apiError
 	if !errors.As(err, &ae) {
-		s.logf("%s %s: %v", r.Method, r.URL.Path, err)
+		s.logf("%s %s: %v", r.Method, logPath(r.URL.Path), err)
 		ae = newErr(http.StatusInternalServerError, proto.ErrInternal, "服务器出了点问题，请稍后再试")
 	}
 	writeJSON(w, ae.status, proto.ErrorBody{Error: &ae.body})
+}
+
+// logPath is a request's path for the log, less what is a secret in it:
+// an invite link's token (M7 review). Query strings, where a login link's
+// code is, never go into the log.
+func logPath(p string) string {
+	for _, prefix := range []string{proto.InvitePath, proto.PathWebInvites} {
+		if rest, ok := strings.CutPrefix(p, prefix); ok && rest != "" {
+			return prefix + "…"
+		}
+	}
+	return p
 }
 
 const maxBody = 1 << 20
@@ -304,9 +366,12 @@ func (s *Server) routes() {
 	m.HandleFunc("POST "+proto.PathOps, s.device(s.handleOps, true))
 	m.HandleFunc("GET "+proto.PathUserView, s.device(s.handleUserView, true))
 	m.HandleFunc("POST "+proto.PathInvite, s.device(s.handleInvite, true))
+	m.HandleFunc("GET "+proto.PathRelayUsage, s.device(s.handleRelayUsage, true))
 	m.HandleFunc("/device/", func(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, r, errNotFound("没有这个接口"))
 	})
+	s.relayRoutes(m)
+	s.webAPIRoutes(m)
 	s.webRoutes(m)
 	if s.cfg.Dev {
 		m.HandleFunc("POST /dev/approve", s.handleDevApprove)

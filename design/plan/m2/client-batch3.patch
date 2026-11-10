@@ -1,0 +1,1091 @@
+diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig -x *.png cmd/deneb/main.go cmd/deneb/main.go
+--- cmd/deneb/main.go	2026-11-08 13:54:20
++++ cmd/deneb/main.go	2026-11-08 13:54:20
+@@ -2,10 +2,12 @@
+ 
+ import (
+ 	"context"
++	"embed"
+ 	"log"
+ 	"os"
+ 	"path/filepath"
+ 	"slices"
++	"sync/atomic"
+ 	"time"
+ 
+ 	"github.com/egoist/mygo"
+@@ -46,14 +48,79 @@
+ 			// MyGo draws this window itself; no web page sits behind it.
+ 			Content: ui.View(a.view),
+ 		})
++		panel := menuBar(a, w)
+ 		// A new snapshot, or work done off the main thread, asks the window
+-		// for a frame built anew, which takes it in.
+-		a.setWake(func() { w.Update(func() {}) })
++		// and the menu bar's panel for a frame built anew, which takes it in.
++		a.setWake(func() {
++			w.Update(func() {})
++			if panel != nil && panel.IsVisible() {
++				panel.Update(func() {})
++			}
++		})
+ 	})
+ 	if err := mygo.App.Run(); err != nil {
+ 		log.Fatal(err)
+ 	}
+ }
++
++// menuBar puts Deneb's mark in the menu bar, and under it the panel a click
++// opens (DESIGN §7.1). The mark follows the world: a dot while something
++// waits for me, an outline while nothing connects here. It returns the
++// panel, or nil where the system has no menu bar to put it in.
++func menuBar(a *app, w *mygo.Window) *mygo.Window {
++	tray, err := mygo.NewTray(mygo.TrayOptions{ID: "deneb", Icon: trayIcons["solid"], IconIsTemplate: true, ToolTip: "Deneb"})
++	if err != nil {
++		log.Printf("deneb: no menu bar mark: %v", err)
++		return nil
++	}
++	panel := mygo.NewFlyout(mygo.FlyoutOptions{
++		Tray: tray, Placement: mygo.PlacementBottom, Gap: 6,
++		Width: panelWidth, Height: 360, Focusable: true, Shadow: true, CornerRadius: 20, Hidden: true,
++		Content: ui.View(a.panel),
++	})
++	open := func() {
++		if panel.IsVisible() {
++			panel.Hide()
++			return
++		}
++		panel.Show()
++	}
++	tray.OnClick(open)
++	tray.OnRightClick(open)
++	// Closed by a click elsewhere, or Escape: what it held goes now.
++	panel.OnClose(func(*mygo.CloseEvent) { a.post(func(c *ui.Context) { a.flushPanel(c) }) })
++	a.showMain = func() {
++		panel.Hide()
++		w.Show()
++		w.Focus()
++	}
++	a.resizePanel = func(h int) { panel.SetSize(panelWidth, h) }
++	var was atomic.Value
++	mark := func(s *model.Snapshot) {
++		if st := trayState(s, time.Now()); was.Swap(st) != st {
++			tray.SetIcon(trayIcons[st], true)
++		}
++	}
++	mark(a.store.Snapshot())
++	a.store.Subscribe(mark)
++	return panel
++}
++
++// trayIcons are the menu bar's marks, drawn by TestTrayIcons.
++var trayIcons = func() map[string][]byte {
++	out := map[string][]byte{}
++	for _, st := range []string{"solid", "dot", "hollow"} {
++		b, err := trayIconFiles.ReadFile("trayicons/" + st + ".png")
++		if err != nil {
++			panic(err)
++		}
++		out[st] = b
++	}
++	return out
++}()
++
++//go:embed trayicons/*.png
++var trayIconFiles embed.FS
+ 
+ // pickStore chooses where the world comes from, and the outside events
+ // ⌥⌘1 to ⌥⌘5 play where there is a world to play them in:
+diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig -x *.png cmd/deneb/menubar.go cmd/deneb/menubar.go
+--- cmd/deneb/menubar.go	1970-01-01 07:30:00
++++ cmd/deneb/menubar.go	2026-11-08 13:54:20
+@@ -0,0 +1,528 @@
++package main
++
++import (
++	"fmt"
++	"slices"
++	"strings"
++	"time"
++	"unicode"
++	"unicode/utf8"
++
++	"github.com/egoist/mygo/ui"
++	"github.com/kittors/deneb/client/model"
++)
++
++// The menu bar (DESIGN §7.1): a mark in the macOS menu bar, and the panel
++// a click on it opens under it, drawn in the client's own look. The panel
++// and the window are one view of one world: what one changes, the other
++// shows at once.
++
++// panelWidth is the panel's width; it is as tall as what it holds, up to
++// panelMaxHeight.
++const (
++	panelWidth     = 320
++	panelMaxHeight = 560
++)
++
++// trayState is the menu bar's mark for s: "hollow" while nothing connects
++// here (the engine does not answer, or every LAN is paused), "dot" while
++// something waits for me, "solid" otherwise.
++func trayState(s *model.Snapshot, now time.Time) string {
++	switch {
++	case !s.Engine || allPaused(s):
++		return "hollow"
++	case len(choresOf(s, now)) > 0:
++		return "dot"
++	}
++	return "solid"
++}
++
++// allPaused reports whether s has LANs and every one I am in is paused here.
++func allPaused(s *model.Snapshot) bool {
++	n := 0
++	for _, l := range s.LANs {
++		if l.Waiting {
++			continue
++		}
++		if !l.Paused {
++			return false
++		}
++		n++
++	}
++	return n > 0
++}
++
++// chore is something that waits for me, as the panel lists it: a sentence,
++// and the button that does it.
++type chore struct {
++	key, text, button string
++	kind              string // "device", "member", "renew", "invitation", "unreachable"
++	lan               model.LANID
++	dev               model.DeviceID
++	person            model.PersonID
++	invitation        string
++}
++
++// choresOf are what waits for me in s, most pressing first: devices and
++// people to let into my LANs, my logins to renew, invites to answer, and
++// devices nothing reaches.
++func choresOf(s *model.Snapshot, now time.Time) []chore {
++	var out []chore
++	name := func(id model.PersonID) string {
++		if p := s.Person(id); p != nil {
++			return p.Name
++		}
++		return "有人"
++	}
++	for _, l := range s.LANs {
++		if l.Owner != s.Me || !s.Can(model.FeatureApprove) {
++			continue
++		}
++		for _, id := range l.Pending {
++			if d := s.Device(id); d != nil && d.Owner != s.Me {
++				out = append(out, chore{key: "device/" + string(l.ID) + "/" + string(id), kind: "device", lan: l.ID, dev: id,
++					text: say(short(d.Name), "想加入", short(l.Name)), button: "同意"})
++			}
++		}
++		for _, id := range l.PendingMembers {
++			out = append(out, chore{key: "member/" + string(l.ID) + "/" + string(id), kind: "member", lan: l.ID, person: id,
++				text: say(name(id), "想加入", short(l.Name)), button: "同意"})
++		}
++	}
++	if s.Can(model.FeatureRenew) {
++		for _, id := range s.Mine {
++			if d := s.Device(id); d != nil && (d.Login.Expired || d.Login.Due(now)) {
++				out = append(out, chore{key: "renew/" + string(id), kind: "renew", dev: id,
++					text: say(short(d.Name), "需要重新登录"), button: "续上"})
++			}
++		}
++	}
++	for _, inv := range s.Invitations {
++		out = append(out, chore{key: "invitation/" + inv.ID, kind: "invitation", lan: inv.LAN, invitation: inv.ID,
++			text: say(inv.Inviter.Name, "邀请你加入", short(inv.LANName)), button: "看看"})
++	}
++	seen := map[model.DeviceID]bool{}
++	for _, l := range s.LANs {
++		if l.Waiting || l.Paused {
++			continue
++		}
++		for _, id := range l.Devices {
++			if seen[id] || id == s.Self || s.Path(id).Kind != model.PathUnreachable {
++				continue
++			}
++			seen[id] = true
++			if d := s.Device(id); d != nil {
++				out = append(out, chore{key: "unreachable/" + string(id), kind: "unreachable", lan: l.ID, dev: id,
++					text: say(short(d.Name), "连不上"), button: "看看"})
++			}
++		}
++	}
++	return out
++}
++
++// doneRow is a chore the panel just did, said in its place for a moment
++// ("已同意阿杰的树莓派 · 撤销") before it folds away. One that lets someone
++// in is held: it goes as the row folds, and undo drops it unsent, as the
++// window's toast does.
++type doneRow struct {
++	key, text string
++	until     time.Time
++	p         *pending
++}
++
++// panelBody is the panel: this computer and how it is, what waits for me,
++// my LANs with their switches, and the way into the window.
++func (a *app) panelBody(c *ui.Context, p *palette) ui.Element {
++	now := c.Now()
++	a.expireDone(c, now)
++	s := a.snap
++	body := ui.Column(c.Key("panel")).Width(panelWidth).Radius(20).Background(p.bg).Clip().Padding(16, 12, 12, 12)
++	if p.dark {
++		body.Border(1, p.line)
++	}
++	body.Children(func() {
++		a.panelHead(c, p)
++		a.fold(c, "chores-section", s.Engine && (len(choresOf(s, now)) > 0 || len(a.panelDone) > 0), func() {
++			a.panelChores(c, p, now)
++		})
++		a.fold(c, "lans-section", s.Engine && len(s.LANs) > 0, func() {
++			ui.Text(c, "局域网").FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(14, 8, 6, 8)
++			for _, l := range s.LANs {
++				a.panelLAN(c, p, l)
++			}
++		})
++		a.panelOpen(c, p)
++	})
++	return body
++}
++
++// fold is a group of the panel that opens out as it comes and folds away
++// as it goes, by its height, the rest of the panel following in step and in
++// place (DESIGN §6.6: nothing jumps). It is built while it shows, or folds.
++func (a *app) fold(c *ui.Context, key string, open bool, build func()) {
++	holder := ui.Column(c.Key(key)).Clip()
++	k := holder.AnimateTo("open", map[bool]float32{false: 0, true: 1}[open], ui.Animation{Duration: 220 * time.Millisecond})
++	if k < 1 {
++		holder.Height(a.foldH[key] * k).Opacity(k)
++	}
++	if k <= 0 {
++		return
++	}
++	holder.Children(func() {
++		inner := ui.Column(c.Key(key + "-inner"))
++		inner.Children(build)
++		if b := inner.Bounds(); b.H > 0 {
++			if a.foldH == nil {
++				a.foldH = map[string]float32{}
++			}
++			a.foldH[key] = b.H
++		}
++	})
++}
++
++// panelHead is this computer, its name, and how things are, in a few words.
++func (a *app) panelHead(c *ui.Context, p *palette) {
++	s := a.snap
++	ui.Row(c).Gap(12).Padding(0, 6, 4, 6).AlignItems(ui.Center).Children(func() {
++		kind, name := "laptop", "这台电脑"
++		if d := s.Device(s.Self); d != nil {
++			kind, name = glyphFor(d.Kind), d.Name
++		}
++		col := ownerColors[0]
++		if me := s.Person(s.Me); me != nil {
++			col = ownerColors[me.Color%model.NumColors]
++		}
++		deviceTile(c, p, kind, col, 36, false)
++		ui.Column(c).Gap(2).Grow(1).Children(func() {
++			ui.Text(c, name).FontSize(14).FontWeight(600).SingleLine().MaxWidth(220)
++			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
++				dot, line := a.panelSummary(p)
++				ui.Box(c).Size(7, 7).Radius(999).Background(dot).Shadow(0, 0, 0, 3, dot.Alpha(0.18))
++				ui.Text(c.Key("summary-"+line), line).FontSize(12).TextColor(p.ink2).SingleLine().
++					Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{}})
++			})
++		})
++	})
++}
++
++// panelSummary is how things are here, in a few words, and the color of
++// the dot before them.
++func (a *app) panelSummary(p *palette) (ui.Color, string) {
++	s := a.snap
++	amber := ui.Hex("#F59E0B")
++	var lans []*model.LAN
++	for _, l := range s.LANs {
++		if !l.Waiting {
++			lans = append(lans, l)
++		}
++	}
++	switch {
++	case !s.Engine:
++		return p.ink3, "Deneb 没在运行"
++	case len(lans) == 0:
++		return p.ink3, "还没有局域网"
++	case allPaused(s):
++		return p.ink3, "都暂停了"
++	}
++	unreachable, connecting := map[model.DeviceID]bool{}, false
++	for _, l := range lans {
++		if l.Paused {
++			continue
++		}
++		for _, id := range l.Devices {
++			switch s.Path(id).Kind {
++			case model.PathUnreachable:
++				unreachable[id] = true
++			case model.PathConnecting:
++				connecting = true
++			}
++		}
++	}
++	switch {
++	case len(unreachable) > 0:
++		return amber, fmt.Sprintf("%d 台连不上", len(unreachable))
++	case connecting:
++		return p.ink3, "正在连接…"
++	}
++	return p.ok, "都连上了"
++}
++
++// panelChores lists what waits for me, three at most, each with its
++// button; one just done says so in its place, and folds away.
++func (a *app) panelChores(c *ui.Context, p *palette, now time.Time) {
++	chores := choresOf(a.snap, now)
++	var done []*doneRow
++	for _, d := range a.panelDone {
++		done = append(done, d)
++	}
++	slices.SortFunc(done, func(x, y *doneRow) int { return x.until.Compare(y.until) })
++	ui.Text(c, "要你处理").FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(14, 8, 6, 8)
++	list := ui.Column(c.Key("chores")).Radius(14).Background(p.well).Padding(0, 12)
++	list.Children(func() {
++		row := func(key string) ui.Element {
++			r := ui.Row(c.Key(key)).Height(44).Gap(10).AlignItems(ui.Center)
++			r.Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: &ui.Motion{Collapse: true}, Exit: &ui.Motion{Collapse: true}})
++			return r
++		}
++		for _, d := range done {
++			row(d.key).Children(func() {
++				ui.Text(c, d.text).FontSize(13).TextColor(p.ink2).SingleLine().Shrink(1).Grow(1)
++				if d.p != nil {
++					undo := ui.ButtonBase(c.Key("undo")).Height(28).Padding(0, 8).Radius(999).FocusRing(false)
++					undo.Children(func() { ui.Text(c, "撤销").FontSize(12).FontWeight(500).TextColor(p.primary) })
++					if undo.Clicked() {
++						a.undoDone(d)
++					}
++				}
++			})
++		}
++		shown := 0
++		for _, ch := range chores {
++			if shown == 3 {
++				break
++			}
++			if _, ok := a.panelDone[ch.key]; ok {
++				continue
++			}
++			shown++
++			row(ch.key).Children(func() {
++				ui.Text(c, ch.text).FontSize(13).FontWeight(500).SingleLine().Shrink(1).Grow(1)
++				b := ui.ButtonBase(c.Key("do")).Height(28).Padding(0, 12).Radius(999).Background(p.bg).FocusRing(false).
++					Shadow(0, 1, 2, 0, ui.RGBA(9, 9, 11, 0.06))
++				b.AnimatePose(pressPose(b, 0.94), ui.Snappy)
++				b.Children(func() { ui.Text(c, ch.button).FontSize(12).FontWeight(500).SingleLine() })
++				if b.Clicked() {
++					a.doChore(c, ch, now)
++				}
++			})
++		}
++		if more := len(chores) - shown - len(done); more > 0 {
++			row("more").Children(func() {
++				ui.Text(c, fmt.Sprintf("还有 %d 件", more)).FontSize(13).TextColor(p.ink2).Grow(1)
++				b := ui.ButtonBase(c.Key("open")).Height(28).Padding(0, 8).Radius(999).FocusRing(false)
++				b.Children(func() { ui.Text(c, "打开 Deneb 看").FontSize(12).FontWeight(500).TextColor(p.primary) })
++				if b.Clicked() {
++					a.openMain(c)
++				}
++			})
++		}
++	})
++}
++
++// doChore does what a chore's button says.
++func (a *app) doChore(c *ui.Context, ch chore, now time.Time) {
++	s := a.snap
++	switch ch.kind {
++	case "device":
++		name := ""
++		if d := s.Device(ch.dev); d != nil {
++			name = short(d.Name)
++		}
++		a.panelHold(c, ch.key, model.Op{Kind: model.OpDeviceApprove, LAN: ch.lan, Device: ch.dev}, say("已同意", name), now)
++	case "member":
++		name := ""
++		if p := s.Person(ch.person); p != nil {
++			name = p.Name
++		}
++		a.panelHold(c, ch.key, model.Op{Kind: model.OpMemberApprove, LAN: ch.lan, Person: ch.person}, say("已同意", name), now)
++	case "renew":
++		a.send(c, model.Op{Kind: model.OpDeviceRenew, Device: ch.dev})
++		a.panelSay(ch.key, "已续上", now)
++	case "invitation":
++		a.openMain(c)
++		for _, inv := range s.Invitations {
++			if inv.ID == ch.invitation {
++				a.showInvitation(inv)
++			}
++		}
++	case "unreachable":
++		a.openMain(c)
++		if a.lan != ch.lan && !a.all() {
++			a.show(c, ch.lan, false)
++		}
++		key := string(ch.dev)
++		if a.all() {
++			key = allKey(ch.lan, ch.dev)
++		}
++		a.selected, a.more = key, false
++	}
++}
++
++// panelHold shows op at once and says so in the chore's place, sending it
++// only as that folds away; undo drops it unsent.
++func (a *app) panelHold(c *ui.Context, key string, op model.Op, text string, now time.Time) {
++	p := &pending{op: op, held: true}
++	a.pend = append(a.pend, p)
++	a.gen++
++	a.sync(nil)
++	if a.panelDone == nil {
++		a.panelDone = map[string]*doneRow{}
++	}
++	a.panelDone[key] = &doneRow{key: key, text: text, until: now.Add(4 * time.Second), p: p}
++	c.After(4 * time.Second)
++}
++
++// panelSay says what a chore did, in its place, for a moment.
++func (a *app) panelSay(key, text string, now time.Time) {
++	if a.panelDone == nil {
++		a.panelDone = map[string]*doneRow{}
++	}
++	a.panelDone[key] = &doneRow{key: key, text: text, until: now.Add(2500 * time.Millisecond)}
++}
++
++// undoDone takes back what a done row did: what it held stays unsent.
++func (a *app) undoDone(d *doneRow) {
++	if d.p != nil {
++		a.pend = slices.DeleteFunc(a.pend, func(x *pending) bool { return x == d.p })
++		a.gen++
++	}
++	delete(a.panelDone, d.key)
++}
++
++// expireDone folds the done rows whose moment is over, sending what they
++// held.
++func (a *app) expireDone(c *ui.Context, now time.Time) {
++	for key, d := range a.panelDone {
++		if left := d.until.Sub(now); left > 0 {
++			c.After(left)
++			continue
++		}
++		if d.p != nil && d.p.held {
++			a.commit(c, d.p)
++		}
++		delete(a.panelDone, key)
++	}
++}
++
++// flushPanel sends what the panel holds, at once: the panel closes, and
++// nothing would fold its rows.
++func (a *app) flushPanel(c *ui.Context) {
++	for key, d := range a.panelDone {
++		if d.p != nil && d.p.held {
++			a.commit(c, d.p)
++		}
++		delete(a.panelDone, key)
++	}
++}
++
++// panelLAN is one of my LANs in the panel: its members' dots, its name and
++// how it is, and its switch; a click elsewhere on it opens the window on
++// it.
++func (a *app) panelLAN(c *ui.Context, p *palette, l *model.LAN) {
++	row := ui.ButtonBase(c.Key("panel-lan-"+string(l.ID))).Height(48).Padding(0, 8).Gap(10).Radius(12).FocusRing(false)
++	if row.Hovered() {
++		row.Background(p.well)
++	}
++	flipped := false
++	row.Children(func() {
++		ui.Row(c).Width(24).Children(func() {
++			for i, id := range l.Members[:min(3, len(l.Members))] {
++				b := ball(c, a.people[string(id)], 12, false).Shadow(0, 0, 0, 1.5, p.bg)
++				if i > 0 {
++					b.Margin(0, 0, 0, -4)
++				}
++			}
++		})
++		ui.Column(c).Gap(1).Grow(1).Shrink(1).Children(func() {
++			ui.Text(c, l.Name).FontSize(13).FontWeight(500).SingleLine()
++			line := a.lanLine(l)
++			ui.Text(c.Key("line-"+line), line).FontSize(12).TextColor(p.ink3).SingleLine().
++				Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{}})
++		})
++		if !l.Waiting && l.Has(a.snap.Self) {
++			// The sidebar's switch: only where this computer is in.
++			lan, paused := l.ID, l.Paused
++			if miniToggle(c, p, "panel-pause-"+string(lan), "暂停"+l.Name, !paused) {
++				flipped = true
++				a.pause(c, lan, !paused)
++			}
++		}
++	})
++	if row.Clicked() && !flipped {
++		a.openMain(c)
++		a.show(c, l.ID, false)
++	}
++}
++
++// lanLine is how a LAN is, under its name in the panel.
++func (a *app) lanLine(l *model.LAN) string {
++	s := a.snap
++	switch {
++	case l.Waiting:
++		owner := "拥有者"
++		if p := s.Person(l.Owner); p != nil {
++			owner = p.Name
++		}
++		return say("等", owner, "同意你加入")
++	case l.Paused:
++		return "已暂停"
++	case s.Self != "" && !l.Has(s.Self):
++		return "这台电脑还没加进来"
++	}
++	n, up := 0, 0
++	for _, id := range l.Devices {
++		n++
++		if k := s.Path(id).Kind; id == s.Self || k == model.PathDirect || k == model.PathRelay {
++			up++
++		}
++	}
++	if up == n {
++		return fmt.Sprintf("%d 台都连上了", n)
++	}
++	return fmt.Sprintf("%d 台，%d 台连上了", n, up)
++}
++
++// panelOpen is the panel's way into the window.
++func (a *app) panelOpen(c *ui.Context, p *palette) {
++	ui.Box(c).Height(10)
++	b := ghostButton(c, p, "open-deneb", "打开 Deneb").AlignSelf(ui.Stretch).Justify(ui.Center)
++	if b.Clicked() {
++		a.openMain(c)
++	}
++}
++
++// openMain brings the window to the front, the panel put away: the
++// window's, or nothing in a test.
++func (a *app) openMain(c *ui.Context) {
++	a.flushPanel(c)
++	if a.showMain != nil {
++		a.showMain()
++	}
++}
++
++// panel is the flyout's view: the panel, sized to what it holds. It takes
++// the store's news as the window does, but leaves the canvas to the
++// window's own frames.
++func (a *app) panel(c *ui.Context) {
++	a.drain(c)
++	a.sync(nil)
++	p := colors(c)
++	ui.Column(c).Fill().AlignItems(ui.Start).Children(func() {
++		body := a.panelBody(c, p)
++		if b := body.Bounds(); b.H > 0 && a.resizePanel != nil {
++			if h := int(min(b.H, panelMaxHeight) + 0.5); h != a.panelHeight {
++				a.panelHeight = h
++				a.resizePanel(h)
++			}
++		}
++	})
++}
++
++// say puts a sentence together from its parts: a name that starts or ends
++// in a Latin letter or a digit is set apart from the Chinese beside it by
++// a space, as everywhere else ("Mia 的 MacBook 连不上", "等 Leo 同意你加入").
++func say(parts ...string) string {
++	latin := func(r rune) bool { return r < 0x80 && (unicode.IsLetter(r) || unicode.IsDigit(r)) }
++	var b strings.Builder
++	for i, part := range parts {
++		if i > 0 && part != "" && b.Len() > 0 {
++			last, _ := utf8.DecodeLastRuneInString(b.String())
++			first, _ := utf8.DecodeRuneInString(part)
++			if latin(last) != latin(first) && (latin(last) || latin(first)) && last != ' ' && first != ' ' {
++				b.WriteByte(' ')
++			}
++		}
++		b.WriteString(part)
++	}
++	return b.String()
++}
+diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig -x *.png cmd/deneb/menubar_test.go cmd/deneb/menubar_test.go
+--- cmd/deneb/menubar_test.go	1970-01-01 07:30:00
++++ cmd/deneb/menubar_test.go	2026-11-08 13:54:20
+@@ -0,0 +1,341 @@
++package main
++
++import (
++	"fmt"
++	"image/jpeg"
++	"image/png"
++	"os"
++	"path/filepath"
++	"strings"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/egoist/mygo/ui"
++	"github.com/kittors/deneb/client"
++)
++
++// menubarScreen is the menu bar's panel as the recordings show it: a strip
++// of menu bar at the top with Deneb's mark on it, and the panel under the
++// mark while it is open (DESIGN §7.1: only to see where the panel comes
++// from; the product's menu bar is the system's).
++type menubarScreen struct {
++	a    *app
++	open bool
++	mark ui.Rect // where the mark is, in the window
++}
++
++const (
++	screenW, screenH = 560, 620
++	barHeight        = 26
++)
++
++func (m *menubarScreen) view(c *ui.Context) {
++	a := m.a
++	a.drain(c)
++	a.sync(nil)
++	p := colors(c)
++	desk := []ui.GradientStop{{Color: ui.Hex("#e8ebf1"), At: 0}, {Color: ui.Hex("#dde1e9"), At: 1}}
++	bar, ink := white.Alpha(0.72), black.Alpha(0.85)
++	if p.dark {
++		desk = []ui.GradientStop{{Color: ui.Hex("#1d1e23"), At: 0}, {Color: ui.Hex("#141519"), At: 1}}
++		bar, ink = ui.RGBA(30, 30, 34, 0.86), white.Alpha(0.9)
++	}
++	root := ui.Box(c).Fill().LinearGradient(ui.LinearGradient{Angle: 180, Stops: desk})
++	root.Children(func() {
++		ui.Row(c).Absolute().Left(0).Top(0).Right(0).Height(barHeight).Background(bar).Padding(0, 14).Gap(14).AlignItems(ui.Center).Children(func() {
++			ui.Spacer(c)
++			mark := ui.ButtonBase(c.Key("mark")).Size(30, 22).Radius(5).Center().FocusRing(false)
++			if m.open {
++				mark.Background(ink.Alpha(0.12))
++			}
++			mark.Children(func() { trayGlyph(c, trayState(a.snap, c.Now()), ink) })
++			if b := mark.Bounds(); b.W > 0 {
++				m.mark = b
++			}
++			if mark.Clicked() {
++				m.toggle(c)
++			}
++			ui.Text(c, "13:05").FontSize(13).FontWeight(500).TextColor(ink).FontFeatures("tnum")
++		})
++		// The desktop under the panel: a click on it puts the panel away.
++		if m.open && ui.Box(c.Key("desk")).Absolute().Left(0).Top(barHeight).Right(0).Bottom(0).Clicked() {
++			m.toggle(c)
++		}
++		x := min(max(m.mark.X+m.mark.W/2-panelWidth/2, 12), screenW-12-panelWidth)
++		holder := ui.Column(c.Key("panel-holder")).Absolute().Left(x).Top(barHeight + 6).PassThrough()
++		holder.Children(func() {
++			if !m.open {
++				return
++			}
++			wrap := ui.Column(c.Key("panel-wrap")).TransformOrigin(0.5, 0)
++			wrap.Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{Scale: 0.96, Y: -6}, Exit: &ui.Motion{Scale: 0.97, Y: -4}})
++			// The system's shadow, as the flyout has it, on the panel itself:
++			// it is as tall as the panel in every frame.
++			wrap.Children(func() {
++				a.panelBody(c, p).Shadow(0, 12, 32, 0, p.shadow).Shadow(0, 2, 6, 0, ui.RGBA(9, 9, 11, 0.06))
++			})
++		})
++	})
++}
++
++func (m *menubarScreen) toggle(c *ui.Context) {
++	if m.open {
++		m.a.flushPanel(c)
++	}
++	m.open = !m.open
++}
++
++// The panel lists what waits for me, and its mark tells it: a dot while
++// anything does, an outline while nothing connects here.
++func TestPanelChores(t *testing.T) {
++	a, d := newDemoApp()
++	d.Manual()
++	now := time.Now()
++	if st := trayState(a.store.Snapshot(), now); st != "solid" {
++		t.Errorf("the sample's mark is %q", st)
++	}
++	for _, ev := range []string{"pending-device", "pending-member", "login-due", "invitation", "unreachable"} {
++		d.Simulate(ev)
++	}
++	s := a.store.Snapshot()
++	var got []string
++	for _, ch := range choresOf(s, now) {
++		got = append(got, ch.text+" · "+ch.button)
++	}
++	want := []string{"阿杰的树莓派想加入周末联机 · 同意", "小林想加入周末联机 · 同意", "我的游戏主机需要重新登录 · 续上",
++		"Leo 邀请你加入桌游夜 · 看看", "Mia 的 MacBook 连不上 · 看看"}
++	if strings.Join(got, "\n") != strings.Join(want, "\n") {
++		t.Errorf("chores:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
++	}
++	if st := trayState(s, now); st != "dot" {
++		t.Errorf("with chores the mark is %q", st)
++	}
++	d.Simulate("engine")
++	if st := trayState(a.store.Snapshot(), now); st != "hollow" {
++		t.Errorf("without the engine the mark is %q", st)
++	}
++}
++
++// Letting a device in from the panel: its row says so, with undo, and the
++// device is let in as the row folds; undo puts the row back unsent.
++func TestPanelApproveAndUndo(t *testing.T) {
++	a, d := newDemoApp()
++	d.Manual()
++	d.Simulate("pending-device")
++	d.Simulate("pending-member")
++	m := &menubarScreen{a: a, open: true}
++	tt := ui.NewTester(m.view, screenW, screenH)
++	tt.Frame()
++	tt.Advance(300 * time.Millisecond)
++	tt.Frame()
++	b, ok := tt.Find("同意")
++	if !ok {
++		t.Fatalf("no 同意: %q", tt.Texts())
++	}
++	tt.ClickAt(b.X+b.W/2, b.Y+b.H/2)
++	tt.Frame()
++	if !tt.HasText("已同意阿杰的树莓派") {
++		t.Fatalf("the row does not say it: %q", tt.Texts())
++	}
++	if l := a.store.Snapshot().LAN("weekend"); !l.HasPending("jpi") {
++		t.Fatal("letting it in went before the row folded")
++	}
++	for i := 0; i < 270; i++ {
++		tt.Advance(time.Second / 60)
++		tt.Frame()
++	}
++	if l := a.store.Snapshot().LAN("weekend"); l.HasPending("jpi") || !l.Has("jpi") {
++		t.Fatal("the Pi was not let in as the row folded")
++	}
++	// 小林 now: undo keeps him waiting.
++	b, _ = tt.Find("同意")
++	tt.ClickAt(b.X+b.W/2, b.Y+b.H/2)
++	tt.Frame()
++	if err := tt.Click("撤销"); err != nil {
++		t.Fatal(err)
++	}
++	for i := 0; i < 300; i++ {
++		tt.Advance(time.Second / 60)
++		tt.Frame()
++	}
++	if l := a.store.Snapshot().LAN("weekend"); len(l.PendingMembers) != 1 || !tt.HasText("小林想加入周末联机") {
++		t.Errorf("undo did not keep 小林 waiting: %v; %q", l.PendingMembers, tt.Texts())
++	}
++}
++
++// TestM2MenuBarFrames records the menu bar's panel in the demo, both
++// themes, as TestM2Frames does M2's other scenes (DESIGN §7.1, §11).
++func TestM2MenuBarFrames(t *testing.T) {
++	root := os.Getenv("DENEB_M2")
++	if root == "" {
++		t.Skip("set DENEB_M2 to a folder to record M2's demo")
++	}
++	type rig struct {
++		a    *app
++		d    *client.Demo
++		m    *menubarScreen
++		tt   *ui.Tester
++		rec  func(ms int)
++		move func(to ui.Point, ms int)
++		shot func(state string)
++	}
++	at := func(r *rig, text string) ui.Point {
++		t.Helper()
++		b, ok := r.tt.Find(text)
++		if !ok {
++			t.Fatalf("no %q: %q", text, r.tt.Texts())
++		}
++		return ui.Point{X: b.X + b.W/2, Y: b.Y + b.H/2}
++	}
++	click := func(r *rig, p ui.Point) {
++		r.move(p, 350)
++		r.rec(120)
++		r.tt.ClickAt(p.X, p.Y)
++	}
++	mark := func(r *rig) ui.Point { return ui.Point{X: r.m.mark.X + r.m.mark.W/2, Y: r.m.mark.Y + r.m.mark.H/2} }
++	desk := ui.Point{X: 80, Y: screenH - 60}
++	scenes := []struct {
++		name string
++		play func(r *rig)
++	}{
++		// A click on the mark opens the panel; a click elsewhere puts it away.
++		{"menubar-open", func(r *rig) {
++			r.rec(500)
++			click(r, mark(r))
++			r.rec(700)
++			r.shot("面板")
++			r.move(at(r, "工作室"), 400)
++			r.rec(500)
++			click(r, desk)
++			r.rec(700)
++		}},
++		// What waits for me: the mark's dot, the rows, and 同意 with undo.
++		{"menubar-approve", func(r *rig) {
++			r.rec(300)
++			r.d.Simulate("pending-device")
++			r.d.Simulate("pending-member")
++			r.d.Simulate("unreachable")
++			r.rec(700)
++			click(r, mark(r))
++			r.rec(700)
++			r.shot("要你处理")
++			click(r, at(r, "同意"))
++			r.rec(900)
++			r.shot("已同意")
++			r.rec(3600)
++			click(r, at(r, "同意"))
++			r.rec(800)
++			click(r, at(r, "撤销"))
++			r.rec(1200)
++		}},
++		// My console's login runs out soon: 续上, and the dot goes.
++		{"menubar-renew", func(r *rig) {
++			r.rec(300)
++			r.d.Simulate("login-due")
++			r.rec(600)
++			click(r, mark(r))
++			r.rec(700)
++			r.shot("需要重新登录")
++			click(r, at(r, "续上"))
++			r.rec(3200)
++			r.shot("续上了")
++		}},
++		// The switches: one LAN paused, then both, and the mark goes hollow.
++		{"menubar-pause", func(r *rig) {
++			r.rec(300)
++			click(r, mark(r))
++			r.rec(700)
++			click(r, at(r, "暂停周末联机"))
++			r.rec(900)
++			r.shot("暂停一个")
++			click(r, at(r, "暂停工作室"))
++			r.rec(900)
++			r.shot("都暂停了")
++			click(r, at(r, "暂停周末联机"))
++			r.rec(1000)
++		}},
++		// This computer's Deneb stops: the panel says so, and the mark goes
++		// hollow; it comes back.
++		{"menubar-engine", func(r *rig) {
++			r.rec(300)
++			click(r, mark(r))
++			r.rec(700)
++			r.d.Simulate("engine")
++			r.rec(1000)
++			r.shot("引擎停了")
++			r.d.Simulate("engine")
++			r.rec(1000)
++		}},
++	}
++	if only := os.Getenv("DENEB_M2_ONLY"); only != "" {
++		keep := map[string]bool{}
++		for _, n := range strings.Split(only, ",") {
++			keep[n] = true
++		}
++		var some = scenes[:0:0]
++		for _, sc := range scenes {
++			if keep[sc.name] {
++				some = append(some, sc)
++			}
++		}
++		scenes = some
++	}
++	for _, dark := range []bool{false, true} {
++		theme := map[bool]string{false: "light", true: "dark"}[dark]
++		for _, sc := range scenes {
++			dir := filepath.Join(root, theme+"-"+sc.name)
++			if err := os.MkdirAll(dir, 0o755); err != nil {
++				t.Fatal(err)
++			}
++			a, d := newDemoApp()
++			d.Manual()
++			var woken atomic.Bool
++			a.setWake(func() { woken.Store(true) })
++			m := &menubarScreen{a: a}
++			tt := ui.NewTester(m.view, screenW, screenH)
++			tt.SetDark(dark)
++			tt.Frame()
++			tt.Advance(600 * time.Millisecond)
++			tt.Frame()
++			n := 0
++			r := &rig{a: a, d: d, m: m, tt: tt}
++			pointer := desk
++			r.rec = func(ms int) {
++				for end := n + ms*60/1000; n < end; n++ {
++					if woken.Swap(false) {
++						tt.Frame()
++					}
++					tt.Advance(time.Second / 60)
++					f, err := os.Create(filepath.Join(dir, fmt.Sprintf("%04d.jpg", n)))
++					if err != nil {
++						t.Fatal(err)
++					}
++					jpeg.Encode(f, tt.Image(), &jpeg.Options{Quality: 88})
++					f.Close()
++				}
++			}
++			r.move = func(to ui.Point, ms int) {
++				from := pointer
++				steps := max(1, ms*60/1000)
++				for i := 1; i <= steps; i++ {
++					k := ui.EaseInOut(float32(i) / float32(steps))
++					tt.Move(from.X+(to.X-from.X)*k, from.Y+(to.Y-from.Y)*k)
++					r.rec(17)
++				}
++				pointer = to
++			}
++			r.shot = func(state string) {
++				tt.SetScale(2)
++				tt.Frame()
++				if f, err := os.Create(filepath.Join(root, theme+"-"+sc.name+"_"+state+".png")); err == nil {
++					png.Encode(f, tt.Image())
++					f.Close()
++				}
++				tt.SetScale(1)
++				tt.Frame()
++			}
++			sc.play(r)
++		}
++	}
++}
+diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig -x *.png cmd/deneb/model.go cmd/deneb/model.go
+--- cmd/deneb/model.go	2026-11-08 13:54:20
++++ cmd/deneb/model.go	2026-11-08 13:54:20
+@@ -286,6 +286,15 @@
+ 	edgeNote, edgeNext *edgeNote
+ 	edgeHit            string // the device of another's that reached its region's edge in this drag
+ 
++	// The menu bar's panel (DESIGN §7.1): the chores it just did, said in
++	// their place for a moment; how tall it last asked to be; and what the
++	// app gives it: the window brought to the front, the panel resized.
++	panelDone   map[string]*doneRow
++	panelHeight int
++	foldH       map[string]float32 // each folding group's height, as last laid out
++	showMain    func()
++	resizePanel func(height int)
++
+ 	naming *naming // a new LAN being named in the sidebar
+ 	// wantLAN is a LAN made or joined here that the snapshot does not have
+ 	// yet: the canvas goes to it once it has.
+diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig -x *.png cmd/deneb/trayglyph.go cmd/deneb/trayglyph.go
+--- cmd/deneb/trayglyph.go	1970-01-01 07:30:00
++++ cmd/deneb/trayglyph.go	2026-11-08 13:54:20
+@@ -0,0 +1,24 @@
++package main
++
++import "github.com/egoist/mygo/ui"
++
++// The menu bar's marks (DESIGN §7.1): the star, the star with a dot at its
++// bottom right when something waits for me, and the star's outline when
++// nothing connects here.
++var (
++	trayStarDot    = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#000" d="M12 1.5c.7 5.6 2.9 7.8 9.5 10.5-6.6 2.7-8.8 4.9-9.5 10.5-.7-5.6-2.9-7.8-9.5-10.5C9.1 9.3 11.3 7.1 12 1.5z"/><circle fill="#000" cx="20" cy="20" r="3.2"/></svg>`))
++	trayStarHollow = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="none" stroke="#000" stroke-width="1.7" stroke-linejoin="round" d="M12 2.6c.75 5.1 2.95 7.3 8.4 9.4-5.45 2.1-7.65 4.3-8.4 9.4-.75-5.1-2.95-7.3-8.4-9.4C9.05 9.9 11.25 7.7 12 2.6z"/></svg>`))
++)
++
++// trayGlyph draws the menu bar's mark for state ("solid", "dot" or
++// "hollow") in col, filling the box it is given.
++func trayGlyph(c *ui.Context, state string, col ui.Color) ui.Element {
++	g := starGlyph
++	switch state {
++	case "dot":
++		g = trayStarDot
++	case "hollow":
++		g = trayStarHollow
++	}
++	return ui.Icon(c, g).Size(16, 16).TextColor(col)
++}
+diff -ruN -x .mygo -x build -x *peek*_test.go -x *.orig -x *.png cmd/deneb/trayicon_test.go cmd/deneb/trayicon_test.go
+--- cmd/deneb/trayicon_test.go	1970-01-01 07:30:00
++++ cmd/deneb/trayicon_test.go	2026-11-08 13:54:20
+@@ -0,0 +1,44 @@
++package main
++
++import (
++	"image"
++	"image/color"
++	"image/png"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/egoist/mygo/ui"
++)
++
++// TestTrayIcons draws the menu bar's three icons into trayicons/, when
++// DENEB_TRAY_ICONS is set: 16 points at twice the size, black on clear, for
++// macOS to tint as a template (DESIGN §7.1).
++func TestTrayIcons(t *testing.T) {
++	if os.Getenv("DENEB_TRAY_ICONS") == "" {
++		t.Skip("set DENEB_TRAY_ICONS to draw the menu bar's icons")
++	}
++	for _, state := range []string{"solid", "dot", "hollow"} {
++		tt := ui.NewTester(func(c *ui.Context) { trayGlyph(c, state, black) }, 16, 16)
++		tt.SetScale(2)
++		tt.Frame()
++		// The tester draws on white: the glyph's darkness is its cover.
++		src := tt.Image()
++		img := image.NewNRGBA(src.Bounds())
++		for y := src.Bounds().Min.Y; y < src.Bounds().Max.Y; y++ {
++			for x := src.Bounds().Min.X; x < src.Bounds().Max.X; x++ {
++				r, g, b, _ := src.At(x, y).RGBA()
++				gray := (r + g + b) / 3 >> 8
++				img.SetNRGBA(x, y, color.NRGBA{A: uint8(255 - gray)})
++			}
++		}
++		f, err := os.Create(filepath.Join("trayicons", state+".png"))
++		if err != nil {
++			t.Fatal(err)
++		}
++		if err := png.Encode(f, img); err != nil {
++			t.Fatal(err)
++		}
++		f.Close()
++	}
++}
+diff -ruN -x *.orig client/demo.go client/demo.go
+--- client/demo.go	2026-11-08 13:54:20
++++ client/demo.go	2026-11-08 13:54:20
+@@ -187,6 +187,7 @@
+ //   - "using": this computer has used dev-db's database for 2:14:08.
+ //   - "waiting": I asked into Leo's 读书会 on a member's invite, and wait
+ //     for Leo.
++//   - "engine": this computer's Deneb stops answering, or answers again.
+ func (d *Demo) Simulate(event string) {
+ 	now := time.Now()
+ 	d.update(func(s *model.Snapshot) *model.Snapshot {
+@@ -335,6 +336,9 @@
+ 			return s
+ 		}
+ 		n.Using["lindb"] = now.Add(-(2*time.Hour + 14*time.Minute + 8*time.Second))
++	case "engine":
++		// This computer's Deneb stops answering, or answers again.
++		n.Engine = !s.Engine
+ 	default:
+ 		return s
+ 	}

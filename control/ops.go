@@ -27,6 +27,7 @@ const inviteTTL = 7 * 24 * time.Hour
 // guarded by Server.mu, which every op holds.
 type opCache struct {
 	entries map[string]opEntry
+	swept   time.Time
 }
 
 type opEntry struct {
@@ -38,13 +39,22 @@ type opEntry struct {
 const opCacheTTL = 10 * time.Minute
 
 func (c *opCache) get(key string, now time.Time) (opEntry, bool) {
-	for k, e := range c.entries {
-		if now.Sub(e.at) > opCacheTTL {
-			delete(c.entries, k)
+	// Answers that ran out go at most once a minute: every op holds
+	// Server.mu, and a sweep on each would make a burst of ops cost the
+	// square of its size (M7 review).
+	if now.Sub(c.swept) >= time.Minute || now.Before(c.swept) {
+		c.swept = now
+		for k, e := range c.entries {
+			if now.Sub(e.at) > opCacheTTL {
+				delete(c.entries, k)
+			}
 		}
 	}
 	e, ok := c.entries[key]
-	return e, ok
+	if !ok || now.Sub(e.at) > opCacheTTL {
+		return opEntry{}, false
+	}
+	return e, true
 }
 
 func (c *opCache) put(key string, e opEntry) {
@@ -70,7 +80,7 @@ func (s *Server) handleOps(w http.ResponseWriter, r *http.Request, c *caller) {
 	s.mu.Lock()
 	e, ok := s.ops.get(key, now)
 	if !ok {
-		e = s.applyOp(c.dev.ID, op)
+		e = s.applyOp(c.dev.ID, "", op)
 		if e.status < 500 {
 			s.ops.put(key, e)
 		}
@@ -83,22 +93,28 @@ func (s *Server) handleOps(w http.ResponseWriter, r *http.Request, c *caller) {
 	w.Write(e.body)
 }
 
-// applyOp runs one op for the person logged in on device from; s.mu is
-// held.
-func (s *Server) applyOp(from proto.DeviceID, op proto.Op) opEntry {
+// applyOp runs one op for the person logged in on device from, or, from
+// a browser (/api/v1), for person with no device; s.mu is held.
+func (s *Server) applyOp(from proto.DeviceID, person proto.PersonID, op proto.Op) opEntry {
 	now := s.now()
 	var out proto.OpOutput
 	var ctx *opCtx
 	v, err := s.changeLocked(from, func(tx *sql.Tx, w *World) error {
-		me := w.devices[from]
-		if me == nil || !me.usable() {
-			return newErr(http.StatusForbidden, proto.ErrNotLoggedIn, "这台设备还没登录")
+		var dev *device
+		if from != "" {
+			dev = w.devices[from]
+			if dev == nil || !dev.usable() {
+				return newErr(http.StatusForbidden, proto.ErrNotLoggedIn, "这台设备还没登录")
+			}
+			person = dev.Owner
+		} else if w.people[person] == nil {
+			return newErr(http.StatusUnauthorized, proto.ErrUnauthorized, "请先登录")
 		}
 		h := opHandlers[op.Op]
 		if h == nil {
 			return errInvalid("不认识的操作：" + string(op.Op))
 		}
-		ctx = &opCtx{s: s, tx: tx, w: w, dev: me, me: me.Owner, now: now}
+		ctx = &opCtx{s: s, tx: tx, w: w, dev: dev, me: person, now: now}
 		return h(ctx, op.Args, &out)
 	})
 	if err == nil && ctx != nil {
@@ -162,6 +178,16 @@ func (c *opCtx) ownDevice(id proto.DeviceID, verb string) (*device, error) {
 	if d == nil || d.LoggedOut {
 		return nil, errNotFound("找不到这台设备")
 	}
+	if l := c.w.lans[d.PublicLAN]; d.PublicLAN != "" && l != nil {
+		// A public device is its LAN's owner's to manage (§0.2).
+		if l.Owner == c.me {
+			return d, nil
+		}
+		if !c.sees(d) {
+			return nil, errNotFound("找不到这台设备")
+		}
+		return nil, errForbidden("这是「" + l.Name + "」的公共设备，只有拥有者能" + verb)
+	}
 	if d.Owner == c.me {
 		return d, nil
 	}
@@ -173,6 +199,35 @@ func (c *opCtx) ownDevice(id proto.DeviceID, verb string) (*device, error) {
 		name = p.DisplayName
 	}
 	return nil, errForbidden("这是" + spaced(name) + "的设备，只有" + spaced(name) + "能" + verb)
+}
+
+// deletableDevice finds a device the asking person may delete: theirs, or
+// a public device of a LAN they own, logged in or not. A device logged
+// out is in no one else's view, so for the others it does not exist.
+func (c *opCtx) deletableDevice(id proto.DeviceID) (*device, error) {
+	d := c.w.devices[id]
+	if d == nil {
+		return nil, errNotFound("找不到这台设备")
+	}
+	if d.LoggedOut {
+		if c.w.manager(d) != c.me {
+			return nil, errNotFound("找不到这台设备")
+		}
+		return d, nil
+	}
+	return c.ownDevice(id, "删除")
+}
+
+func opDeviceDelete(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
+	d, err := c.deletableDevice(a.Device)
+	if err != nil {
+		return err
+	}
+	me := c.me
+	c.after = append(c.after, func() {
+		c.s.logf("device %s (%s, %q) deleted by %s", d.ID, d.Name, d.DisplayName, me)
+	})
+	return deleteDevice(c.tx, d, c.now)
 }
 
 // sees reports whether the asking person sees device d: it is in one of
@@ -245,7 +300,57 @@ var opHandlers = map[proto.OpType]opHandler{
 	proto.OpMemberApprove:        opMemberApprove,
 	proto.OpMemberReject:         opMemberReject,
 	proto.OpDeviceRenew:          opDeviceRenew,
+	proto.OpDeviceDelete:         opDeviceDelete,
 	proto.OpDeviceSetDNSName:     opDeviceSetDNSName,
+
+	proto.OpShareCreate:     opShareCreate,
+	proto.OpShareRevoke:     opShareRevoke,
+	proto.OpShareRelease:    opShareRelease,
+	proto.OpShareLeave:      opShareLeave,
+	proto.OpDeviceSetPublic: opDeviceSetPublic,
+	proto.OpLANSetMode:      opLANSetMode,
+
+	proto.OpRelayCreate: opRelayCreate,
+	proto.OpRelayToken:  opRelayToken,
+	proto.OpRelayRename: opRelayRename,
+	proto.OpRelayDelete: opRelayDelete,
+	proto.OpRelayAdd:    opRelayAdd,
+	proto.OpRelayRemove: opRelayRemove,
+
+	proto.OpRelayJoin:        opRelayJoin,
+	proto.OpRelayRevokeJoin:  opRelayRevokeJoin,
+	proto.OpRelaySetWeight:   opRelaySetWeight,
+	proto.OpRelaySetCapacity: opRelaySetCapacity,
+	proto.OpRelayKick:        opRelayKick,
+	proto.OpRelayUnkick:      opRelayUnkick,
+}
+
+func opShareRelease(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
+	return c.shareRelease(string(a.Share))
+}
+
+func opShareLeave(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
+	return c.shareLeave(string(a.Share))
+}
+
+func opLANSetMode(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
+	return c.lanSetMode(a.LAN, a.Mode)
+}
+
+func opShareCreate(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
+	id, err := c.shareCreate(a.Device, a.Person, a.Services)
+	if err == nil {
+		out.Share = proto.ShareID(id)
+	}
+	return err
+}
+
+func opShareRevoke(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
+	return c.shareRevoke(string(a.Share))
+}
+
+func opDeviceSetPublic(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
+	return c.deviceSetPublic(a.Device, a.LAN)
 }
 
 func opLANCreate(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
@@ -270,9 +375,12 @@ func opLANCreate(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
 		id, c.me, proto.RoleOwner, proto.MemberJoined, ms(c.now)); err != nil {
 		return err
 	}
-	// The computer the LAN was made on is in it (DESIGN §6.2).
-	if err := c.exec(`INSERT INTO lan_devices (lan, device, joined_at) VALUES (?, ?, ?)`, id, c.dev.ID, ms(c.now)); err != nil {
-		return err
+	// The computer the LAN was made on is in it (DESIGN §6.2); made in a
+	// browser, it starts empty.
+	if c.dev != nil {
+		if err := c.exec(`INSERT INTO lan_devices (lan, device, joined_at) VALUES (?, ?, ?)`, id, c.dev.ID, ms(c.now)); err != nil {
+			return err
+		}
 	}
 	out.LAN = id
 	return nil
@@ -307,6 +415,10 @@ func opLANDelete(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
 	// Opens are keyed by scope, not by a foreign key, as shares (M3) are
 	// scopes too; they go by hand. Members, devices and invites cascade.
 	if err := c.exec(`DELETE FROM opens WHERE scope = ?`, proto.LANScope(l.ID)); err != nil {
+		return err
+	}
+	// Its public devices go back to the people who logged them in.
+	if err := c.exec(`UPDATE devices SET public_lan = '' WHERE public_lan = ?`, l.ID); err != nil {
 		return err
 	}
 	return c.exec(`DELETE FROM lans WHERE id = ?`, l.ID)
@@ -409,7 +521,7 @@ func opInviteAccept(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
 		// Already in, or already waiting, say from another device: the
 		// invite is left for the one it was meant for, and this device
 		// joins (or waits) as on a fresh accept.
-		if l.hasDevice[c.dev.ID] != nil || l.hasPending[c.dev.ID] != nil {
+		if c.dev == nil || l.hasDevice[c.dev.ID] != nil || l.hasPending[c.dev.ID] != nil || !l.counts(c.dev) {
 			return errNoChange
 		}
 		return c.addDevice(l, c.dev, m.State == proto.MemberPending)
@@ -419,6 +531,12 @@ func opInviteAccept(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
 	}
 	state := proto.MemberJoined
 	if i.Inviter != l.Owner && l.ApproveMembers {
+		state = proto.MemberPending
+	}
+	if state == proto.MemberJoined && c.w.seatFull(l.Owner, c.me, c.now) {
+		// The owner's seats are full: the person waits, a dashed ball, and
+		// the owner frees a seat to let them in (pricing-and-relays §1.5
+		// item 5).
 		state = proto.MemberPending
 	}
 	if err := c.exec(`INSERT INTO members (lan, person, role, state, joined_at) VALUES (?, ?, ?, ?, ?)
@@ -434,6 +552,11 @@ func opInviteAccept(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
 	// comes in with its owner, or waits with them. Letting a person in lets
 	// in the computer they came with; devices they add later are what
 	// "新设备要同意" is about.
+	if c.dev == nil || !l.counts(c.dev) {
+		// Accepted in a browser, no device comes with the person; a
+		// sharing LAN takes no member's device: they get shares.
+		return nil
+	}
 	ds := deviceJoined
 	if state == proto.MemberPending {
 		ds = devicePending
@@ -486,6 +609,12 @@ func opLANAddDevice(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
 	if err != nil {
 		return err
 	}
+	if d.PublicLAN != "" && d.PublicLAN != l.ID {
+		return errInvalid("公共设备只在它自己的局域网里")
+	}
+	if !l.counts(d) {
+		return errInvalid("「" + l.Name + "」只用来分享设备，成员的设备不放进来")
+	}
 	if l.hasDevice[d.ID] != nil || l.hasPending[d.ID] != nil {
 		return errNoChange
 	}
@@ -504,12 +633,22 @@ func opLANRemoveDevice(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
 	if l.hasDevice[d.ID] == nil && l.hasPending[d.ID] == nil {
 		return errNoChange
 	}
+	// A public device taken out of its LAN is its person's again.
+	if d.PublicLAN == l.ID {
+		if err := c.exec(`UPDATE devices SET public_lan = '' WHERE id = ?`, d.ID); err != nil {
+			return err
+		}
+	}
 	// What it opened here stays on record, so putting it back (undo)
 	// brings its switches back. A device still waiting is taken back.
 	return c.exec(`DELETE FROM lan_devices WHERE lan = ? AND device = ?`, l.ID, d.ID)
 }
 
 func opServiceSet(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
+	if a.Share != "" {
+		// A service in a share (M3).
+		return c.shareService(string(a.Share), a.Service, a.On)
+	}
 	d, err := c.ownDevice(a.Device, "改它的服务")
 	if err != nil {
 		return err
@@ -521,10 +660,16 @@ func opServiceSet(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
 	if l.hasDevice[d.ID] == nil {
 		return errInvalid("这台设备不在「" + l.Name + "」里")
 	}
-	if a.Service == nil {
+	return c.setService(d, proto.LANScope(l.ID), a.Service, a.On)
+}
+
+// setService switches service svc of d in scope sid, setting the service
+// up in d's catalog the first time.
+func (c *opCtx) setService(d *device, sid proto.ScopeID, in *proto.Service, on bool) error {
+	if in == nil {
 		return errInvalid("缺少要开关的服务")
 	}
-	svc := *a.Service
+	svc := *in
 	svc.Name = strings.TrimSpace(svc.Name)
 	if err := svc.Validate(); err != nil {
 		return errInvalid("服务不对：" + err.Error())
@@ -545,7 +690,6 @@ func opServiceSet(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
 			}
 		}
 	}
-	sid := proto.LANScope(l.ID)
 	changed := false
 	if have == nil {
 		ports, _ := json.Marshal(svc.Ports)
@@ -560,9 +704,10 @@ func opServiceSet(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
 		}
 		changed = true
 	}
-	if on := d.opens[sid][key]; on != a.On {
+	if was := d.opens[sid][key]; was != on {
 		changed = true
-		if a.On {
+		var err error
+		if on {
 			err = c.exec(`INSERT INTO opens (device, scope, key) VALUES (?, ?, ?)`, d.ID, sid, key)
 		} else {
 			err = c.exec(`DELETE FROM opens WHERE device = ? AND scope = ? AND key = ?`, d.ID, sid, key)
@@ -655,6 +800,11 @@ func opDeviceSetKind(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
 // dropMember takes person p out of LAN l with all their devices.
 func (c *opCtx) dropMember(l *lan, p proto.PersonID) error {
 	if err := c.exec(`DELETE FROM lan_devices WHERE lan = ? AND device IN (SELECT id FROM devices WHERE owner = ?)`, l.ID, p); err != nil {
+		return err
+	}
+	// Their relays leave with them: a relay serves only LANs its owner is
+	// in (pricing-and-relays §2.3).
+	if err := c.exec(`DELETE FROM lan_relays WHERE lan = ? AND relay IN (SELECT id FROM relays WHERE owner = ?)`, l.ID, p); err != nil {
 		return err
 	}
 	return c.exec(`DELETE FROM members WHERE lan = ? AND person = ?`, l.ID, p)
@@ -772,6 +922,9 @@ func opMemberApprove(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
 		return errNotFound("这个人没在等同意")
 	case m.State == proto.MemberJoined:
 		return errNoChange
+	}
+	if c.w.seatFull(l.Owner, a.Person, c.now) {
+		return errSeatsFull(c.w.seatLimitOf(l.Owner))
 	}
 	if err := c.exec(`UPDATE members SET state = ? WHERE lan = ? AND person = ?`, proto.MemberJoined, l.ID, a.Person); err != nil {
 		return err

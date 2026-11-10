@@ -18,7 +18,7 @@ import (
 // yet: the mark, greyed, and one line, as the store keeps trying.
 func (a *app) startingView(c *ui.Context, p *palette) {
 	ui.Column(c).Fill().Background(p.bg).Center().Gap(18).DragWindow().Children(func() {
-		ui.Icon(c, starGlyph).Size(44, 44).TextColor(p.ink3)
+		ui.Icon(c, markGlyph).Size(44, 44).TextColor(p.ink3)
 		if a.engineErr != "" && !a.snap.Engine {
 			ui.Text(c, a.engineErr).FontSize(13).TextColor(p.ink2)
 			return
@@ -33,7 +33,7 @@ func (a *app) startingView(c *ui.Context, p *palette) {
 // once the login is done there; there is no field for a password here.
 func (a *app) loginView(c *ui.Context, p *palette) {
 	ui.Column(c).Fill().Background(p.bg).Center().Gap(22).DragWindow().Children(func() {
-		ui.Icon(c, starGlyph).Size(44, 44).TextColor(p.primary)
+		ui.Icon(c, markGlyph).Size(44, 44).TextColor(p.primary)
 		btn := primaryButton(c, p, "login", "登录", 40, 28, 14)
 		if btn.Clicked() && !a.loggingIn {
 			a.startLogin(c)
@@ -181,6 +181,9 @@ func (a *app) goTo(c *ui.Context, id model.LANID) {
 // inviteCard is scene 3's card: someone asks me into a LAN.
 type inviteCard struct {
 	inv *model.Invite
+	// invitation is the id of an invite sent to me by name, rather than by
+	// a link (DESIGN §6.7): joining takes that.
+	invitation string
 }
 
 // inviteSpring is how the card comes in: as the design demo's, a little
@@ -252,7 +255,7 @@ func (a *app) inviteLayer(c *ui.Context, p *palette) {
 					a.invite = nil
 				}
 				if primaryButton(c, p, "join", "加入", 34, 14, 13).Clicked() {
-					a.join(c, inv)
+					a.join(c, card)
 				}
 			})
 		})
@@ -262,10 +265,15 @@ func (a *app) inviteLayer(c *ui.Context, p *palette) {
 // join accepts the invite: the card goes at once, as in the design demo,
 // and the LAN comes onto the canvas, this computer in it, once the store
 // has it there.
-func (a *app) join(c *ui.Context, inv *model.Invite) {
+func (a *app) join(c *ui.Context, card *inviteCard) {
+	inv := card.inv
 	a.invite = nil
+	op := model.Op{Kind: model.OpInviteAccept, Invite: inv.Link, Invitation: card.invitation}
+	if card.invitation != "" {
+		op.Invite = ""
+	}
 	run(a, c, func(ctx context.Context) (model.Result, error) {
-		return a.store.Do(ctx, model.Op{Kind: model.OpInviteAccept, Invite: inv.Link})
+		return a.store.Do(ctx, op)
 	}, func(c *ui.Context, r model.Result, err error) {
 		if err != nil {
 			a.problem(c, err)
@@ -275,7 +283,10 @@ func (a *app) join(c *ui.Context, inv *model.Invite) {
 		if lan == "" {
 			lan = inv.LAN
 		}
-		a.goTo(c, lan)
+		if !a.all() {
+			// In the "全部" view, it comes in as a region of its own, there.
+			a.goTo(c, lan)
+		}
 	})
 }
 
@@ -286,4 +297,117 @@ func message(err error) string {
 		return e.Message
 	}
 	return "没办成，等一下再试试"
+}
+
+// showInvitation shows the card of an invite sent to me by name.
+func (a *app) showInvitation(inv model.Invitation) {
+	a.invite = &inviteCard{inv: &model.Invite{LAN: inv.LAN, LANName: inv.LANName, Inviter: inv.Inviter}, invitation: inv.ID}
+	a.selected, a.more = "", false
+}
+
+// waitingCanvas is the canvas of a LAN whose owner has not let me in yet:
+// only the owner, and a word on what I wait for (DESIGN §6.7).
+func (a *app) waitingCanvas(c *ui.Context, p *palette, l *model.LAN) {
+	owner := a.people[string(l.Owner)]
+	ui.Column(c).Grow(1).AlignItems(ui.Center).Justify(ui.Center).Gap(14).Children(func() {
+		ball(c, owner, 44, false)
+		ui.Text(c, "等"+spaced(owner.name)+"同意你加入「"+short(l.Name)+"」").FontSize(15).FontWeight(500).TextColor(p.ink2)
+	})
+}
+
+// notice is the first of the engine's notices not put away, or nil.
+func (a *app) notice() *model.Notice {
+	for i := range a.snap.Notices {
+		if !a.noticesDone[a.snap.Notices[i].Code] {
+			return &a.snap.Notices[i]
+		}
+	}
+	return nil
+}
+
+// noticePill tells of what the engine found, as another program taking
+// Deneb's connections, in a small pill in the header, clear of the canvas:
+// a click shows its card, with the rule to add to that program (DESIGN
+// §6.8). Deneb never changes the other program itself.
+func (a *app) noticePill(c *ui.Context, p *palette) {
+	n := a.notice()
+	holder := ui.Row(c.Key("notice-holder")).AlignSelf(ui.Center)
+	holder.Children(func() {
+		if n == nil {
+			return
+		}
+		pill := ui.ButtonBase(c.Key("notice-"+n.Code)).Height(30).Padding(0, 12, 0, 10).Gap(8).Radius(999).
+			Background(ui.Hex("#F59E0B").Alpha(0.1)).FocusRing(false).Cursor(ui.CursorPointer)
+		if pill.Hovered() {
+			pill.Background(ui.Hex("#F59E0B").Alpha(0.16))
+		}
+		pill.Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: &ui.Motion{Scale: 0.9}, Exit: &ui.Motion{Scale: 0.9}})
+		pill.AnimatePose(pressPose(pill, 0.96), ui.Snappy)
+		pill.Children(func() {
+			ui.Box(c).Size(7, 7).Radius(999).Background(ui.Hex("#F59E0B"))
+			ui.Text(c, n.Short).FontSize(12).FontWeight(500).TextColor(p.ink2).SingleLine()
+		})
+		if pill.Clicked() {
+			if a.selected == noticeCard {
+				a.selected = ""
+			} else {
+				a.selected, a.more, a.picking, a.renaming = noticeCard, false, false, nil
+			}
+		}
+	})
+}
+
+// noticeCard is what a.selected is while the notice's card shows.
+const noticeCard = "\x00notice"
+
+// noticeCard says what the engine found in full, the rule to add to the
+// other program with a button to copy it, and "知道了", which puts it away
+// for good. It takes the device card's place, in the same way.
+func (a *app) noticeCard(c *ui.Context, p *palette) {
+	n := a.notice()
+	if n == nil {
+		a.selected = ""
+		return
+	}
+	card := ui.Column(c.Key("card")).Width(cardWidth).Radius(20).Background(p.bg).Clip().
+		Shadow(0, 10, 28, 0, p.shadow).Shadow(0, 2, 6, 0, ui.RGBA(9, 9, 11, 0.05)).TransformOrigin(1, 0)
+	if p.dark {
+		card.Border(1, p.line)
+	}
+	if b := card.Bounds(); b.W > 0 {
+		a.cardAt = ui.Rect{X: b.X - a.origin.X, Y: b.Y - a.origin.Y, W: b.W, H: b.H}
+	}
+	card.Transition(ui.ElementTransition{Duration: 200 * time.Millisecond, Size: true,
+		Enter: &ui.Motion{Scale: 0.96, Y: -8}, Exit: &ui.Motion{Scale: 0.97, Y: -6}})
+	card.Children(func() {
+		body := ui.Column(c.Key("body-notice-" + n.Code)).Padding(16).Gap(10)
+		body.Transition(ui.ElementTransition{Duration: 180 * time.Millisecond, Enter: &ui.Motion{}})
+		body.Children(func() {
+			ui.Row(c).Gap(10).AlignItems(ui.Start).Children(func() {
+				ui.Text(c, n.Message).FontSize(15).FontWeight(600).Grow(1).Shrink(1)
+				if iconButton(c, p, "close", "关闭").Background(p.well).Clicked() {
+					a.selected = ""
+				}
+			})
+			if n.Rule != "" {
+				ui.Text(c, "在它的规则里加上这一条，局域网里的连接就不经过它：").FontSize(12).TextColor(p.ink2)
+				ui.Text(c, n.Rule).FontSize(12).FontWeight(500).FontFeatures("tnum").Padding(9, 12).Radius(12).Background(p.well).SingleLine()
+			}
+			ui.Row(c).Gap(8).Margin(4, 0, 0, 0).Children(func() {
+				ui.Spacer(c)
+				if ghostButton(c, p, "notice-ok", "知道了").Clicked() {
+					if a.noticesDone == nil {
+						a.noticesDone = map[string]bool{}
+					}
+					a.noticesDone[n.Code], a.selected = true, ""
+				}
+				if n.Rule != "" && primaryButton(c, p, "copy-rule", "复制规则", 34, 14, 13).Clicked() {
+					if a.copyText != nil {
+						a.copyText(n.Rule)
+					}
+					a.notify(c, nil, "已复制，去那个软件里加上就行", nil)
+				}
+			})
+		})
+	})
 }

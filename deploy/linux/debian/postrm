@@ -1,0 +1,9 @@
+#!/bin/sh
+# purge also forgets this device's keys and its last network map.
+set -e
+if [ -d /run/systemd/system ]; then
+	systemctl daemon-reload || true
+fi
+if [ "$1" = purge ]; then
+	rm -rf /var/lib/deneb
+fi

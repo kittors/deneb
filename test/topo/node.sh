@@ -44,5 +44,10 @@ derper)
 	shift
 	exec derper "$@"
 	;;
+relay)
+	# M4: a Deneb relay (cmd/deneb-relay), with admission by the control server.
+	shift
+	exec deneb-relay "$@"
+	;;
 esac
 echo "node.sh: unknown role $1"; exit 2

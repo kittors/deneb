@@ -1,8 +1,10 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
 	"net/netip"
+	"os"
 	"slices"
 	"strings"
 
@@ -35,23 +37,32 @@ func (e *Engine) ensureDataPathLocked(self netip.Addr, nm *proto.NetMap) error {
 	e.teardownDataPathLocked()
 
 	var inner wgtun.Device
-	switch e.opts.Mode {
-	case apitype.ModeKernel:
+	if e.opts.Mode == apitype.ModeKernel {
 		dns4 := firstV4Addr(nm.Network.DNS)
 		k, err := openKernel(tun.Config{
 			Self: self, Block: nm.Network.IPv4, DNS: dns4, Domain: nm.Network.Domain,
 			MTU: e.opts.MTU, StateDir: e.opts.StateDir,
 		}, e.logf)
-		if err != nil {
+		switch {
+		case errors.Is(err, tun.ErrNoResolver), errors.Is(err, tun.ErrConflict), errors.Is(err, tun.ErrNoPermission):
+			// Linux without systemd-resolved (ordinary programs could not
+			// resolve the names), the block taken here already, or no
+			// administrator rights: user-space mode instead, SOCKS5 and
+			// all (plan §2.3, §2.4). The state says so.
+			e.logf("[engine] kernel mode: %v; running in user-space mode instead", err)
+			e.opts.Mode = apitype.ModeUserspace
+		case err != nil:
 			return fmt.Errorf("kernel mode: %w", err)
+		default:
+			e.kern = k
+			inner = k.Dev
+			if dns4.IsValid() {
+				e.dnsr = dns.New(dns4, e.logf)
+				e.dnsr.OnRevived = e.dnsRevived
+			}
 		}
-		e.kern = k
-		inner = k.Dev
-		if dns4.IsValid() {
-			e.dnsr = dns.New(dns4, e.logf)
-			e.dnsr.OnRevived = e.dnsRevived
-		}
-	default:
+	}
+	if e.opts.Mode != apitype.ModeKernel {
 		s, err := netstack.New([]netip.Addr{self}, e.opts.MTU, e.logf)
 		if err != nil {
 			return err
@@ -138,13 +149,17 @@ func (e *Engine) applyNetmapLocked(nm *proto.NetMap, version uint64) {
 
 	active := map[proto.ScopeID]bool{}
 	paused := map[proto.ScopeID]bool{}
-	pol := &filter.Policy{Self: self, Peers: map[netip.Addr]*filter.Peer{}, Open: map[string][]filter.Rule{}}
+	pol := &filter.Policy{Self: self, Peers: map[netip.Addr]*filter.Peer{}, Open: map[string][]filter.Rule{}, NoInbound: map[string]bool{}}
 	for _, s := range nm.Scopes {
 		if e.pausedLocked(s) {
 			paused[s.ID] = true
 			continue
 		}
 		active[s.ID] = true
+		if s.NoInbound { // a share's receiving side: only out (Open is not looked at)
+			pol.NoInbound[string(s.ID)] = true
+			continue
+		}
 		pol.Open[string(s.ID)] = rulesFor(s.Open)
 	}
 	selfEntry := names.Entry{Device: nm.Self.ID, Name: nm.Self.Name, OwnerName: nm.Self.OwnerName, FQDN: nm.Self.FQDN, Addr: self}
@@ -166,32 +181,58 @@ func (e *Engine) applyNetmapLocked(nm *proto.NetMap, version uint64) {
 				inPaused = true
 			}
 		}
+		// Scopes the peer paused on itself (M2). The pausing device keeps
+		// to its pause on its own; this side keeps letting it in (but does
+		// not resolve its name), so that when it resumes its first packet
+		// gets through at once instead of after the server's next map
+		// (design/plan/m2/control.md, "恢复不等服务器").
+		var peerPaused []string
+		for _, id := range p.PausedScopes {
+			if active[id] {
+				peerPaused = append(peerPaused, string(id))
+			} else if paused[id] {
+				inPaused = true
+			}
+		}
 		addr := firstV4(p.Addrs)
-		if (len(shared) == 0 && !inPaused) || !addr.IsValid() || p.NodeKey.IsZero() {
+		if (len(shared) == 0 && len(peerPaused) == 0 && !inPaused) || !addr.IsValid() || p.NodeKey.IsZero() {
 			continue
 		}
 		label := p.Name + "." + p.OwnerName
-		// A peer of a LAN paused here stays known to WireGuard and
-		// magicsock, keys and paths kept, so it is back the moment the LAN
-		// resumes (M2: within 0.5 s) instead of after a new handshake. The
-		// filter and the names leave it out, so nothing passes meanwhile;
-		// with no traffic it soon idles and costs no pings.
+		// A peer of a LAN paused here, or by the peer itself, stays known
+		// to WireGuard and magicsock, keys and paths kept, so it is back
+		// the moment the LAN resumes (M2: within 0.5 s) instead of after a
+		// new handshake. The filter and the names leave it out, so nothing
+		// passes meanwhile; with no traffic it soon idles and costs no pings.
 		msPeers = append(msPeers, magicsock.PeerConfig{
 			ID: p.ID, Label: label, NodeKey: p.NodeKey, DiscoKey: p.DiscoKey,
-			Endpoints: p.Endpoints, HomeRelay: p.HomeRelay,
+			Endpoints: p.Endpoints, HomeRelay: p.HomeRelay, Relays: p.Relays,
+			DualHandshake: slices.Contains(p.Caps, proto.CapHandshakeDedupe),
 		})
 		want[p.NodeKey] = wgPeer{addr: addr, extra: e.test.extraAllowed[p.ID]}
-		if len(shared) == 0 {
+		if len(shared) == 0 && len(peerPaused) == 0 {
 			continue // every shared scope is paused here: invisible
 		}
-		pol.Peers[addr] = &filter.Peer{Label: label, Scopes: shared, RefusedByMe: p.RefusedByMe, RefusedByPeer: p.RefusedByPeer}
-		entries = append(entries, names.Entry{Device: p.ID, Name: p.Name, OwnerName: p.OwnerName, FQDN: p.FQDN, Addr: addr, Scopes: sharedIDs})
+		pol.Peers[addr] = &filter.Peer{Label: label, Scopes: append(shared, peerPaused...), RefusedByMe: p.RefusedByMe, RefusedByPeer: p.RefusedByPeer}
+		if len(shared) > 0 {
+			entries = append(entries, names.Entry{Device: p.ID, Name: p.Name, OwnerName: p.OwnerName, FQDN: p.FQDN, Addr: addr, Scopes: sharedIDs})
+		}
 	}
 	for _, ps := range e.test.extraAllowed {
 		pol.ExtraOut = append(pol.ExtraOut, ps...)
 	}
 	pol.Off = e.test.filterOff
 
+	if e.kern != nil {
+		// A /32 route per peer WireGuard knows, visible or not: traffic
+		// to a peer of a paused LAN goes into the interface and stops at
+		// the filter, not out of the default route.
+		addrs := make([]netip.Addr, 0, len(want))
+		for _, w := range want {
+			addrs = append(addrs, w.addr)
+		}
+		e.kern.SetPeers(addrs, e.logf)
+	}
 	if cut := e.f.SetPolicy(pol); len(cut) > 0 {
 		// Named with the map they were allowed by: the service is gone
 		// from the new one.
@@ -204,19 +245,23 @@ func (e *Engine) applyNetmapLocked(nm *proto.NetMap, version uint64) {
 	if e.dnsr != nil {
 		e.dnsr.SetTable(tbl)
 	}
-	home := chooseHome(nm, active)
-	if e.opts.HomeRelay != "" && slices.ContainsFunc(nm.Relays, func(r proto.Relay) bool { return r.ID == e.opts.HomeRelay }) {
-		home = e.opts.HomeRelay
+	// Each active scope's relay list, in the map's order (the first scope's
+	// choice is home). magicsock keeps the first relay of each it can
+	// connect to and reports changes through OnEndpoints (M4).
+	var lists []magicsock.RelayList
+	for _, s := range nm.Scopes {
+		if active[s.ID] {
+			lists = append(lists, magicsock.RelayList{Scope: s.ID, Relays: s.Relays})
+		}
 	}
-	if home != e.homeRelay {
-		e.homeRelay = home
-		e.requestReport()
-	}
-	e.ms.SetRelays(nm.Relays, home)
+	e.ms.SetRelays(nm.Relays, lists, e.opts.HomeRelay)
 	e.ms.SetPeers(msPeers)
 	e.configureWGLocked(want)
 	e.nm = nm
 	e.bumpVersionLocked(version)
+	if e.kern != nil {
+		go e.checkProxy() // the route is in place now
+	}
 }
 
 func (e *Engine) bumpVersionLocked(v uint64) {
@@ -227,36 +272,6 @@ func (e *Engine) bumpVersionLocked(v uint64) {
 		close(e.versionCh)
 		e.versionCh = make(chan struct{})
 	}
-}
-
-// chooseHome picks the relay peers reach this device through: the first
-// relay of the first active scope. M4 picks by latency.
-func chooseHome(nm *proto.NetMap, active map[proto.ScopeID]bool) proto.RelayID {
-	known := map[proto.RelayID]bool{}
-	for _, r := range nm.Relays {
-		known[r.ID] = true
-	}
-	for _, s := range nm.Scopes {
-		if !active[s.ID] {
-			continue
-		}
-		for _, id := range s.Relays {
-			if known[id] {
-				return id
-			}
-		}
-	}
-	for _, s := range nm.Scopes {
-		for _, id := range s.Relays {
-			if known[id] {
-				return id
-			}
-		}
-	}
-	if len(nm.Relays) > 0 {
-		return nm.Relays[0].ID
-	}
-	return ""
 }
 
 // rulesFor expands services into port rules: a remote desktop may be both
@@ -313,27 +328,48 @@ func (e *Engine) configureWGLocked(want map[proto.NodePublic]wgPeer) {
 	e.wgPeers = want
 }
 
-// rekey drops the WireGuard session with a peer whose engine restarted and
-// starts a new handshake at once, so traffic this side starts does not sit
-// on a session the peer no longer has.
+// rekey drops the WireGuard session with a peer whose engine restarted (or
+// that dropped us while we were paused) and starts a new handshake at once,
+// so traffic this side starts waits for the new session instead of going
+// out on one the peer no longer has.
+//
+// The peer is taken out of WireGuard and put back rather than having its
+// keys expired: WireGuard sends at most one initiation per peer every 5 s,
+// so a second resume within that time (a switch flicked twice) would leave
+// the peer with no session and nothing sent until WireGuard's own retry.
 func (e *Engine) rekey(k proto.NodePublic) {
 	e.mu.Lock()
 	dev := e.dev
+	wp, ok := e.wgPeers[k]
+	if dev == nil || !ok {
+		e.mu.Unlock()
+		return
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "public_key=%x\nremove=true\n", k[:])
+	fmt.Fprintf(&b, "public_key=%x\nendpoint=%s\nallowed_ip=%s/32\n", k[:], magicsock.EndpointString(k), wp.addr)
+	for _, x := range wp.extra {
+		fmt.Fprintf(&b, "allowed_ip=%s\n", x)
+	}
+	err := dev.IpcSet(b.String())
 	e.mu.Unlock()
-	if dev == nil {
+	if err != nil {
+		e.logf("[wg] new session with %x…: %v", k[:4], err)
 		return
 	}
 	if p := dev.LookupPeer(device.NoisePublicKey(k)); p != nil {
-		p.ExpireCurrentKeypairs()
 		p.SendHandshakeInitiation(false)
 	}
 }
+
+// wgDebug (DENEB_WG_VERBOSE=1) logs all of WireGuard's verbose lines.
+var wgDebug = os.Getenv("DENEB_WG_VERBOSE") != ""
 
 func (e *Engine) wgVerbose(format string, args ...any) {
 	s := fmt.Sprintf(format, args...)
 	// Keep what the tests need: handshakes (path warm-up) and source-address
 	// drops, the receiving half of scope isolation (layer 4).
-	if strings.Contains(s, "disallowed") || strings.Contains(s, "Received handshake response") {
+	if strings.Contains(s, "disallowed") || strings.Contains(s, "Received handshake response") || wgDebug {
 		e.logf("[wg] %s", s)
 	}
 }

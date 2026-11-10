@@ -39,5 +39,11 @@ var uiGlyphs = map[string]*ui.SVG{
 	"moon":        ui.MustParseSVG([]byte("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#000\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M19.5 14.5A8 8 0 1 1 9.5 4.5a6.5 6.5 0 0 0 10 10z\"/></svg>")),
 }
 
-// starGlyph is the Deneb mark, a four-pointed star.
-var starGlyph = ui.MustParseSVG([]byte("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path fill=\"#000\" d=\"M12 1.5c.7 5.6 2.9 7.8 9.5 10.5-6.6 2.7-8.8 4.9-9.5 10.5-.7-5.6-2.9-7.8-9.5-10.5C9.1 9.3 11.3 7.1 12 1.5z\"/></svg>"))
+// starGlyph is the Deneb mark: a bright star, a round core and four light
+// spikes (DESIGN §15), drawn for 16 to 32 points.
+var starGlyph = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#000" d="M12,1.5 C12.29,9.48 14.31,11.69 21.61,12 C14.31,12.31 12.29,14.52 12,22.5 C11.71,14.52 9.69,12.31 2.39,12 C9.69,11.69 11.71,9.48 12,1.5Z"/><circle fill="#000" cx="12" cy="12" r="4.24"/></svg>`))
+
+// markGlyph is the same mark drawn for 40 points and up: thinner spikes
+// and a smaller core, as in the app icon (design/brand). Below that the
+// spikes would fade, so starGlyph keeps them bolder.
+var markGlyph = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#000" d="M12,1.5 C12.18,10.53 13.28,11.79 21.13,12 C13.28,12.21 12.18,13.47 12,22.5 C11.82,13.47 10.72,12.21 2.87,12 C10.72,11.79 11.82,10.53 12,1.5Z"/><circle fill="#000" cx="12" cy="12" r="3.65"/></svg>`))

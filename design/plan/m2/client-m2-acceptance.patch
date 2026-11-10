@@ -1,0 +1,1154 @@
+diff -ruN -x .mygo -x *.png cmd/deneb/canvas.go cmd/deneb/canvas.go
+--- cmd/deneb/canvas.go	2026-11-08 16:25:26
++++ cmd/deneb/canvas.go	2026-11-08 17:30:48
+@@ -638,7 +638,7 @@
+ 		}
+ 		off := col.AnimateTo("offline", gone, ui.Animation{Duration: 300 * time.Millisecond})
+ 		waits := float32(0)
+-		if d.pending {
++		if d.pending || d.turnedDown {
+ 			waits = 1
+ 		}
+ 		wait := col.AnimateTo("pending", waits, ui.Animation{Duration: 220 * time.Millisecond})
+@@ -744,6 +744,9 @@
+ 	if _, _, ok := el.DragEnded(); ok {
+ 		spot := a.freeSpot(r.at(), r, a.relayFootprint, w, h)
+ 		r.off = ui.Point{X: spot.X - r.base.X, Y: spot.Y - r.base.Y}
++		// Put there by hand: it comes back there, whatever its tracks cross.
++		r.byHand = true
++		a.places.set(a.lan, relayHandKey, ui.Point{X: 1, Y: 1})
+ 	}
+ 	live := el.DragOffset()
+ 	r.dragging = el.Dragging()
+diff -ruN -x .mygo -x *.png cmd/deneb/model.go cmd/deneb/model.go
+--- cmd/deneb/model.go	2026-11-08 15:15:48
++++ cmd/deneb/model.go	2026-11-08 17:30:48
+@@ -105,6 +105,9 @@
+ 	// the snapshot; approved is when it was let in, to spring up full.
+ 	waited   bool
+ 	approved time.Time
++	// turnedDown: mine, it waited and the owner turned it away. It keeps
++	// its dashed look on its way back to the tray.
++	turnedDown bool
+ 	// elem keys its element while it moves from region to region in the
+ 	// "全部" view (rekey): the element, and its springs, stay with it.
+ 	elem string
+@@ -144,6 +147,11 @@
+ 	way, push       ui.Point
+ 	side            string // where its name goes: the side no track leaves from
+ 	unplaced        bool   // it has no place on this LAN's canvas yet
++	// byHand: the person put it where it is, on this LAN's canvas, now or
++	// before; a place it took by itself is looked at again as it comes to
++	// show (checked), and changed if a track through it would cross a
++	// name or a tile there (relayClear).
++	byHand, checked bool
+ 	// shown: it was on the canvas in the frame before. It pops in when a
+ 	// link comes to go through it (popFirst, poppedAt), and shrinks away
+ 	// from leftAt, once the last link through it goes.
+diff -ruN -x .mygo -x *.png cmd/deneb/panels.go cmd/deneb/panels.go
+--- cmd/deneb/panels.go	2026-11-08 16:25:26
++++ cmd/deneb/panels.go	2026-11-08 17:26:43
+@@ -98,7 +98,7 @@
+ 		}
+ 	}
+ 	a.devices = slices.DeleteFunc(a.devices, func(x *device) bool { return x == d })
+-	d.leaving, d.aimed, d.flying, d.arriving = time.Time{}, false, false, false
++	d.leaving, d.aimed, d.flying, d.arriving, d.turnedDown = time.Time{}, false, false, false, false
+ 	a.tray = append(a.tray, d)
+ 	a.trayOff[d.id] = &ui.Point{}
+ 	delete(a.beams, d.id)
+@@ -153,8 +153,15 @@
+ 	d.dragging, d.way, d.push = false, ui.Point{}, ui.Point{}
+ 	delete(a.beams, d.id)
+ 	a.devices = append(a.devices, d)
++	d.turnedDown = false
+ 	if announce {
+-		a.notify(c, d, "已把"+short(d.name)+"加进局域网", func() { a.takeOut(c, d, false, false) })
++		text := "已把" + short(d.name) + "加进局域网"
++		if l := a.snap.LAN(d.lan); l != nil && (l.Waiting || l.ApproveDevices && l.Owner != model.PersonID(d.owner)) {
++			// It waits for the owner (DESIGN §6.7): the toast says so, not
++			// that it is in. Its undo takes the asking back.
++			text = say(short(d.name), "等", a.personName(l.Owner), "同意")
++		}
++		a.notify(c, d, text, func() { a.takeOut(c, d, false, false) })
+ 	} else if a.toast != nil && a.toast.dev == d {
+ 		a.toast = nil
+ 	}
+diff -ruN -x .mygo -x *.png cmd/deneb/real2_test.go cmd/deneb/real2_test.go
+--- cmd/deneb/real2_test.go	1970-01-01 07:30:00
++++ cmd/deneb/real2_test.go	2026-11-08 17:35:56
+@@ -0,0 +1,626 @@
++package main
++
++import (
++	"encoding/json"
++	"fmt"
++	"image/jpeg"
++	"image/png"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"slices"
++	"strings"
++	"sync"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/egoist/mygo/ui"
++	"github.com/kittors/deneb/client/model"
++)
++
++// TestRealAcceptance2 plays the window's part in M2's acceptance
++// (design/plan/m2-acceptance.md) on this computer's real engine, as
++// TestRealAcceptance does M1's, when DENEB_REAL2 lists the items to play,
++// in order, as "3,12,11,2". Frames and log go as M1's (DENEB_FRAMES,
++// DENEB_DARK). 阿杰 acts on his NAS (hk-spare) and his desktop (the Windows
++// test machine) by the engine's command line over ssh, as he would in his
++// own window; this computer's setup and clean-up go by its command line,
++// what the window does by hand.
++//
++//   - 3, with 6: 验收临时, a LAN of mine, is made here. In 周末联机's card,
++//     阿杰's ball dragged onto its row in the sidebar invites him (6). He
++//     accepts on his NAS, then adds his desktop: on 验收临时's canvas his
++//     ball comes in, then his devices, one after the other (3).
++//   - 12: the menu bar's panel, drawn as the recordings draw it: its switch
++//     pauses 验收临时 here and resumes it; with "新设备要同意" on there, 阿杰
++//     adds his desktop again, and the panel's 同意 lets it in; 续上 renews
++//     a login of mine if the server says one is due; 打开 Deneb brings the
++//     window. 验收临时 is deleted at the end.
++//   - 11: 阿杰 turns "新设备要同意" on in his 周末联机. 构建服务器, taken out
++//     of it first, dragged in from the tray waits for him, dashed; he lets
++//     it in and it connects. Dragged in again, he turns it away and it
++//     goes. It is put back, and the switch turned off, as they were.
++//   - 2, with 1: the engine handles a network change (denebd debug
++//     netchange). On 周末联机's canvas each link may go over the relay and
++//     back direct: every change at its moment in the log, the engine's own
++//     reports beside it, and no frame shows 断开, 正在连接 or 连不上.
++func TestRealAcceptance2(t *testing.T) {
++	items := os.Getenv("DENEB_REAL2")
++	if items == "" {
++		t.Skip("set DENEB_REAL2 to the M2 items to play on this computer's engine, as 3,12,11,2")
++	}
++	r := newRealRig(t)
++	r.until("the engine, logged in", func() bool { return r.a.snap.Engine && r.a.snap.LoggedIn && r.a.snap.Loaded })
++	for _, s := range strings.Split(items, ",") {
++		fn := map[string]func(*realRig){"2": m2netchange, "3": m2join, "11": m2approve, "12": m2panel, "12r": m2renew}[strings.TrimSpace(s)]
++		if fn == nil {
++			t.Fatalf("no item %q", s)
++		}
++		r.step = strings.TrimSpace(s)
++		r.logf("item %s begins", r.step)
++		fn(r)
++		// What comes after, the next item's setup or the clean-up, is
++		// none of this item's frames.
++		r.rec = false
++		r.logf("item %s ends", r.step)
++	}
++}
++
++// The temporary LAN items 3 and 12 play in.
++const tryLAN = "验收临时"
++
++// onNAS is the command that runs the engine's command line on 阿杰的 NAS:
++// args may hold JSON, quoted for the shell there.
++func onNAS(args string) string {
++	return `ssh -o BatchMode=yes -o ConnectTimeout=15 hk-spare "docker exec deneb-node /denebd ` + strings.ReplaceAll(args, `"`, `\"`) + `"`
++}
++
++// onPC is the command that runs it on 阿杰的台式机, whose shell is cmd.exe:
++// args are plain words.
++func onPC(args string) string {
++	return `ssh -o BatchMode=yes -o ConnectTimeout=15 -o ProxyCommand=none -o IdentitiesOnly=yes -i "$HOME/.ssh/id_ed25519" Administrator@100.122.56.85 "%USERPROFILE%\deneb\denebd.exe ` + args + `"`
++}
++
++// opArgs is `op <kind> '<args as JSON>'`, for the command line.
++func opArgs(kind string, args map[string]any) string {
++	b, _ := json.Marshal(args)
++	return "op " + kind + " '" + string(b) + "'"
++}
++
++// dropping deletes 验收临时 once the test is over, once, unless
++// DENEB_REAL2_KEEP keeps it for a later run of item 12 alone.
++var dropping sync.Once
++
++func (r *realRig) dropAtEnd(tmp model.LANID) {
++	dropping.Do(func() {
++		r.t.Cleanup(func() {
++			if os.Getenv("DENEB_REAL2_KEEP") == "" && r.lanID(tryLAN) != "" {
++				r.shell("denebd lan delete " + string(tmp))
++			}
++		})
++	})
++}
++
++// person is the id of the person named name, as the snapshot has them.
++func (r *realRig) person(name string) model.PersonID {
++	r.t.Helper()
++	for id, p := range r.a.snap.People {
++		if p.Name == name {
++			return id
++		}
++	}
++	r.t.Fatalf("item %s: no one named %s", r.step, name)
++	return ""
++}
++
++// lanID is the id of my LAN named name, or "".
++func (r *realRig) lanID(name string) model.LANID {
++	for _, l := range r.a.store.Snapshot().LANs {
++		if l.Name == name {
++			return l.ID
++		}
++	}
++	return ""
++}
++
++// storeLAN is the LAN of id as the store has it now, never nil.
++func (r *realRig) storeLAN(id model.LANID) *model.LAN {
++	if l := r.a.store.Snapshot().LAN(id); l != nil {
++		return l
++	}
++	return &model.LAN{}
++}
++
++// makeLAN makes a LAN named name from the sidebar, as a person would, and
++// shows it with this computer in it.
++func (r *realRig) makeLAN(name string) model.LANID {
++	r.t.Helper()
++	r.click("新建局域网")
++	r.hold(300 * time.Millisecond)
++	r.tt.Type(name)
++	r.tick()
++	r.logf("making %s", name)
++	r.tt.Key(0, ui.KeyEnter)
++	r.until(name+" on the canvas", func() bool { l := r.a.snap.LAN(r.a.lan); return l != nil && l.Name == name })
++	r.until("this computer in "+name, func() bool { return r.a.device(r.a.self) != nil })
++	return r.a.lan
++}
++
++// openLANCard opens the card of the LAN on the canvas, by its name in the
++// header.
++func (r *realRig) openLANCard() {
++	r.t.Helper()
++	if r.a.selected != lanCard {
++		r.tt.ClickAt(sidebarWidth+28+24, 22+12)
++	}
++	r.until("the LAN's card", func() bool { return r.a.selected == lanCard })
++	r.hold(600 * time.Millisecond)
++}
++
++// dropNear presses at from and lets go at to, a hand's way, pausing over to
++// as a hand would before it lets go.
++func (r *realRig) dropNear(from, to ui.Point) {
++	r.tt.Press(from.X, from.Y)
++	for i := 1; i <= 24; i++ {
++		k := ui.EaseInOut(float32(i) / 24)
++		r.tt.Move(from.X+(to.X-from.X)*k, from.Y+(to.Y-from.Y)*k)
++		r.tick()
++	}
++	r.hold(300 * time.Millisecond)
++	r.tt.Release(to.X, to.Y)
++	r.tick()
++}
++
++// Item 6, then 3: 阿杰 invited into 验收临时 by his ball, and coming in.
++func m2join(r *realRig) {
++	jie := r.person("阿杰")
++	nas, pc := r.named("阿杰的 NAS"), r.named("阿杰的台式机")
++	if nas == "" || pc == "" {
++		r.t.Fatal("item 3: no 阿杰的 NAS or no 阿杰的台式机")
++	}
++	if id := r.lanID(tryLAN); id != "" {
++		r.shell("denebd lan delete " + string(id))
++		r.until(tryLAN+" gone", func() bool { return r.lanID(tryLAN) == "" })
++	}
++	r.record()
++	tmp := r.makeLAN(tryLAN)
++	r.logf("made %s (%s)", tryLAN, tmp)
++	r.dropAtEnd(tmp)
++	// 6: 阿杰's ball, from 周末联机's card onto 验收临时's row.
++	r.lan("周末联机")
++	r.openLANCard()
++	r.until("阿杰's ball in the card", func() bool { _, ok := r.a.ballHome[string(jie)]; return ok })
++	row, ok := r.a.rows[tmp]
++	if !ok {
++		r.t.Fatalf("item 6: no row for %s in the sidebar", tryLAN)
++	}
++	from := r.a.ballHome[string(jie)]
++	r.logf("dragging 阿杰's ball onto %s", tryLAN)
++	r.dropNear(from, ui.Point{X: row.X + row.W*0.4, Y: row.Y + row.H/2})
++	invite := ""
++	r.until("阿杰 invited", func() bool {
++		for _, in := range r.storeLAN(tmp).Invited {
++			if in.Person == jie {
++				invite = in.Invite
++			}
++		}
++		return invite != ""
++	})
++	r.logf("阿杰 invited into %s (invite %s); the window says %q", tryLAN, invite, r.tt.Texts())
++	if !r.tt.HasText("已邀请阿杰加入「" + tryLAN + "」") {
++		r.t.Errorf("item 6: no toast for the invite: %q", r.tt.Texts())
++	}
++	r.hold(1500 * time.Millisecond)
++	r.still("invited")
++
++	// 3: his ball, then his NAS, then his desktop.
++	r.lan(tryLAN)
++	r.record()
++	r.hold(time.Second)
++	var ballAt, nasAt, pcAt time.Time
++	r.watch = func() {
++		l := r.a.snap.LAN(tmp)
++		if ballAt.IsZero() && l != nil && slices.Contains(l.Members, jie) {
++			ballAt = time.Now()
++			r.logf("阿杰 is a member")
++		}
++		if d := r.a.device(nas); nasAt.IsZero() && d != nil {
++			nasAt = time.Now()
++			r.logf("阿杰的 NAS on the canvas, %s", d.path)
++		}
++		if d := r.a.device(pc); pcAt.IsZero() && d != nil {
++			pcAt = time.Now()
++			r.logf("阿杰的台式机 on the canvas, %s", d.path)
++		}
++	}
++	defer func() { r.watch = nil }()
++	accepted := r.shell(onNAS(opArgs("invite.accept", map[string]any{"invitation": invite})))
++	r.until("阿杰 and his NAS in", func() bool { return !ballAt.IsZero() && !nasAt.IsZero() })
++	r.until("阿杰的 NAS connected", func() bool { return linkedPath(r.a.device(nas)) })
++	r.logf("阿杰's ball %s and his NAS %s after he accepted; the NAS %s", since(ballAt, accepted), since(nasAt, accepted), r.a.device(nas).path)
++	r.hold(2 * time.Second)
++	// A device a member brings into a LAN of mine waits for me (an M2
++	// LAN's "新设备要同意" is on from the start): it comes in dashed, and
++	// one click on it lets it in.
++	added := r.shell(onPC("lan add " + string(tmp)))
++	r.until("阿杰的台式机 waiting for me", func() bool { d := r.a.device(pc); return d != nil && d.pending && !d.mine })
++	r.logf("阿杰的台式机 on the canvas %s after he added it, saying %q", since(pcAt, added), r.a.status(r.a.device(pc)))
++	r.hold(2 * time.Second)
++	r.still("waits-for-me")
++	r.record()
++	r.logf("letting 阿杰的台式机 in")
++	at := r.at(r.a.device(pc))
++	r.tt.ClickAt(at.X, at.Y)
++	r.tick()
++	clicked := time.Now()
++	r.until("阿杰的台式机 let in", func() bool {
++		l := r.storeLAN(tmp)
++		return l.Has(model.DeviceID(pc)) && !l.HasPending(model.DeviceID(pc))
++	})
++	r.until("阿杰的台式机 connected", func() bool { d := r.a.device(pc); return d != nil && !d.pending && linkedPath(d) })
++	r.logf("阿杰的台式机 in %s after the click (the toast's undo time first): %s", since(time.Now(), clicked), r.a.device(pc).path)
++	r.hold(2500 * time.Millisecond)
++	r.still("joined")
++	if _, line := r.a.summary(&lightPalette); !strings.Contains(line, "都连上了") {
++		r.t.Errorf("item 3: %s says %q", tryLAN, line)
++	}
++}
++
++// Item 12: the menu bar's panel, on the real world.
++func m2panel(r *realRig) {
++	tmp := r.lanID(tryLAN)
++	if tmp == "" {
++		r.t.Fatal("item 12: play item 3 first: no " + tryLAN)
++	}
++	pc := r.named("阿杰的台式机")
++	if !r.storeLAN(tmp).Has(model.DeviceID(pc)) {
++		r.t.Fatal("item 12: 阿杰的台式机 is not in " + tryLAN)
++	}
++	r.dropAtEnd(tmp)
++	// The panel and the menu bar above it, as the recordings draw them: a
++	// tester of its own, whose frames are the item's.
++	var shown atomic.Int32
++	r.a.showMain = func() { shown.Add(1) }
++	r.a.panelShown = true
++	window := r.tt
++	m := &menubarScreen{a: r.a, open: true}
++	r.tt = ui.NewTester(m.view, screenW, screenH)
++	r.tt.SetDark(os.Getenv("DENEB_DARK") != "")
++	r.tt.Frame()
++	defer func() { r.tt, r.a.panelShown, r.a.showMain, r.rec = window, false, nil, false }()
++	mark := ""
++	r.watch = func() {
++		if st := trayState(r.a.snap, time.Now()); st != mark {
++			mark = st
++			r.logf("the mark is %s", st)
++		}
++	}
++	defer func() { r.watch = nil }()
++	r.record()
++	r.hold(1500 * time.Millisecond)
++	r.still("open")
++
++	// The switch: 验收临时 paused on this computer, and back.
++	r.record()
++	r.logf("pausing %s", tryLAN)
++	r.click("暂停" + tryLAN)
++	r.until(tryLAN+" paused", func() bool { return r.storeLAN(tmp).Paused && r.tt.HasText("已暂停") })
++	// 阿杰's devices stay connected here: they share 周末联机 with it.
++	r.logf("%s paused; the panel says %q; the mark is %s", tryLAN, r.a.lanLine(r.a.snap.LAN(tmp)), trayState(r.a.snap, time.Now()))
++	r.hold(3 * time.Second)
++	r.still("paused")
++	r.record()
++	r.logf("resuming %s", tryLAN)
++	r.click("暂停" + tryLAN)
++	r.until(tryLAN+" back", func() bool { return !r.storeLAN(tmp).Paused && !r.tt.HasText("已暂停") })
++	r.logf("%s back; the panel says %q", tryLAN, r.a.lanLine(r.a.snap.LAN(tmp)))
++	r.hold(2 * time.Second)
++
++	// 同意: "新设备要同意" on in 验收临时; 阿杰 takes his desktop out and adds
++	// it again, and it waits for me.
++	r.shell("denebd " + opArgs("lan.setApproveDevices", map[string]any{"lan": tmp, "on": true}))
++	r.until("新设备要同意 on", func() bool { return r.storeLAN(tmp).ApproveDevices })
++	r.shell(onPC("lan remove " + string(tmp)))
++	r.until("阿杰的台式机 out", func() bool { return !r.storeLAN(tmp).Has(model.DeviceID(pc)) })
++	r.hold(time.Second)
++	asked := r.shell(onPC("lan add " + string(tmp)))
++	chore := say("阿杰的台式机", "想加入", tryLAN)
++	r.until("the panel's "+chore, func() bool { return r.tt.HasText(chore) })
++	r.logf("the panel says %s %s after he asked", chore, since(time.Now(), asked))
++	r.hold(1500 * time.Millisecond)
++	r.still("asks")
++	r.record()
++	r.logf("同意")
++	r.click("同意")
++	r.until("已同意", func() bool { return r.tt.HasText(say("已同意", "阿杰的台式机")) })
++	r.until("阿杰的台式机 let in", func() bool {
++		l := r.storeLAN(tmp)
++		return l.Has(model.DeviceID(pc)) && !l.HasPending(model.DeviceID(pc))
++	})
++	r.until("阿杰的台式机 connected", func() bool { return r.a.snap.Path(model.DeviceID(pc)).Kind.Connected() })
++	r.logf("阿杰的台式机 in, %s", r.a.snap.Path(model.DeviceID(pc)).Kind)
++	r.hold(2 * time.Second)
++	r.still("let-in")
++
++	// 续上, if the server says a login of mine is due.
++	if r.tt.HasText("续上") {
++		r.record()
++		r.logf("续上")
++		r.click("续上")
++		r.until("renewed", func() bool { return !r.tt.HasText("续上") && !r.tt.HasText("已续上") })
++		r.logf("renewed")
++		r.hold(time.Second)
++		r.still("renewed")
++	} else {
++		r.logf("no login of mine is due: 续上 not played")
++	}
++
++	r.record()
++	r.click("打开 Deneb")
++	r.hold(500 * time.Millisecond)
++	if shown.Load() != 1 {
++		r.t.Errorf("item 12: 打开 Deneb brought the window %d times", shown.Load())
++	}
++	r.logf("打开 Deneb brought the window")
++}
++
++// Item 12's 续上: a login of mine due, renewed from the menu bar's panel.
++// The server makes 构建服务器's login due (deneb-control expire) while its
++// engine is stopped, so that it does not renew itself; this computer
++// renews it with device.renew. Light and dark at once, the dark panel a
++// second tester on the same world, recorded to DENEB_FRAMES_TWIN: the
++// click is the light one's.
++func m2renew(r *realRig) {
++	build := r.named("构建服务器")
++	dev := model.DeviceID(build)
++	due := func() bool {
++		d := r.a.store.Snapshot().Devices[dev]
++		return d != nil && (d.Login.Expired || d.Login.Due(time.Now()))
++	}
++	r.until("构建服务器's login due", due)
++	r.a.showMain = func() {}
++	r.a.panelShown = true
++	window := r.tt
++	m := &menubarScreen{a: r.a, open: true}
++	r.tt = ui.NewTester(m.view, screenW, screenH)
++	dark := ui.NewTester(m.view, screenW, screenH)
++	dark.SetDark(true)
++	twin, n := os.Getenv("DENEB_FRAMES_TWIN"), 0
++	if twin != "" {
++		os.MkdirAll(filepath.Join(twin, "real-"+r.step), 0o755)
++	}
++	darkStill := func(name string) {
++		if twin == "" {
++			return
++		}
++		dark.SetScale(2)
++		dark.Frame()
++		if f, err := os.Create(filepath.Join(twin, fmt.Sprintf("real-%s_%s.png", r.step, name))); err == nil {
++			png.Encode(f, dark.Image())
++			f.Close()
++		}
++		dark.SetScale(1)
++		dark.Frame()
++	}
++	mark := ""
++	r.watch = func() {
++		dark.Advance(time.Second / 60)
++		dark.Frame()
++		if twin != "" && r.rec {
++			if f, err := os.Create(filepath.Join(twin, "real-"+r.step, fmt.Sprintf("%05d.jpg", n))); err == nil {
++				jpeg.Encode(f, dark.Image(), &jpeg.Options{Quality: 88})
++				f.Close()
++			}
++			n++
++		}
++		if st := trayState(r.a.snap, time.Now()); st != mark {
++			mark = st
++			r.logf("the mark is %s", st)
++		}
++	}
++	defer func() { r.tt, r.a.panelShown, r.a.showMain, r.watch, r.rec = window, false, nil, nil, false }()
++	chore := say("构建服务器", "需要重新登录")
++	r.record()
++	r.until("the panel's "+chore, func() bool { return r.tt.HasText(chore) })
++	r.hold(1500 * time.Millisecond)
++	r.still("renew-due")
++	darkStill("renew-due")
++	r.record()
++	r.logf("续上")
++	r.click("续上")
++	clicked := time.Now()
++	r.until("已续上", func() bool { return r.tt.HasText("已续上") })
++	r.until("构建服务器's login renewed", func() bool { return !due() })
++	renewed := time.Now()
++	r.until("the row folded away", func() bool { return !r.tt.HasText("已续上") && !r.tt.HasText(chore) })
++	r.logf("renewed by the server %s after the click; the row gone %s after", since(renewed, clicked), since(time.Now(), clicked))
++	r.hold(1500 * time.Millisecond)
++	r.still("renewed")
++	darkStill("renewed")
++}
++
++// Item 11: 构建服务器 waits for 阿杰 in his 周末联机, let in once and
++// turned away once.
++func m2approve(r *realRig) {
++	lan := r.lanID("周末联机")
++	build := r.named("构建服务器")
++	if lan == "" || build == "" {
++		r.t.Fatal("item 11: no 周末联机 or no 构建服务器")
++	}
++	dev := model.DeviceID(build)
++	in := func() bool { return r.storeLAN(lan).Has(dev) }
++	waits := func() bool { return r.storeLAN(lan).HasPending(dev) }
++	approve := func(on bool) {
++		r.shell(onNAS(opArgs("lan.setApproveDevices", map[string]any{"lan": lan, "on": on})))
++		r.until(fmt.Sprintf("新设备要同意 %v", on), func() bool { return r.storeLAN(lan).ApproveDevices == on })
++	}
++	// As it was, whatever happens: 构建服务器 in, the switch off.
++	r.t.Cleanup(func() {
++		if waits() {
++			r.shell(onNAS(opArgs("device.approve", map[string]any{"lan": lan, "device": build})))
++		} else if !in() {
++			r.shell("denebd lan add " + string(lan) + " " + build)
++			r.until("构建服务器 back in 周末联机", func() bool { return in() || waits() })
++			if waits() {
++				r.shell(onNAS(opArgs("device.approve", map[string]any{"lan": lan, "device": build})))
++			}
++		}
++		r.until("构建服务器 in 周末联机", in)
++		approve(false)
++	})
++	if in() {
++		r.shell("denebd lan remove " + string(lan) + " " + build)
++		r.until("构建服务器 out of 周末联机", func() bool { return !in() })
++	}
++	approve(true)
++	r.lan("周末联机")
++	inTray := func() bool { return slices.ContainsFunc(r.a.tray, func(d *device) bool { return d.id == build }) }
++	r.until("构建服务器 in the tray", inTray)
++	r.record()
++	r.hold(time.Second)
++
++	// Let in.
++	r.logf("dragging 构建服务器 in")
++	r.fromTray(build, ui.Point{X: r.a.origin.X + 640, Y: r.a.origin.Y + 470})
++	r.until("构建服务器 waiting for 阿杰", func() bool { d := r.a.device(build); return d != nil && d.pending && waits() })
++	r.logf("构建服务器 says %q", r.a.status(r.a.device(build)))
++	r.hold(2 * time.Second)
++	r.still("waiting")
++	r.record()
++	r.shell(onNAS("status"))
++	approved := r.shell(onNAS(opArgs("device.approve", map[string]any{"lan": lan, "device": build})))
++	r.until("构建服务器 let in", func() bool { d := r.a.device(build); return d != nil && !d.pending && in() })
++	letIn := time.Now()
++	r.until("构建服务器 connected", func() bool { return linkedPath(r.a.device(build)) })
++	r.logf("构建服务器 let in %s after 阿杰 did it, connected %s after: %s", since(letIn, approved), since(time.Now(), approved), r.a.device(build).path)
++	r.shell(onNAS("status"))
++	r.hold(2500 * time.Millisecond)
++	r.still("let-in")
++
++	// Turned away.
++	r.record()
++	r.logf("dragging 构建服务器 into the tray")
++	r.toTray(build)
++	r.until("构建服务器 out of 周末联机", func() bool { return !in() && !waits() })
++	r.hold(5 * time.Second)
++	r.until("构建服务器 in the tray", inTray)
++	r.logf("dragging 构建服务器 in again")
++	r.fromTray(build, ui.Point{X: r.a.origin.X + 640, Y: r.a.origin.Y + 470})
++	r.until("构建服务器 waiting again", func() bool { d := r.a.device(build); return d != nil && d.pending && waits() })
++	r.hold(2 * time.Second)
++	refused := r.shell(onNAS(opArgs("device.reject", map[string]any{"lan": lan, "device": build})))
++	r.until("构建服务器 turned away", func() bool { return r.a.device(build) == nil && !waits() && !in() })
++	r.logf("构建服务器 off the canvas %s after 阿杰 turned it away; the window says %q", since(time.Now(), refused), r.tt.Texts())
++	r.shell(onNAS("status"))
++	r.hold(3 * time.Second)
++	r.still("turned-away")
++}
++
++// Item 2, with 1. First a network change as the engine handles it (denebd
++// debug netchange): every link is made again, and the window shows none of
++// it. Then 阿杰的 NAS's direct path breaks (denebd debug block nas): the
++// link goes over the relay (2); a network change while it stays broken
++// connects it over the relay first (1), and once it mends (unblock) the
++// link goes direct again. Every change shown is logged at its moment, the
++// engine's own reports beside it, and no frame shows 断开, 正在连接 or
++// 连不上, nor the header anything but 都连上了.
++func m2netchange(r *realRig) {
++	r.lan("周末联机")
++	var ids []string
++	for _, d := range r.a.devices {
++		if d.id != r.a.self {
++			ids = append(ids, d.id)
++		}
++	}
++	nas := r.named("阿杰的 NAS")
++	if !slices.Contains(ids, nas) {
++		r.t.Fatal("item 2: 阿杰的 NAS is not in 周末联机")
++	}
++	r.until("every link up", func() bool {
++		for _, id := range ids {
++			if !linkedPath(r.a.device(id)) {
++				return false
++			}
++		}
++		return true
++	})
++	for _, id := range ids {
++		defer r.engineSays(id)()
++	}
++	name := func(id string) string { return r.a.snap.Devices[model.DeviceID(id)].Name }
++	went := map[string][]string{}
++	bad := ""
++	r.watch = func() {
++		for _, id := range ids {
++			d := r.a.device(id)
++			p := "off the canvas"
++			if d != nil {
++				p = d.path
++			}
++			if w := went[id]; len(w) == 0 || w[len(w)-1] != p {
++				went[id] = append(w, p)
++				status := ""
++				if d != nil {
++					status = r.a.status(d)
++				}
++				r.logf("the window shows %s %s: %s", name(id), p, status)
++			}
++			if bad == "" && !linkedPath(d) {
++				bad = fmt.Sprintf("%s %s", name(id), p)
++			}
++		}
++		if bad == "" {
++			if _, line := r.a.summary(&lightPalette); !strings.Contains(line, "都连上了") {
++				bad = fmt.Sprintf("the header %q", line)
++			} else if r.tt.HasText("断开") || r.tt.HasText("正在连接") || r.tt.HasText("连不上") {
++				bad = fmt.Sprintf("%q", r.tt.Texts())
++			}
++			if bad != "" {
++				bad += " at " + time.Now().Format("15:04:05.000")
++			}
++		}
++	}
++	defer func() { r.watch = nil }()
++	nasPath := func() string {
++		if d := r.a.device(nas); d != nil {
++			return d.path
++		}
++		return ""
++	}
++
++	// A network change, the paths whole.
++	r.record()
++	r.hold(2 * time.Second)
++	changed := r.shell("denebd debug netchange")
++	r.logf("network change at %s", changed.Format("15:04:05.000"))
++	r.hold(10 * time.Second)
++	r.still("netchange")
++
++	// 阿杰的 NAS's direct path broken: over the relay.
++	r.record()
++	r.t.Cleanup(func() { exec.Command("denebd", "debug", "unblock", "nas").Run() })
++	blocked := r.shell("denebd debug block nas")
++	r.until("阿杰的 NAS over the relay", func() bool { return nasPath() == "relay" })
++	r.logf("阿杰的 NAS over the relay %s after its direct path broke", since(time.Now(), blocked))
++	r.hold(4 * time.Second)
++	r.still("relay")
++
++	// A network change while it stays broken: connected over the relay
++	// first; mended, direct.
++	r.record()
++	again := r.shell("denebd debug netchange")
++	r.hold(6 * time.Second)
++	r.logf("阿杰的 NAS %s, 6 s after a network change at %s", nasPath(), again.Format("15:04:05.000"))
++	mended := r.shell("denebd debug unblock nas")
++	r.until("阿杰的 NAS direct again", func() bool { return nasPath() == "direct" })
++	r.logf("阿杰的 NAS direct %s after its path mended", since(time.Now(), mended))
++	r.hold(4 * time.Second)
++	r.still("direct-again")
++	for _, id := range ids {
++		r.logf("%s showed %s", name(id), strings.Join(went[id], ", "))
++	}
++	if bad != "" {
++		r.t.Errorf("item 2: the window showed %s", bad)
++	}
++}
+diff -ruN -x .mygo -x *.png cmd/deneb/relayname_test.go cmd/deneb/relayname_test.go
+--- cmd/deneb/relayname_test.go	1970-01-01 07:30:00
++++ cmd/deneb/relayname_test.go	2026-11-08 17:31:16
+@@ -0,0 +1,69 @@
++package main
++
++import (
++	"testing"
++	"time"
++
++	"github.com/egoist/mygo/ui"
++	"github.com/kittors/deneb/client"
++	"github.com/kittors/deneb/client/model"
++)
++
++// relayAround is the sample's 周末联机 with this computer below and to the
++// left of 阿杰的 NAS, which goes through the relay: the spot between the
++// two and a little below, where a relay goes by itself, is under the NAS's
++// name, and its track up to the NAS runs through it (the M2 acceptance in
++// real mode, item 13).
++func relayAround(relay ui.Point, byHand bool) *places {
++	at := map[string]ui.Point{
++		"mac": {X: 360, Y: 430}, "jnas": {X: 620, Y: 210}, "mia": {X: 140, Y: 130},
++		"jdesk": {X: 860, Y: 130}, "game": {X: 140, Y: 470},
++	}
++	if relay != (ui.Point{}) {
++		at[relayKey] = relay
++	}
++	if byHand {
++		at[relayHandKey] = ui.Point{X: 1, Y: 1}
++	}
++	return &places{at: map[model.LANID]map[string]ui.Point{"weekend": at}}
++}
++
++// The relay keeps its tracks off the names, and off every tile but those
++// at their ends: placed by itself, or taken from where it last rested by
++// itself; where the person put it by hand, it stays.
++func TestRelayKeepsTracksOffNames(t *testing.T) {
++	show := func(at *places) *app {
++		a := newApp(&fixedStore{client.NewDemo().Snapshot()}, at)
++		tt := ui.NewTester(a.view, 1180, 740)
++		for i := 0; i < 60; i++ {
++			tt.Advance(16 * time.Millisecond)
++			tt.Frame()
++		}
++		if nas := a.device("jnas"); nas == nil || nas.path != "relay" {
++			t.Fatal("阿杰的 NAS does not go through the relay")
++		}
++		return a
++	}
++	a := show(relayAround(ui.Point{}, false))
++	mac, nas := a.device("mac").at(), a.device("jnas").at()
++	naive := a.freeSpot(ui.Point{X: (mac.X + nas.X) / 2, Y: (mac.Y+nas.Y)/2 + 30}, a.relay, a.relayFootprint, a.cw, a.ch)
++	if a.relayClear(naive) {
++		t.Fatalf("the spot between them, %v, crosses no name: the layout tests nothing", naive)
++	}
++	if !a.relayClear(a.relay.base) {
++		t.Errorf("the relay at %v: a track through it crosses a name or a tile", a.relay.base)
++	}
++	if d := dist(a.relay.base, naive); d > 200 {
++		t.Errorf("the relay went %v from between them", d)
++	}
++	t.Logf("between them %v; the relay at %v", naive, a.relay.base)
++
++	// Where it last rested by itself, crossing the name: it moves off.
++	if a := show(relayAround(naive, false)); a.relay.base == naive || !a.relayClear(a.relay.base) {
++		t.Errorf("the relay rested at %v by itself, and shows at %v", naive, a.relay.base)
++	}
++	// Put there by hand: it stays.
++	if a := show(relayAround(naive, true)); a.relay.base != naive {
++		t.Errorf("the relay put at %v by hand shows at %v", naive, a.relay.base)
++	}
++}
+diff -ruN -x .mygo -x *.png cmd/deneb/sync.go cmd/deneb/sync.go
+--- cmd/deneb/sync.go	2026-11-08 15:16:00
++++ cmd/deneb/sync.go	2026-11-08 17:44:05
+@@ -262,6 +262,7 @@
+ 	a.relay = &relayStop{sub: "中转站"}
+ 	if at, ok := a.places.get(a.lan, relayKey); ok {
+ 		a.relay.base = at
++		_, a.relay.byHand = a.places.get(a.lan, relayHandKey)
+ 	} else {
+ 		a.relay.unplaced = true
+ 	}
+@@ -400,8 +401,14 @@
+ 		case in[d.id]:
+ 		case tray[d.id]:
+ 			// Mine, taken out elsewhere, or its joining turned down.
++			if d.waited {
++				a.turnedAway(c, d)
++			}
+ 			a.startLeave(c, d, false, false)
+ 		default:
++			if d.waited && d.mine {
++				a.turnedAway(c, d)
++			}
+ 			a.vanish(c, d)
+ 		}
+ 	}
+@@ -451,9 +458,10 @@
+ 	}
+ 	for _, d := range a.devices {
+ 		switch {
+-		case d.waited && !d.pending && d.gone.IsZero():
++		case d.waited && !d.pending && d.gone.IsZero() && a.landing != d && !d.turnedDown:
+ 			// Let in: it springs up full, and its track grows out from this
+-			// computer as a joining device's does (DESIGN §6.7).
++			// computer as a joining device's does (DESIGN §6.7). One turned
++			// away is on its way back to the tray instead.
+ 			d.approved, d.joined, d.leaving = c.Now(), c.Now(), time.Time{}
+ 			delete(a.beams, d.id)
+ 			c.AnimationFrame()
+@@ -520,6 +528,17 @@
+ 
+ // vanish takes a device that left the LAN elsewhere off the canvas: it
+ // shrinks and fades where it is, as its track is drawn back in.
++// turnedAway says that the owner did not let my device in, as it goes back
++// (DESIGN §6.7): never without a word. It stays dashed on its way.
++func (a *app) turnedAway(c *ui.Context, d *device) {
++	l := a.snap.LAN(d.lan)
++	if l == nil {
++		return
++	}
++	d.turnedDown = true
++	a.notify(c, d, say(a.personName(l.Owner), "没有同意", short(d.name), "加入「"+short(l.Name)+"」"), nil)
++}
++
+ func (a *app) vanish(c *ui.Context, d *device) {
+ 	now := c.Now()
+ 	d.gone, d.leaving = now, now
+@@ -601,26 +620,116 @@
+ 			d.base, d.rest, d.off, d.unplaced = spot, spot, ui.Point{}, false
+ 		}
+ 	}
+-	if r := a.relay; r.unplaced && a.hasRelayLink() {
+-		me := a.device(a.self)
+-		var far *device
+-		for _, d := range a.devices {
+-			if d.path == "relay" {
+-				far = d
+-				break
++	r := a.relay
++	if !a.hasRelayLink() {
++		return
++	}
++	// As it comes to show, or as the LAN does with it there: a place it took
++	// by itself is looked at again, the devices perhaps moved since.
++	if r.unplaced || !r.dragging && (!r.shown || !r.checked) && !r.byHand && !a.relayClear(r.base) {
++		r.base = a.relaySpot()
++		r.off, r.unplaced = ui.Point{}, false
++	}
++	r.checked = true
++}
++
++// relaySpot is where the relay goes by itself: between this computer and
++// the first device that goes through it, a little below, as scene 1 shows
++// it; or, if a track through it would cross a name or a tile there, the
++// nearest spot around that where none does (DESIGN: lines and pills never
++// cover names). With no such spot, the first.
++func (a *app) relaySpot() ui.Point {
++	r := a.relay
++	me := a.device(a.self)
++	var far *device
++	for _, d := range a.devices {
++		if d.path == "relay" {
++			far = d
++			break
++		}
++	}
++	want := ui.Point{X: a.cw / 2, Y: a.ch / 2}
++	if me != nil && far != nil {
++		p, q := me.at(), far.at()
++		want = ui.Point{X: (p.X + q.X) / 2, Y: (p.Y+q.Y)/2 + 30}
++	}
++	first := a.freeSpot(want, r, a.relayFootprint, a.cw, a.ch)
++	if a.relayClear(first) {
++		return first
++	}
++	for _, rad := range []float64{40, 80, 120, 160, 200} {
++		for deg := 90.0; deg < 450; deg += 30 {
++			at := ui.Point{X: want.X + float32(rad*math.Cos(deg*math.Pi/180)), Y: want.Y + float32(rad*math.Sin(deg*math.Pi/180))}
++			if spot := a.freeSpot(at, r, a.relayFootprint, a.cw, a.ch); dist(spot, at) < 24 && a.relayClear(spot) {
++				return spot
+ 			}
+ 		}
+-		want := ui.Point{X: a.cw / 2, Y: a.ch / 2}
+-		if me != nil && far != nil {
+-			// Between the two, a little below, as scene 1 shows it.
+-			p, q := me.at(), far.at()
+-			want = ui.Point{X: (p.X + q.X) / 2, Y: (p.Y+q.Y)/2 + 30}
++	}
++	return first
++}
++
++// relayClear reports whether the tracks through a relay at at, as they are
++// drawn, keep off every device's name, and off every tile but those at
++// their ends.
++func (a *app) relayClear(at ui.Point) bool {
++	me := a.device(a.self)
++	if me == nil || me.unplaced {
++		return true
++	}
++	for _, d := range a.devices {
++		if d.path != "relay" || d.unplaced || !d.gone.IsZero() {
++			continue
+ 		}
+-		r.base = a.freeSpot(want, r, a.relayFootprint, a.cw, a.ch)
+-		r.off, r.unplaced = ui.Point{}, false
++		cv := newCurve(me.at(), d.at(), &at, bendFor(d.id))
++		for _, o := range a.devices {
++			if o.unplaced || !o.gone.IsZero() || a.landing == o {
++				continue
++			}
++			name, tile := a.nameBox(o), ui.Rect{X: o.at().X - tileSize/2 - 4, Y: o.at().Y - tileSize/2 - 4, W: tileSize + 8, H: tileSize + 8}
++			for _, pt := range cv.pts {
++				// With some air: a track that grazes a name looks as if it
++				// touched it. The sample's relay leaves this computer's
++				// name about 9 apart, at its corner.
++				if rectDist(name, pt) < 6 || o != me && o != d && inRect(tile, pt) {
++					return false
++				}
++			}
++		}
+ 	}
++	return true
+ }
+ 
++// nameBox is about where d's name and the line under it show, under its
++// tile: the text itself, as wide as the longer of the two, up to
++// nameWidth.
++func (a *app) nameBox(d *device) ui.Rect {
++	width := func(s string, size float32) float32 {
++		w := float32(0)
++		for _, r := range s {
++			if r < 0x80 {
++				w += size * 0.58
++			} else {
++				w += size
++			}
++		}
++		return w
++	}
++	at := d.at()
++	w := min(max(width(d.name, 13), width(a.status(d), 12)), nameWidth)
++	return ui.Rect{X: at.X - w/2, Y: at.Y + tileSize/2 + 8, W: w, H: 38}
++}
++
++func inRect(r ui.Rect, p ui.Point) bool {
++	return p.X >= r.X && p.X <= r.X+r.W && p.Y >= r.Y && p.Y <= r.Y+r.H
++}
++
++// rectDist is how far p is from r: 0 inside it.
++func rectDist(r ui.Rect, p ui.Point) float32 {
++	dx := max(r.X-p.X, 0, p.X-(r.X+r.W))
++	dy := max(r.Y-p.Y, 0, p.Y-(r.Y+r.H))
++	return float32(math.Hypot(float64(dx), float64(dy)))
++}
++
+ func boolInt(b bool) int {
+ 	if b {
+ 		return 1
+@@ -789,7 +898,11 @@
+ // ---- Places ----------------------------------------------------------------------------
+ 
+ // relayKey is the relay's key among a LAN's places: never a device's id.
+-const relayKey = "\x00relay"
++// relayHandKey is there once the person put the relay somewhere by hand.
++const (
++	relayKey     = "\x00relay"
++	relayHandKey = "\x00relay-by-hand"
++)
+ 
+ // places is where things rest on each LAN's canvas, as the person left them
+ // (DESIGN §6.2): by LAN and device, so that the next time the window opens
+@@ -914,6 +1027,15 @@
+ 		return time.Now()
+ 	}
+ 	return a.clock
++}
++
++// personName is what a person is called here, as their ball says: their
++// name, or 拥有者 when the snapshot does not have them.
++func (a *app) personName(id model.PersonID) string {
++	if p := a.people[string(id)]; p != nil {
++		return p.name
++	}
++	return "拥有者"
+ }
+ 
+ // ownerName is the name of the owner of the LAN on the canvas.
+diff -ruN -x .mygo -x *.png cmd/deneb/turndown_test.go cmd/deneb/turndown_test.go
+--- cmd/deneb/turndown_test.go	1970-01-01 07:30:00
++++ cmd/deneb/turndown_test.go	2026-11-08 17:29:31
+@@ -0,0 +1,92 @@
++package main
++
++import (
++	"context"
++	"slices"
++	"testing"
++	"time"
++
++	"github.com/egoist/mygo/ui"
++	"github.com/kittors/deneb/client"
++	"github.com/kittors/deneb/client/model"
++)
++
++// waitStore is a step store whose ops come back a version ahead of its
++// world, as a server's do: what the view sends stays laid over the world
++// until the test sets the world that has it.
++type waitStore struct{ stepStore }
++
++func (s *waitStore) Do(context.Context, model.Op) (model.Result, error) {
++	return model.Result{Version: s.s.Version + 1}, nil
++}
++
++// My device brought into a LAN whose owner lets new devices in waits for
++// them from the first frame (DESIGN §6.7), and the toast says so, never
++// that it is in. Turned away, the toast says that too, and it goes back to
++// the tray as it waited, dashed. (The M2 acceptance in real mode, item 13.)
++func TestMyDeviceWaitsAndIsTurnedAway(t *testing.T) {
++	s0 := *client.NewDemo().Snapshot()
++	books := &model.LAN{ID: "books", Name: "读书会", Owner: "leo", Members: []model.PersonID{"leo", s0.Me},
++		Devices: []model.DeviceID{s0.Self}, ApproveDevices: true, Services: map[model.DeviceID][]model.Service{}}
++	s0.LANs = append(slices.Clone(s0.LANs), books)
++	st := &waitStore{stepStore{fixedStore: fixedStore{&s0}}}
++	a := newApp(st, demoPlaces())
++	tt := ui.NewTester(a.view, 1180, 740)
++	frames := func(d time.Duration) {
++		for end := tt.Now().Add(d); tt.Now().Before(end); {
++			tt.Advance(16 * time.Millisecond)
++			tt.Frame()
++		}
++	}
++	tt.Frame()
++	frames(800 * time.Millisecond)
++	if err := tt.Click("读书会"); err != nil {
++		t.Fatal(err)
++	}
++	frames(800 * time.Millisecond)
++	home, ok := a.slots["mynas"]
++	if !ok {
++		t.Fatalf("我的 NAS is not in 读书会's tray: %q", tt.Texts())
++	}
++	drag(tt, ui.Point{X: a.origin.X + home.X, Y: a.origin.Y + home.Y}, ui.Point{X: a.origin.X + 520, Y: a.origin.Y + 300})
++	tt.Frame()
++	if d := a.device("mynas"); d == nil || !d.pending {
++		t.Fatal("我的 NAS does not wait for Leo as it lands")
++	}
++	if !tt.HasText("我的 NAS 等 Leo 同意") || tt.HasText("已把我的 NAS加进局域网") {
++		t.Errorf("the toast: %q", tt.Texts())
++	}
++	frames(time.Second)
++	if d := a.device("mynas"); d == nil || !d.pending || a.status(d) != "等 Leo 同意" {
++		t.Fatalf("我的 NAS on the canvas: %+v", d)
++	}
++
++	// The server has it waiting, and then Leo turns it away.
++	s1 := s0
++	s1.LANs = slices.Clone(s0.LANs)
++	waiting := *books
++	waiting.Pending = []model.DeviceID{"mynas"}
++	s1.LANs[len(s1.LANs)-1] = &waiting
++	s1.Version = s0.Version + 1
++	st.set(&s1)
++	frames(500 * time.Millisecond)
++	s2 := s0
++	s2.Version = s0.Version + 2
++	st.set(&s2)
++	tt.Frame()
++	if !tt.HasText("Leo 没有同意我的 NAS 加入「读书会」") {
++		t.Errorf("no word that Leo turned it away: %q", tt.Texts())
++	}
++	d := a.device("mynas")
++	if d == nil || !d.turnedDown || a.landing != d {
++		t.Fatalf("我的 NAS is not on its way back to the tray, dashed: %+v", d)
++	}
++	frames(120 * time.Millisecond)
++	if d := a.device("mynas"); d != nil && !d.turnedDown {
++		t.Error("it went solid on its way back")
++	}
++	frames(1500 * time.Millisecond)
++	if a.device("mynas") != nil || !slices.ContainsFunc(a.tray, func(x *device) bool { return x.id == "mynas" }) {
++		t.Error("我的 NAS is not back in the tray")
++	}
++}
+diff -ruN a/client/model/op.go b/client/model/op.go
+--- client/model/op.go	2026-11-08 14:01:59
++++ client/model/op.go	2026-11-08 17:26:03
+@@ -82,10 +82,17 @@
+ 	switch op.Kind {
+ 	case OpLANAddDevice:
+ 		l := s.LAN(op.LAN)
+-		if l == nil || l.Has(op.Device) {
++		if l == nil || l.Has(op.Device) || l.HasPending(op.Device) {
+ 			return s
+ 		}
+ 		n, nl := s.withLAN(op.LAN)
++		if d := s.Devices[op.Device]; l.Waiting || l.ApproveDevices && d != nil && d.Owner != l.Owner {
++			// Brought in by someone but the owner, where the owner lets new
++			// devices in, or by one who waits to be let in: it waits, as
++			// the server will have it, rather than show in and then not.
++			nl.Pending = append(slices.Clone(l.Pending), op.Device)
++			return n
++		}
+ 		nl.Devices = append(slices.Clone(l.Devices), op.Device)
+ 		// It brings what it opens to this LAN: what it opened here before,
+ 		// or what it has set up.
+diff -ruN a/client/model/op_test.go b/client/model/op_test.go
+--- client/model/op_test.go	2026-11-08 13:05:47
++++ client/model/op_test.go	2026-11-08 17:27:50
+@@ -221,3 +221,36 @@
+ 		}
+ 	}
+ }
++
++// A device brought into a LAN whose owner lets new devices in waits for the
++// owner, as the server has it, unless it is the owner's own; one brought in
++// by someone who waits to be let in waits too.
++func TestAddDeviceWaitsForTheOwner(t *testing.T) {
++	s := &Snapshot{Me: "me", Devices: map[DeviceID]*Device{
++		"mine": {ID: "mine", Owner: "me"}, "leos": {ID: "leos", Owner: "leo"},
++	}, LANs: []*LAN{
++		{ID: "books", Owner: "leo", ApproveDevices: true, Services: map[DeviceID][]Service{}},
++		{ID: "open", Owner: "leo", Services: map[DeviceID][]Service{}},
++		{ID: "waits", Owner: "leo", Waiting: true, Services: map[DeviceID][]Service{}},
++	}}
++	add := func(lan LANID, dev DeviceID) *LAN {
++		return s.With(Op{Kind: OpLANAddDevice, LAN: lan, Device: dev}).LAN(lan)
++	}
++	if l := add("books", "mine"); !l.HasPending("mine") || l.Has("mine") {
++		t.Errorf("mine into Leo's books: devices %v, waiting %v", l.Devices, l.Pending)
++	}
++	if l := add("books", "leos"); !l.Has("leos") || l.HasPending("leos") {
++		t.Errorf("Leo's own into his books: devices %v, waiting %v", l.Devices, l.Pending)
++	}
++	if l := add("open", "mine"); !l.Has("mine") {
++		t.Errorf("mine into a LAN that lets anything in: devices %v, waiting %v", l.Devices, l.Pending)
++	}
++	if l := add("waits", "mine"); !l.HasPending("mine") {
++		t.Errorf("mine into a LAN I wait for: devices %v, waiting %v", l.Devices, l.Pending)
++	}
++	// Asked once, asking again changes nothing.
++	n := s.With(Op{Kind: OpLANAddDevice, LAN: "books", Device: "mine"})
++	if again := n.With(Op{Kind: OpLANAddDevice, LAN: "books", Device: "mine"}); len(again.LAN("books").Pending) != 1 {
++		t.Errorf("asked twice: waiting %v", again.LAN("books").Pending)
++	}
++}

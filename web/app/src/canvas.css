@@ -1,0 +1,413 @@
+/* The app's own look on top of the design's (a-v3.css): the frame filling
+   the page, scene 4's console (as design/demos/04-device-share.html), the
+   dashed "this computer", the download card and the relays page (as
+   design/demos/web). Colors come from tokens.css, generated from cmd/deneb. */
+
+body {
+  background: var(--bg);
+}
+:root,
+[data-theme='light'],
+[data-theme='dark'] {
+  --ball-1: var(--ball-hi);
+  --ball-2: var(--ball-mid);
+  --ball-3: var(--ball-lo);
+}
+/* The frame fills the page; the sidebar's contents sit where the desktop's
+   do (measured against cmd/deneb's frames, design/plan/m3/web.md §6). */
+.win.full {
+  position: fixed;
+  inset: 0;
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  box-shadow: none;
+}
+.win.full .side .lights {
+  display: none;
+}
+.win.full .side .brand {
+  margin: 12px 8px 15px;
+}
+.win.full .side .gap {
+  height: 11px;
+}
+.win.full .nav {
+  cursor: pointer;
+}
+.sub .dot[data-tone='none'] {
+  display: none;
+}
+.win.full .canvas .well-card {
+  top: 24px;
+}
+
+/* ---- Scene 4's console ---- */
+.well-card {
+  position: absolute;
+  top: 100px;
+  border-radius: 20px;
+  background: var(--well);
+  padding: 14px 14px 16px;
+}
+.well-card .card-label {
+  display: flex;
+  justify-content: space-between;
+  margin: 0 4px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-3);
+}
+.devs {
+  left: 28px;
+  width: 344px;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  row-gap: 10px;
+}
+.cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 0 4px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: grab;
+  user-select: none;
+  transition: opacity 0.2s ease-out;
+}
+.cell .dev-s {
+  position: relative;
+  width: 60px;
+  height: 60px;
+}
+.cell:hover .tile {
+  transform: translateY(-2px);
+}
+.cell:active .tile {
+  transform: scale(0.97);
+}
+/* A picked-up cell or row leaves its place empty (the list makes
+   room for it), never a faded copy of itself (DESIGN.md §6.1). */
+.cell.ghost {
+  visibility: hidden;
+}
+.members {
+  left: 388px;
+  width: 264px;
+}
+.mrows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.mrow {
+  border-radius: 14px;
+  background: var(--bg);
+  box-shadow: var(--shadow-sm);
+  cursor: grab;
+  transition: box-shadow 0.16s ease-out, opacity 0.2s ease-out;
+}
+.mrow.target {
+  box-shadow: 0 0 0 2px var(--primary), var(--shadow-sm);
+}
+.mtop {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 52px;
+  padding: 0 12px 0 10px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.mtop .cnt {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink-2);
+}
+/* The count rolls: the old number leaves upward, the new comes in. */
+.num {
+  position: relative;
+  display: inline-block;
+  height: 16px;
+  min-width: 7px;
+  overflow: hidden;
+  line-height: 16px;
+  text-align: right;
+}
+.num i {
+  display: block;
+  font-style: normal;
+}
+.mtop > svg {
+  color: var(--ink-3);
+  transition: transform 0.25s ease-out;
+}
+.mrow.open .mtop > svg {
+  transform: rotate(90deg);
+}
+.mchips {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 6px;
+  height: 0;
+  overflow: hidden;
+  padding: 0 10px;
+  transition: height 0.32s cubic-bezier(0.25, 0.4, 0.2, 1);
+}
+.mchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 4px 0 4px;
+  border-radius: 999px;
+  background: var(--well);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.mchip .tile-xs {
+  position: relative;
+  width: 22px;
+  height: 22px;
+}
+.mchip .tile {
+  border-radius: 7px;
+}
+.mchip .tile::before {
+  left: 3px;
+  top: 2px;
+  width: 12px;
+  height: 6px;
+}
+.mchip .x {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.mchip .x:hover {
+  background: var(--well-2);
+  color: var(--ink);
+}
+.empty-note {
+  font-size: 12px;
+  color: var(--ink-3);
+  line-height: 30px;
+  padding-left: 4px;
+}
+.mrow:active {
+  transform: scale(0.985);
+}
+.mrow.ghost {
+  visibility: hidden;
+}
+.cell.target .tile {
+  box-shadow: 0 0 0 4px var(--well), 0 0 0 6px var(--primary), inset 0 1px 0.5px rgba(255, 255, 255, 0.45), 0 8px 18px color-mix(in srgb, var(--c) 30%, transparent);
+}
+/* A member being dragged: the person, as a small lifted pill. */
+.mpill {
+  position: absolute;
+  z-index: 30;
+  transform: translate(-50%, -50%) rotate(-2deg);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 14px 0 4px;
+  border-radius: 999px;
+  background: var(--bg);
+  box-shadow: var(--shadow-md), 0 0 0 1px var(--line);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+}
+/* "Already has it", said in the row itself, where the count was. */
+.mtop .note {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.mtop .note + .cnt {
+  display: none;
+}
+
+/* ---- "This computer", not in yet (§14.4): a dashed tile, as a device
+   waiting for approval is drawn (§6.7). ---- */
+.dev.pending .tile {
+  background: none;
+  box-shadow: none;
+}
+.dev.pending .tile::before {
+  display: none;
+}
+.dev.pending .tile svg {
+  fill: color-mix(in srgb, var(--c) 55%, transparent);
+  filter: none;
+}
+.dev.pending .tile svg.dash {
+  position: absolute;
+  inset: 0;
+  fill: none;
+  color: var(--c);
+}
+.dev.pending:hover .tile {
+  box-shadow: none;
+}
+.dev.pending.sel .tile {
+  box-shadow: 0 0 0 4px var(--bg), 0 0 0 6px var(--primary);
+}
+.dev.pending .name small {
+  color: var(--ink-2);
+}
+/* Offline: the desktop's grey (offlineGrey in cmd/deneb/model.go), its
+   glyph faint (§3.4). */
+.dev.off .tile {
+  --c: var(--offline-grey) !important;
+}
+
+/* ---- The download card (§14.7), in the device card's place ---- */
+.dl-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.dl-mark {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--primary) 82%, #fff), color-mix(in srgb, var(--primary) 92%, #000));
+  box-shadow: 0 6px 14px color-mix(in srgb, var(--primary) 30%, transparent), 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+.dl-text {
+  margin: 14px 2px 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+.dl-btn {
+  width: 100%;
+  justify-content: center;
+  margin-top: 16px;
+}
+.dl-more {
+  display: block;
+  margin: 10px auto 0;
+  border: 0;
+  background: none;
+  font-size: 12px;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.dl-after {
+  margin: 14px 2px 0;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: var(--well);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+
+/* The others I know, under the members (a device for them alone). */
+.members .out-label {
+  margin-top: 14px;
+}
+.mrow.full .mtop {
+  box-shadow: inset 0 0 0 1.5px var(--line-2);
+}
+
+/* ---- Narrow screens (§14.6): the console and the relays page stack their
+   wells; the sidebar steps aside (the LAN itself is the phone's list). ---- */
+@media (max-width: 767px) {
+  .win.full .side {
+    display: none;
+  }
+  .win.full .main,
+  .win.full .drag-layer {
+    left: 0;
+  }
+  .win.full .head {
+    left: 16px;
+    right: 16px;
+  }
+  .win.full .canvas {
+    overflow-y: auto;
+  }
+  .win.full .canvas .well-card,
+  .win.full .canvas .rwell {
+    position: relative;
+    top: auto;
+    left: auto;
+    width: auto;
+    margin: 16px 16px 0;
+  }
+  .win.full .canvas .share-page,
+  .win.full .canvas .relays-page {
+    padding-bottom: 120px;
+  }
+}
+
+/* ---- 我的设备 and 共享给我 (DESIGN.md §14.11) ---------------------------------------- */
+/* A device's LANs in its card: one it is in has the LAN's dots, as the
+   sidebar's row; one it is not in is dashed, with a "+". */
+.sheet .lan-chips .chip {
+  padding: 0 12px 0 10px;
+  gap: 7px;
+}
+.sheet .lan-chips .dots {
+  display: flex;
+  flex: none;
+  padding-right: 4px;
+}
+.sheet .lan-chips .dots .ball {
+  width: 10px;
+  height: 10px;
+  margin-right: -4px;
+  box-shadow: 0 0 0 1.5px var(--well);
+}
+.sheet .lan-chips .chip.lan-add {
+  background: transparent;
+  color: var(--ink-3);
+  border: 1.5px dashed color-mix(in srgb, var(--ink) 22%, transparent);
+  padding: 0 12px 0 8px;
+}
+.sheet .lan-chips .chip.lan-add:hover {
+  color: var(--ink);
+}
+/* Whom it is shared with: the console's chips, open. */
+.sheet .mchips.open {
+  height: auto;
+  overflow: visible;
+  padding: 0;
+}
+.sheet .mchip .ball {
+  width: 22px;
+  height: 22px;
+  font-size: 10px;
+}
+.sheet .hint.one-way {
+  margin-top: 10px;
+}

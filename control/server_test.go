@@ -59,7 +59,8 @@ type engine struct {
 	id    proto.DeviceID
 	host  string
 	os    proto.OS
-	n     int // op ids
+	caps  []string // claimed at login
+	n     int      // op ids
 }
 
 func newEngine(t *testing.T, url, host string, os proto.OS) *engine {
@@ -119,7 +120,7 @@ func (e *engine) auth() {
 }
 
 func (e *engine) loginRequest() proto.LoginRequest {
-	return proto.LoginRequest{NodeKey: e.nk, DiscoKey: e.dk, Hostname: e.host, OS: e.os, EngineVersion: "test"}
+	return proto.LoginRequest{NodeKey: e.nk, DiscoKey: e.dk, Hostname: e.host, OS: e.os, EngineVersion: "test", Caps: e.caps}
 }
 
 // login logs the engine in as email the way the command line would: ask,
@@ -303,6 +304,10 @@ func TestM1Topology(t *testing.T) {
 	if pre.LANName != "周末联机" || pre.Inviter.DisplayName != "阿杰" || pre.Inviter.Email != "" || pre.State != proto.InvitePending || pre.AlreadyIn {
 		t.Fatalf("invite preview: %+v", pre)
 	}
+	// Who is in, and how many devices: for the card's balls.
+	if len(pre.Members) != 1 || pre.Members[0].DisplayName != "阿杰" || pre.Members[0].Email != "" || pre.Devices != 2 {
+		t.Fatalf("invite preview's LAN: %d members %+v, %d devices", len(pre.Members), pre.Members, pre.Devices)
+	}
 	token, _ := proto.ParseInvite(inv.URL)
 	if got := mac.must(proto.OpInviteAccept, proto.OpArgs{Invite: proto.JoinLink(token)}); got.Result.LAN != weekend {
 		t.Fatalf("accept answered %+v", got)
@@ -363,7 +368,7 @@ func TestM1Topology(t *testing.T) {
 	if dv := deviceView(kv, build.id); dv == nil || !slices.Equal(dv.LANs, []proto.LANID{studio}) {
 		t.Errorf("my build server: %+v", dv)
 	}
-	if kv.Seats.Used != 1 || jv.Seats.Used != 2 || jv.Seats.Limit != 6 || jv.Seats.Enforced {
+	if kv.Seats.Used != 1 || jv.Seats.Used != 2 || jv.Seats.Limit != 6 || !jv.Seats.Enforced {
 		t.Errorf("seats: mine %+v, 阿杰's %+v", kv.Seats, jv.Seats)
 	}
 
@@ -455,8 +460,10 @@ func TestM1Topology(t *testing.T) {
 	// its own map says it paused.
 	weekendScope := proto.LANScope(weekend)
 	jnas.report(proto.Report{Endpoints: []netip.AddrPort{netip.MustParseAddrPort("198.51.100.4:41703")}, Paused: []proto.ScopeID{weekendScope, "lan/nope"}})
-	if peerOf(netMapOf(s, mac.id), jnas.id) != nil {
-		t.Error("the Mac still sees the paused NAS")
+	// The paused NAS stays in the Mac's map, its scope moved to
+	// PausedScopes, so the pause lifts without waiting on the server.
+	if p := peerOf(netMapOf(s, mac.id), jnas.id); p == nil || len(p.Scopes) != 0 || !slices.Equal(p.PausedScopes, []proto.ScopeID{weekendScope}) {
+		t.Errorf("the Mac sees the paused NAS as %+v", p)
 	}
 	nasMap := netMapOf(s, jnas.id)
 	if peerOf(nasMap, mac.id) == nil || !nasMap.Scopes[0].Paused {

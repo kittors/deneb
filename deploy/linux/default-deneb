@@ -1,0 +1,19 @@
+# Deneb engine settings, read by denebd.service. After a change:
+#   sudo systemctl restart denebd
+#
+# kernel: a tun interface (deneb0), a /32 route per peer, and
+#   systemd-resolved for deneb.internal, so ordinary programs reach peers
+#   by name. Without systemd-resolved the engine runs in userspace instead.
+# userspace: no interface; programs reach peers through SOCKS5 on
+#   127.0.0.1:41080.
+DENEB_MODE=kernel
+
+# The control server for the first login, and its key pin. Without them
+# the engine uses Deneb's own; set both for a server of your own.
+#DENEB_CONTROL=https://control.example:47443
+#DENEB_CONTROL_PIN=sha256:...
+
+# More `denebd run` flags. The desktop user allowed on the engine is the
+# one who installed the package (/var/lib/deneb/desktop-user.env); another:
+#   DENEB_FLAGS="-allow-uid 1001"
+DENEB_FLAGS=""

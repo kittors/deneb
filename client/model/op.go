@@ -1,6 +1,9 @@
 package model
 
-import "slices"
+import (
+	"slices"
+	"time"
+)
 
 // OpKind names an operation (implementation.md §2.6.2). The strings are the
 // control server's.
@@ -16,6 +19,27 @@ const (
 	OpLANRemoveDevice OpKind = "lan.removeDevice" // LAN, Device
 	OpServiceSet      OpKind = "service.set"      // LAN, Device, Service, On
 	OpDeviceRefuse    OpKind = "device.refuse"    // Device, Person, Refuse
+
+	// M2 (DESIGN §6.7–§6.9). lan.invite also takes a Person, inviting them
+	// by name; invite.accept and invite.decline take an Invitation instead
+	// of a link.
+	OpLANSetApproveDevices OpKind = "lan.setApproveDevices" // LAN, On
+	OpLANSetApproveMembers OpKind = "lan.setApproveMembers" // LAN, On
+	OpDeviceApprove        OpKind = "device.approve"        // LAN, Device
+	OpDeviceReject         OpKind = "device.reject"         // LAN, Device
+	OpMemberApprove        OpKind = "member.approve"        // LAN, Person
+	OpMemberReject         OpKind = "member.reject"         // LAN, Person
+	OpInviteRevoke         OpKind = "invite.revoke"         // Invite (an Invited's id), or LAN and Person
+	OpDeviceRenew          OpKind = "device.renew"          // Device
+	OpDeviceRename         OpKind = "device.rename"         // Device, Name
+	OpDeviceSetKind        OpKind = "device.setKind"        // Device, DevKind
+	// OpLANAddRelay is the reason's "加一个中转站": the LAN's devices that
+	// nothing reaches go through a relay. The demo plays it; the real one
+	// comes with relays in M4.
+	OpLANAddRelay OpKind = "lan.addRelay" // LAN
+	// OpLANPause pauses the LAN on this computer (On), or resumes it (off).
+	// The engine does it, not the server.
+	OpLANPause OpKind = "lan.pause" // LAN, On
 )
 
 // Op is one thing the person asks for: what a drag or a click turns into.
@@ -32,8 +56,11 @@ type Op struct {
 	Name    string
 	Invite  string // the link, or its token
 	Service string // the service's Key
-	On      bool   // service.set: open it, or close it
+	On      bool   // service.set: open it, or close it; the approve switches
 	Refuse  bool   // device.refuse: refuse them, or let them back
+
+	DevKind    string // device.setKind
+	Invitation string // invite.accept, invite.decline: an Invitation's ID
 }
 
 // Result is what an op that went through answers.
@@ -55,10 +82,17 @@ func (s *Snapshot) With(op Op) *Snapshot {
 	switch op.Kind {
 	case OpLANAddDevice:
 		l := s.LAN(op.LAN)
-		if l == nil || l.Has(op.Device) {
+		if l == nil || l.Has(op.Device) || l.HasPending(op.Device) {
 			return s
 		}
 		n, nl := s.withLAN(op.LAN)
+		if d := s.Devices[op.Device]; l.Waiting || l.ApproveDevices && d != nil && d.Owner != l.Owner {
+			// Brought in by someone but the owner, where the owner lets new
+			// devices in, or by one who waits to be let in: it waits, as
+			// the server will have it, rather than show in and then not.
+			nl.Pending = append(slices.Clone(l.Pending), op.Device)
+			return n
+		}
 		nl.Devices = append(slices.Clone(l.Devices), op.Device)
 		// It brings what it opens to this LAN: what it opened here before,
 		// or what it has set up.
@@ -70,6 +104,12 @@ func (s *Snapshot) With(op Op) *Snapshot {
 		return n
 	case OpLANRemoveDevice:
 		l := s.LAN(op.LAN)
+		if l != nil && l.HasPending(op.Device) {
+			// Mine, taken back while it waited to be let in.
+			n, nl := s.withLAN(op.LAN)
+			nl.Pending = slices.DeleteFunc(slices.Clone(l.Pending), func(d DeviceID) bool { return d == op.Device })
+			return n
+		}
 		if l == nil || !l.Has(op.Device) {
 			return s
 		}
@@ -127,6 +167,119 @@ func (s *Snapshot) With(op Op) *Snapshot {
 		}
 		n, nl := s.withLAN(op.LAN)
 		nl.Name = op.Name
+		return n
+	case OpLANPause:
+		l := s.LAN(op.LAN)
+		if l == nil || l.Paused == op.On {
+			return s
+		}
+		n, nl := s.withLAN(op.LAN)
+		nl.Paused = op.On
+		return n
+	case OpLANSetApproveDevices, OpLANSetApproveMembers:
+		l := s.LAN(op.LAN)
+		if l == nil {
+			return s
+		}
+		devices := op.Kind == OpLANSetApproveDevices
+		if devices && l.ApproveDevices == op.On || !devices && l.ApproveMembers == op.On {
+			return s
+		}
+		n, nl := s.withLAN(op.LAN)
+		if devices {
+			nl.ApproveDevices = op.On
+		} else {
+			nl.ApproveMembers = op.On
+		}
+		return n
+	case OpDeviceApprove, OpDeviceReject:
+		l := s.LAN(op.LAN)
+		if l == nil || !l.HasPending(op.Device) {
+			return s
+		}
+		n, nl := s.withLAN(op.LAN)
+		nl.Pending = slices.DeleteFunc(slices.Clone(l.Pending), func(d DeviceID) bool { return d == op.Device })
+		if op.Kind == OpDeviceApprove {
+			nl.Devices = append(slices.Clone(l.Devices), op.Device)
+			if _, ok := l.Services[op.Device]; !ok {
+				if d := s.Devices[op.Device]; d != nil {
+					nl.Services[op.Device] = slices.Clone(d.Catalog)
+				}
+			}
+		}
+		return n
+	case OpMemberApprove, OpMemberReject:
+		l := s.LAN(op.LAN)
+		if l == nil || !slices.Contains(l.PendingMembers, op.Person) {
+			return s
+		}
+		n, nl := s.withLAN(op.LAN)
+		nl.PendingMembers = slices.DeleteFunc(slices.Clone(l.PendingMembers), func(p PersonID) bool { return p == op.Person })
+		if op.Kind == OpMemberApprove {
+			nl.Members = append(slices.Clone(l.Members), op.Person)
+		}
+		return n
+	case OpLANInvite:
+		// By name: they wait for their answer in the LAN's ball stack. By
+		// link, nothing shows until someone uses it.
+		l := s.LAN(op.LAN)
+		if l == nil || op.Person == "" || slices.Contains(l.Members, op.Person) ||
+			slices.ContainsFunc(l.Invited, func(v Invited) bool { return v.Person == op.Person }) {
+			return s
+		}
+		n, nl := s.withLAN(op.LAN)
+		nl.Invited = append(slices.Clone(l.Invited), Invited{Person: op.Person, By: s.Me})
+		return n
+	case OpInviteRevoke:
+		for _, l := range s.LANs {
+			i := slices.IndexFunc(l.Invited, func(v Invited) bool {
+				return op.Invite != "" && v.Invite == op.Invite || op.Invite == "" && l.ID == op.LAN && v.Person == op.Person
+			})
+			if i < 0 {
+				continue
+			}
+			n, nl := s.withLAN(l.ID)
+			nl.Invited = slices.Delete(slices.Clone(l.Invited), i, i+1)
+			return n
+		}
+		return s
+	case OpInviteAccept, OpInviteDecline:
+		// The LAN an accepted invitation brings comes with the store: only
+		// the invitation goes at once.
+		i := slices.IndexFunc(s.Invitations, func(v Invitation) bool { return op.Invitation != "" && v.ID == op.Invitation })
+		if i < 0 {
+			return s
+		}
+		n := s.clone()
+		n.Invitations = slices.Delete(slices.Clone(s.Invitations), i, i+1)
+		return n
+	case OpDeviceRenew, OpDeviceRename, OpDeviceSetKind:
+		d := s.Devices[op.Device]
+		if d == nil {
+			return s
+		}
+		nd := *d
+		switch op.Kind {
+		case OpDeviceRenew:
+			// The new dates come with the store; until then it no longer asks.
+			if !d.Login.Due(time.Now()) {
+				return s
+			}
+			nd.Login = Login{Expires: d.Login.Expires}
+		case OpDeviceRename:
+			if op.Name == "" || d.Name == op.Name {
+				return s
+			}
+			nd.Name = op.Name
+		case OpDeviceSetKind:
+			if op.DevKind == "" || d.Kind == op.DevKind {
+				return s
+			}
+			nd.Kind = op.DevKind
+		}
+		n := s.clone()
+		n.Devices = cloneMap(s.Devices)
+		n.Devices[op.Device] = &nd
 		return n
 	}
 	return s

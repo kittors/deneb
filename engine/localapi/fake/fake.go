@@ -12,9 +12,11 @@
 package fake
 
 import (
+	"archive/zip"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"net"
 	"net/http"
@@ -249,6 +251,24 @@ func (e *Engine) Simulate(ctx context.Context) {
 type backend struct{ e *Engine }
 
 func (b backend) EngineVersion() string { return "fake" }
+
+func (b backend) Shutdown(ctx context.Context) error { return nil }
+
+func (b backend) UpdateEngine(ctx context.Context, path string) apitype.UpdateResult {
+	return apitype.UpdateResult{Result: apitype.UpdateNotService, Message: "假引擎不是系统服务"}
+}
+
+// Diagnostics: a zip with one note, for the window's export to have
+// something to save.
+func (b backend) Diagnostics(ctx context.Context, w io.Writer) error {
+	z := zip.NewWriter(w)
+	f, err := z.Create("README.txt")
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(f, "Deneb 假引擎的诊断包（%s）：真引擎在这里放状态、路径、计数和日志。\n", time.Now().Format(time.RFC3339))
+	return z.Close()
+}
 
 func (b backend) State() *apitype.State { return b.e.Snapshot() }
 
@@ -490,6 +510,11 @@ func (b backend) PreviewInvite(ctx context.Context, invite string) (json.RawMess
 		return nil, aerr
 	}
 	return raw, nil
+}
+
+// RelayUsage: the fake world's relays carried nothing this month.
+func (b backend) RelayUsage(ctx context.Context) (json.RawMessage, error) {
+	return json.RawMessage(`{"month":"","relays":[]}`), nil
 }
 
 func (b backend) UserView(ctx context.Context) (json.RawMessage, error) {

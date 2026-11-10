@@ -1,0 +1,31 @@
+--- cmd/deneb/realwatch_test.go
++++ cmd/deneb/realwatch_test.go
+@@ -11,6 +11,7 @@
+ 	"sync"
+ 	"time"
+ 
++	"github.com/egoist/mygo/ui"
+ 	"github.com/kittors/deneb/engine/localapi/apitype"
+ )
+ 
+@@ -143,9 +144,18 @@
+ 			jump := fmt.Sprintf("%s 起 %s（睡眠，或进程被冻住）", last.Format("15:04:05.000"), gap.Round(time.Millisecond))
+ 			jumps = append(jumps, jump)
+ 			logAt(now, "墙上时钟跳了：%s", jump)
++			// A tester plays every frame of the time it is moved on, one by
++			// one: ten minutes of a sleep took it half a minute, the log
++			// standing still meanwhile (the test Mac, 20:30). A new one
++			// starts at the wall clock, as a window's next frame after a
++			// sleep is simply the next one.
++			r.tt = ui.NewTester(r.a.view, 1180, 740)
++			r.tt.SetDark(os.Getenv("DENEB_DARK") != "")
++			r.tt.SetScale(0.5)
++		} else {
++			// The view's clock goes with the wall clock.
++			r.tt.Advance(max(now.Sub(last), 0))
+ 		}
+-		// The view's clock goes with the wall clock, across a sleep too.
+-		r.tt.Advance(max(now.Sub(last), 0))
+ 		r.tt.Frame()
+ 		last = now
+ 		for _, d := range r.a.devices {

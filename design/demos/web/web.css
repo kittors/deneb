@@ -1,0 +1,588 @@
+/* The web version (DESIGN.md §14), on top of v3.css and the desktop's
+   tokens (web/tokens.css, generated from cmd/deneb). Only what the web adds:
+   the browser around the page, the invite page and its login, the dashed
+   "this computer", the download card, and the phone. */
+
+/* The palette's names in v3.css, taken from the desktop's tokens. */
+:root,
+[data-theme='light'],
+[data-theme='dark'] {
+  --ball-1: var(--ball-hi);
+  --ball-2: var(--ball-mid);
+  --ball-3: var(--ball-lo);
+}
+
+/* ---- The browser around the page ---- */
+.browser {
+  position: absolute;
+  width: 1180px;
+  height: 786px;
+  border-radius: 14px;
+  background: var(--bg);
+  box-shadow: var(--win-shadow);
+  overflow: hidden;
+}
+.b-bar {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 46px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+  z-index: 60;
+}
+.b-bar .lights {
+  padding: 0;
+}
+.url {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 300px;
+  height: 28px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 999px;
+  background: var(--well);
+  font-size: 12px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.url svg {
+  color: var(--ink-3);
+}
+/* The app's window, as a page in the browser: no window buttons, no
+   corners of its own; the sidebar's contents sit where the desktop's do. */
+.browser .win {
+  top: 46px;
+  left: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.browser .side .lights {
+  display: none;
+}
+/* Measured against the desktop's frames: the mark's middle 37px down, the
+   first group's label 74px (cmd/deneb draws no window buttons of its own). */
+.browser .side .brand {
+  margin: 12px 8px 15px;
+}
+.browser .side .gap {
+  height: 11px;
+}
+.browser .page {
+  position: absolute;
+  inset: 46px 0 0 0;
+}
+
+/* ---- The invite page (§14.5) ---- */
+.page-join {
+  background: var(--well);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+}
+.page-join .brand {
+  position: absolute;
+  left: 28px;
+  top: 22px;
+  margin: 0;
+}
+.join-card {
+  position: relative;
+  width: 440px;
+  border-radius: 20px;
+  background: var(--bg);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+.jc-in {
+  padding: 22px 22px 20px;
+}
+.jc-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.jc-head .ball {
+  width: 44px;
+  height: 44px;
+  font-size: 17px;
+  flex: none;
+}
+.jc-title {
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.jc-sub {
+  margin-top: 3px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.jc-people {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0 0 58px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.jc-people .stack .ball {
+  width: 26px;
+  height: 26px;
+  font-size: 11px;
+}
+.jc-foot {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  margin-top: 20px;
+}
+.jc-foot .hint {
+  margin-right: auto;
+  margin-left: 58px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.join-note {
+  max-width: 440px;
+  font-size: 13px;
+  color: var(--ink-2);
+  text-align: center;
+}
+.field {
+  display: flex;
+  align-items: center;
+  height: 44px;
+  margin: 18px 0 0 58px;
+  padding: 0 14px;
+  border-radius: 12px;
+  background: var(--well);
+  box-shadow: inset 0 0 0 1px transparent;
+  font-size: 15px;
+  color: var(--ink);
+  transition: box-shadow 0.16s ease-out, background-color 0.16s ease-out;
+}
+.field.focus {
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1.5px var(--primary), 0 0 0 4px color-mix(in srgb, var(--primary) 14%, transparent);
+}
+.field .ph {
+  color: var(--ink-3);
+}
+.caret {
+  display: inline-block;
+  width: 1.5px;
+  height: 18px;
+  margin-left: 1px;
+  background: var(--primary);
+  vertical-align: -3px;
+}
+.code-boxes {
+  display: flex;
+  gap: 8px;
+  margin: 18px 0 0 58px;
+}
+.cb {
+  width: 44px;
+  height: 52px;
+  border-radius: 12px;
+  background: var(--well);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px transparent;
+  transition: box-shadow 0.16s ease-out, background-color 0.16s ease-out;
+}
+.cb.at {
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1.5px var(--primary), 0 0 0 4px color-mix(in srgb, var(--primary) 14%, transparent);
+}
+.jc-joined {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 26px 22px 24px;
+}
+.jc-joined .pair {
+  display: flex;
+}
+.jc-joined .pair .ball {
+  width: 48px;
+  height: 48px;
+  font-size: 18px;
+  box-shadow: 0 0 0 3px var(--bg), inset 0 -2px 4px rgba(0, 0, 0, 0.14);
+}
+.jc-joined .pair .ball + .ball {
+  margin-left: -8px;
+}
+.jc-joined .jc-title {
+  text-align: center;
+}
+
+/* ---- "This computer", not in yet (§14.4): a dashed tile, as a device
+   waiting for approval is drawn (§6.7). ---- */
+.dev.pending .tile {
+  background: none;
+  box-shadow: none;
+}
+.dev.pending .tile::before {
+  display: none;
+}
+.dev.pending .tile svg {
+  fill: color-mix(in srgb, var(--c) 55%, transparent);
+  filter: none;
+}
+.dev.pending .tile svg.dash {
+  position: absolute;
+  inset: 0;
+  fill: none;
+  color: var(--c);
+}
+.dev.pending:hover .tile {
+  box-shadow: none;
+}
+.dev.pending.sel .tile {
+  box-shadow: 0 0 0 4px var(--bg), 0 0 0 6px var(--primary);
+}
+.dev.pending .name small {
+  color: var(--ink-2);
+}
+/* Offline: the desktop's grey (offlineGrey in cmd/deneb/model.go), its
+   glyph faint (§3.4). */
+.dev.off .tile {
+  --c: var(--offline-grey) !important;
+}
+
+/* ---- The download card (§14.7), in the device card's place ---- */
+.dl-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.dl-mark {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--primary) 82%, #fff), color-mix(in srgb, var(--primary) 92%, #000));
+  box-shadow: 0 6px 14px color-mix(in srgb, var(--primary) 30%, transparent), 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+.dl-text {
+  margin: 14px 2px 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+.dl-btn {
+  width: 100%;
+  justify-content: center;
+  margin-top: 16px;
+}
+.dl-more {
+  display: block;
+  margin: 10px auto 0;
+  border: 0;
+  background: none;
+  font-size: 12px;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.dl-after {
+  margin: 14px 2px 0;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: var(--well);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+/* ---- The phone (§14.6) ---- */
+.phone {
+  position: absolute;
+  width: 390px;
+  height: 844px;
+  border-radius: 48px;
+  background: var(--well);
+  box-shadow: 0 0 0 10px #1c1c1f, 0 0 0 11px #3a3a40, 0 30px 70px rgba(9, 9, 11, 0.28);
+  overflow: hidden;
+}
+.p-status {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 50px;
+  padding: 18px 30px 0 34px;
+  display: flex;
+  justify-content: space-between;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+  z-index: 30;
+}
+.p-status .p-icons {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.p-island {
+  position: absolute;
+  left: 50%;
+  top: 11px;
+  width: 120px;
+  height: 34px;
+  margin-left: -60px;
+  border-radius: 20px;
+  background: #000;
+  z-index: 31;
+}
+.p-url {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  top: 54px;
+  height: 36px;
+  border-radius: 12px;
+  background: var(--bg);
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--ink-2);
+  z-index: 30;
+}
+.p-url svg {
+  color: var(--ink-3);
+}
+.p-home {
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  width: 134px;
+  height: 5px;
+  margin-left: -67px;
+  border-radius: 3px;
+  background: var(--ink);
+  z-index: 60;
+}
+.phone .page {
+  position: absolute;
+  inset: 98px 0 0 0;
+}
+.phone .page-join {
+  justify-content: flex-start;
+  padding-top: 150px;
+}
+.phone .page-join .brand {
+  left: 22px;
+  top: 14px;
+}
+.phone .join-card {
+  width: 358px;
+}
+.phone .jc-in {
+  padding: 20px 18px 18px;
+}
+.phone .field,
+.phone .code-boxes,
+.phone .jc-people {
+  margin-left: 0;
+}
+.phone .jc-foot .hint {
+  margin-left: 0;
+}
+.phone .code-boxes {
+  justify-content: space-between;
+}
+.phone .join-note {
+  max-width: 300px;
+}
+
+/* The LAN on a phone: a list, by person; a card rises from the bottom. */
+.m-lan {
+  overflow: hidden;
+}
+.m-head {
+  display: flex;
+  align-items: center;
+  padding: 14px 20px 0;
+}
+.m-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 22px;
+  font-weight: 600;
+}
+.m-title svg {
+  color: var(--ink-3);
+  transform: rotate(90deg);
+}
+.m-head .stack {
+  margin-left: auto;
+}
+.m-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 20px 0;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.m-list {
+  position: absolute;
+  inset: 76px 0 0 0;
+  padding: 6px 16px 120px;
+}
+.m-gh {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 4px 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.m-gh .ball {
+  width: 22px;
+  height: 22px;
+  font-size: 10px;
+}
+.m-card {
+  border-radius: 20px;
+  background: var(--bg);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.m-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 66px;
+  padding: 0 16px;
+  cursor: pointer;
+  transition: background 0.16s ease-out;
+}
+.m-row + .m-row::before {
+  content: '';
+  position: absolute;
+  left: 70px;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: var(--line);
+}
+.m-row:active {
+  background: var(--well);
+}
+.m-row .tile-m {
+  position: relative;
+  flex: none;
+  width: 40px;
+  height: 40px;
+}
+.m-row .tile-m .tile {
+  border-radius: 12px;
+}
+.m-row .tile-m .tile::before {
+  left: 6px;
+  top: 3px;
+  width: 20px;
+  height: 9px;
+}
+.m-row b {
+  display: block;
+  font-size: 15px;
+  font-weight: 500;
+}
+.m-row small {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.m-row.pending .tile {
+  background: none;
+  box-shadow: none;
+}
+.m-row.pending .tile::before {
+  display: none;
+}
+.m-row.pending .tile svg {
+  fill: color-mix(in srgb, var(--c) 55%, transparent);
+  filter: none;
+}
+.m-row.pending .tile svg.dash {
+  position: absolute;
+  inset: 0;
+  fill: none;
+  color: var(--c);
+}
+.m-dock {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 30px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 56px;
+  padding: 0 8px 0 18px;
+  border-radius: 999px;
+  background: var(--bg);
+  box-shadow: var(--shadow-md);
+  font-size: 13px;
+  color: var(--ink-2);
+  z-index: 20;
+}
+.m-dock span {
+  flex: 1;
+  line-height: 1.35;
+}
+.m-dock .btn {
+  flex: none;
+  min-width: 104px;
+  justify-content: center;
+}
+.m-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(9, 9, 11, 0.24);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 40;
+}
+.m-scrim.on {
+  pointer-events: auto;
+}
+.phone .sheet.m-sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: auto;
+  bottom: 0;
+  width: auto;
+  max-height: none;
+  border-radius: 20px 20px 0 0;
+  padding-bottom: 34px;
+  z-index: 50;
+}

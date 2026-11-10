@@ -27,7 +27,25 @@ type RelayID string
 // and never parse it to make a decision.
 type ScopeID string
 
-const lanScopePrefix = "lan/"
+// ShareID names a share: one device given to one person (M3).
+type ShareID string
+
+const (
+	lanScopePrefix   = "lan/"
+	shareScopePrefix = "share/"
+)
+
+// ShareScope is the scope of a share.
+func ShareScope(id ShareID) ScopeID { return ScopeID(shareScopePrefix + string(id)) }
+
+// Share reports the share a scope is, if it is one.
+func (s ScopeID) Share() (ShareID, bool) {
+	id, ok := strings.CutPrefix(string(s), shareScopePrefix)
+	if !ok || id == "" {
+		return "", false
+	}
+	return ShareID(id), true
+}
 
 // LANScope is the scope of a LAN.
 func LANScope(id LANID) ScopeID { return ScopeID(lanScopePrefix + string(id)) }

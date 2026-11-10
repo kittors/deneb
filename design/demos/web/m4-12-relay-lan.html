@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>M4-12 · 把中转站拖进局域网 · Deneb</title>
+    <link rel="stylesheet" href="../v3/v3.css" />
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="web.css" />
+    <link rel="stylesheet" href="webrelays.css" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script src="../shared/motion.js"></script>
+    <script src="../shared/demo.js"></script>
+    <script src="../v3/glyphs.js"></script>
+    <script src="../v3/links.js"></script>
+    <script src="../v3/app.js"></script>
+    <script src="web.js"></script>
+    <script src="webrelays.js"></script>
+    <script>
+      // M4-12 (design/plan/m4/web-relays.md): kittors's relays page. A server
+      // just installed, with no name yet (its address on the ball; "我的服务器"
+      // in a sentence), in no LAN. Dragged onto 周末联机 in the sidebar, it is
+      // in (and the share bar comes, half and half); 公司机房 onto 周末联机:
+      // "already uses it"; 公司机房's 工作室 chip dragged out of its cell:
+      // 工作室 no longer uses it, and undo; the public one cannot be moved.
+      const app = new App({ title: '中转站', sub: '', side: WR.USER_SIDE });
+      Web.browser(app, { url: 'deneb.app/relays' });
+      app.win.dataset.k = 'win';
+      app.setTitle('中转站', '直接连不上时，自动经中转站，不用选', 'ok');
+      const MINE = [
+        { id: 'office', name: '公司机房', addr: '198.51.100.4', lans: ['weekend', 'team'], share: 100, users: ['mia', 'jie', 'lin'], devices: 5, up: '已经运行 12 天', busy: '不忙' },
+        { id: 'fresh', name: '', addr: '43.255.122.9', lans: [], share: 0, users: [], devices: 0, up: '刚上线', busy: '不忙' },
+      ];
+      const api = WR.userPage(app, MINE);
+
+      const rest = [600, 660];
+      const weekend = { sel: '.side .nav[data-id="weekend"]', x: 110, y: 18 };
+      window.RECORDING = {
+        title: 'M4-12-把中转站拖进局域网',
+        duration: 15600,
+        actions: [
+          { at: 600, shot: '中转站', clean: true },
+          { at: 900, glide: { sel: '.rcell[data-k="fresh"] .orb' }, dur: 700 },
+          { at: 1800, down: true },
+          { at: 1900, glide: weekend, dur: 1100, arc: 40 },
+          { at: 3200, shot: '松手就用上' },
+          { at: 3400, up: true },
+          { at: 3700, glide: rest, dur: 600 },
+          { at: 4700, shot: '周末联机用上了', clean: true },
+          { at: 5000, glide: { sel: '.rcell[data-k="office"] .orb' }, dur: 700 },
+          { at: 5900, down: true },
+          { at: 6000, glide: weekend, dur: 1000, arc: 30 },
+          { at: 7100, shot: '已经在用了' },
+          { at: 7300, up: true },
+          { at: 7700, glide: { sel: '.rcell[data-k="office"] .lchip[data-l="team"]' }, dur: 700 },
+          { at: 8600, down: true },
+          { at: 8700, glide: [560, 610], dur: 800 },
+          { at: 9600, shot: '拖出来' },
+          { at: 9800, up: true },
+          { at: 10200, glide: { sel: '.toast button' }, dur: 700 },
+          { at: 11100, down: true },
+          { at: 11180, up: true },
+          { at: 11400, glide: rest, dur: 500 },
+          { at: 12200, shot: '撤销', clean: true },
+          { at: 12500, glide: { sel: '.rcell[data-k="pub-hk"] .orb' }, dur: 700 },
+          { at: 13400, down: true },
+          { at: 13500, glide: weekend, dur: 1000, arc: 30 },
+          { at: 14600, shot: '公共的拿不掉' },
+          { at: 14800, up: true },
+        ],
+      };
+      window.__ready = true;
+    </script>
+  </body>
+</html>

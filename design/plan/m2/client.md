@@ -23,17 +23,30 @@
 | 第二批 demo：场景 3 的"全部"视图 | 做完，在工作副本里（见下） |
 | 第二批录帧自查 | 做完：10 段、深浅色各一遍，逐帧看完，找到的 12 处都修了（见下）；单帧检测只剩切到"全部"那一帧，按设计 |
 | 第二批交付 | 2026-11-08 12:08，视频和关键状态截图（2 倍）在 `~/Desktop/Deneb组网demo/`，文件名以 `20261108-1208_M2-` 开头（M2-16 到 M2-25），共 52 个，等用户看 |
-| 第三批 demo：菜单栏面板 | 未开始 |
+| 第一批定稿 | 2026-11-08 用户看过，同意写进客户端；三处取舍按提议定：待同意点一下就同意（提示条撤销兜底）、Clash 提示放标题区胶囊、人名后加空格 |
+| 第一批接真实数据 | 做完，在合并副本 `/tmp/deneb-merge1` 里（见"第一批合进仓库"）。能力判断和控制线定好了（`UserView.features`），内核那一轮也结束了 |
+| 第一批合进仓库 | 2026-11-08 13:03 主会话合进去的（Claude 这边放文件被权限拦下）：两份补丁打在临时副本上、和合并副本逐个文件对过再拷进仓库，vet 干净、测试全过，开发窗口重建一次 1.7 秒。用户亲口回过"看过了，可以" |
+| 第二批定稿 | 2026-11-08 用户看过，同意写进客户端（"看过了，可以"） |
+| 第二批接真实数据 | 做完，在合并副本 `/tmp/deneb-merge2` 里（见"第二批合进仓库"），等主会话放进仓库 |
+| 第三批 DESIGN.md 补稿 | 已写（2026-11-08）：§7.1 下加"菜单栏在客户端里（M2 第三批）"：三种图标、面板的四组内容、要你处理的几种事和按钮、局域网行和开关、打开 Deneb、录帧时的假菜单栏 |
+| 第三批 demo：菜单栏面板 | 做完，在工作副本里（见下） |
+| 第三批录帧自查 | 做完：5 段、深浅色各一遍，逐帧看完，找到的 4 处都修了（见下）；单帧检测干净 |
+| 第三批交付 | 2026-11-08 13:28，在 `~/Desktop/Deneb组网demo/`，文件名以 `20261108-1328_M2-` 开头（M2-26 到 M2-30），共 26 个，等用户看 |
+| 第二批合进仓库 | 2026-11-08 14:0x 主会话合进去的（17 个文件，和 `/tmp/deneb-merge2` 对过一模一样），测试全过，开发窗口重建一次 |
+| 第三批定稿 | 2026-11-08 用户看过，同意写进客户端（"看过了，可以"） |
+| 第三批接真实数据 | 做完，在合并副本 `/tmp/deneb-merge3` 里（见"第三批合进仓库"），等主会话放进仓库 |
 
 ## 代码在哪
 
-在 `/tmp/deneb-m2` 的完整工作副本里，**还没放进仓库**。原因：`cmd/deneb` 和 `client/` 是真实模式和演示模式共用的，放进去以后，开发窗口（真实模式）里点局域网标题、拖人的小球，就会把新操作发给真控制服务器，这就等于"写进真实模式"了，要等用户点头。用户看过、定稿以后，再按真实模式的数据接好（控制线的字段已经加了），一次放回仓库。
+第一、二批已经合进仓库。第三批接好真实数据，在合并副本 `/tmp/deneb-merge3` 里，**还没放进仓库**，等主会话放（`/tmp/deneb-m2` 是第三批做演示时的工作副本）。下面这段是当初没放进去的原因：原因：`cmd/deneb` 和 `client/` 是真实模式和演示模式共用的，放进去以后，开发窗口（真实模式）里点局域网标题、拖人的小球，就会把新操作发给真控制服务器，这就等于"写进真实模式"了，要等用户点头。用户看过、定稿以后，再按真实模式的数据接好（控制线的字段已经加了），一次放回仓库。
 
-代码另存了补丁，免得 `/tmp` 被清掉：`design/plan/m2/client-batch1.patch`（第一批，14 个文件）和 `design/plan/m2/client-batch2.patch`（第二批，14 个文件，打在第一批之上）。在仓库根目录先后 `patch -p0 < design/plan/m2/client-batch1.patch`、`patch -p0 < design/plan/m2/client-batch2.patch`，得到的 `cmd/deneb` 和 `client/` 和工作副本一模一样（已核对）。
+代码另存了补丁，免得 `/tmp` 被清掉，都在 `design/plan/m2/`，按顺序打：`client-batch1.patch` → `client-batch1-real.patch`（这两份已经合进仓库）→ `client-batch2.patch` → `client-batch2-real.patch`（这两份也已合进仓库）→ `client-batch3.patch` → `client-batch3-real.patch`（这两份就是合并副本 `/tmp/deneb-merge3`）。第三批的三个菜单栏图标是图片，补丁带不了，另存在 `client-batch3-trayicons/`（已换成接真实数据时重画的 36 像素版），打完补丁后拷进 `cmd/deneb/trayicons/`（也可以用 `DENEB_TRAY_ICONS=1 go test -run TestTrayIcons ./cmd/deneb` 重画）。每一步打完都和对应的副本逐个文件对过。
+
+跑基线对比（在仓库根目录；基线要写绝对路径，测试在 `cmd/deneb` 目录下跑，相对路径找不到）：`mkdir -p /tmp/frames && DENEB_FRAMES=/tmp/frames DENEB_BASELINE=$PWD/design/plan/m1/client-frames-baseline go test -run 'TestFrames$' ./cmd/deneb`。
 
 自己点着试：`cd /tmp/deneb-m2 && go build -o /tmp/deneb-m2-demo ./cmd/deneb && DENEB_DEMO=1 /tmp/deneb-m2-demo`。这是单独的程序，不是应用包，不注册 `deneb://`，演示模式也不连任何引擎，不碰开发窗口和默认那份状态。
 
-演示里怎么看：`DENEB_DEMO=1` 下，⌥⌘6 到 ⌥⌘0 和几个字母键模拟各种外部事件（6 待同意的设备、7 待同意的人、8 需要重新登录、9 连不上、0 收到邀请、E 别人登录过期、X 我的登录过期、T 同名、O 旧的同名设备、N Clash 提示、U "已连接"计时）。第二批不用快捷键：侧边栏点"全部"、拨局域网那一行的开关、拖设备和区域就行；⌥⌘0 的邀请在"全部"里点"加入"，会多一块区域。录帧：`DENEB_M2=<目录> go test -run TestM2Frames ./cmd/deneb`，只录几段用 `DENEB_M2_ONLY=move,leave`（逗号分隔的场景名）。
+演示里怎么看：`DENEB_DEMO=1` 下，⌥⌘6 到 ⌥⌘0 和几个字母键模拟各种外部事件（6 待同意的设备、7 待同意的人、8 需要重新登录、9 连不上、0 收到邀请、E 别人登录过期、X 我的登录过期、T 同名、O 旧的同名设备、N Clash 提示、U "已连接"计时）。第二批不用快捷键：侧边栏点"全部"、拨局域网那一行的开关、拖设备和区域就行；⌥⌘0 的邀请在"全部"里点"加入"，会多一块区域。第三批：演示程序跑起来，系统菜单栏里会多一颗 Deneb 的星，点它就是面板；⌥⌘6、⌥⌘8 这些事件会让星带上小点，面板里出现"要你处理"。录帧：`DENEB_M2=<目录> go test -run 'TestM2Frames$|TestM2MenuBarFrames' ./cmd/deneb`，只录几段用 `DENEB_M2_ONLY=move,menubar-pause`（逗号分隔的场景名）。
 
 ## 第一批做了什么
 
@@ -85,12 +98,184 @@
 
 逐帧检测（`design/tools/frame-check.py`）：20 段（10 段 × 深浅色）没有单帧闪烁；只剩"全部"切换那一帧的整屏变化，和 M1 切换局域网一样是按设计的瞬切。
 
+## 第三批做了什么（菜单栏面板）
+
+- **图标**（`trayglyph.go`、`trayicons/*.png`）：16 点模板图三种，实心星、带小点的星、空心星，`TestTrayIcons` 画出来（测试器只会画白底，所以按深浅换成透明度）。有事要我处理时带小点；没在跑或全都暂停时是空心。图标跟着存储的快照换，不靠窗口开着。
+- **面板**（`menubar.go`）：宽 320、圆角 20，挂在图标下方。头部是这台电脑和一句总状态；"要你处理"最多 3 行，同意（先在界面上生效，行收起时才发出去，能撤销）、续上、看看（打开主窗口，弹邀请卡或选中那台设备）；"局域网"每行有状态和小开关，点行打开主窗口切过去；底部"打开 Deneb"。几组内容出现和收起都按高度折叠，下面的内容跟着走。
+- **接进程序**（`main.go`，在工作副本里）：`mygo.NewTray` 加图标，`mygo.NewFlyout` 挂面板，单击、右键都开关面板；面板收起时把它扣着没发的同意马上发出去；面板高度跟着内容改。演示模式（`DENEB_DEMO=1`）跑起来就能在真菜单栏里点。
+- **测试**：`TestPanelChores`（哪些事算要我处理、图标三种状态）、`TestPanelApproveAndUndo`（同意的行收起时才发、撤销不发）。录帧用 `TestM2MenuBarFrames`，画面上方是一条假菜单栏，只为看清面板从哪儿弹出来。
+- **还没做的**："共享给我"一组要等 M3 有了分享；系统右键小菜单（退出）先不做。
+
+## 自查找到并修掉的（第三批）
+
+1. "Mia 的 MacBook连不上"：名字以拉丁字母结尾时和后面的中文之间少一个空格。面板的句子改成按词拼，拉丁字母的名字两边自动留空格（`say`）。
+2. 最后一件事做完，"要你处理"整组一下子消失，下面的局域网跳上去：这一组改成按高度折叠收起。
+3. 引擎停了，局域网那一组的影子跑到"打开 Deneb"按钮下面再收起，按钮跳上去：MyGo 退场的元素会排到最后，改成不拿掉、按高度折叠到 0（`fold`）。
+4. 面板变矮时，阴影比面板慢半拍、在下面留一圈框：阴影原来画在外面那层（那层的大小会带动画），改到面板本身上。
+
+另外记下一处没改的：主窗口提示条拼设备名时也有同样的空格问题（比如"已把我的 NAS加进局域网"），是 M1 就有的，改了会动 M1 基线里的几张帧，等主会话定。
+
+## 第一批合进仓库
+
+**什么时候合**：主会话 2026-11-08 通知内核那一轮结束、开发窗口可以随时重建，能力判断做好就合。部署顺序主会话排：服务器 → 测试机引擎 → Mac 引擎 → 客户端。
+
+**合并副本**：`/tmp/deneb-merge1` 是"仓库 + 第一批补丁 + 接真实数据"，不含第二批，`cmd/deneb` 和 `client/` 测试全过（含 M1 基线）、vet 干净。放回仓库时，Claude 这边被权限拦了（会让开发窗口重建），要用户自己放，或者同意让 Claude 放。自己放就在仓库根目录跑这一行，结果和合并副本一模一样（已核对），开发窗口会跟着重建一次：
+
+```
+patch -p0 < design/plan/m2/client-batch1.patch && patch -p0 < design/plan/m2/client-batch1-real.patch
+```
+
+**合进去以后开发窗口里的变化**（Mac 引擎还是 M1，`features` 拿不到，M2 的新控件都不显示）：
+- 我的设备的卡片：点名字就地改名（原名全选），点设备块出一排种类。M1 服务器也认这两个操作。
+- 别人的设备的卡片写"Mia 的设备"（拉丁字母名字前后空一格）。
+- 卡片里状态的那句话下面配一个动作：不在线是"上线时告诉我"，主人不让用是"问问阿杰"（复制一句话去发）；连不上只写原因，不给"加一个中转站"（M4 才有）。
+- 点标题区的局域网名字出局域网卡片：名字（拥有者可改）和成员，没有两个开关。
+- 两台同名设备，第二台名字后面一个小号"2"，卡片里"和另一台同名 · 改个名字"；我的同名设备里离线超过 30 天的那台写"旧的那台 · 很久没上线"，可以移出。
+- 服务器不认的操作，提示条只写"服务器还没更新，暂时用不了"。
+- 看不到的（要 M2 服务器和 Mac 上的 M2 引擎）：待同意的虚线块和小球、两个开关、拖小球邀请、收到的邀请、登录快到期的琥珀点；Clash 胶囊和"已连接"计时还要引擎报数据。
+
+**接真实数据做了什么**（`client/live.go`）：
+- 用户视图里的 M2 字段都映射进快照：局域网的两个开关、我在等（`LANView.pending`）、待同意的设备（`LANDevice.pending`，不算进局域网）、待同意的人（`Member.State=pending`）、按人发出还没回的邀请（`LANView.invited`）、收到的邀请（`UserView.invitations`，只取还在等的）、设备的登录到期和上次在线。
+- 操作带上 `kind`（改种类）和 `invitation`（按人邀请的接受、谢绝）。操作名和协议一致，引擎原样转发，旧引擎也不挡。
+- 服务器回"不认识的操作"时，提示条只写"服务器还没更新，暂时用不了"，不写操作名。
+- 测试：`TestLiveM2View`（字段映射，带不带 features）、`TestLiveOldServerSaysPlainly`（旧服务器的回答），界面的 `TestLiveOldServerHidesM2`（M1 的假世界里没有两个开关、成员小球拖不动，改名照常能用）。
+- 跑全量时 `TestFrames` 碰到过一次 `light_05_card-closing.png` 有 66 个像素差 1/255，比允许的 64 个多一点，单独重跑就过了。这是渲染缓存的抖动（关卡片那一帧正在动画里），不是改动造成的；以后再碰到可以考虑把允许值放宽一点。
+
+**服务器不支持时**：快照的 `Features` 记服务器做得到的事，界面只在做得到时给控件。
+- `approve`：局域网卡片的两个开关（M1 服务器上卡片只有名字和成员）。待同意的设备和人只有 M2 服务器才会发，旧服务器上本来就没有。
+- `invitePerson`：拖成员小球去邀请。收到的邀请、虚线小球也只有 M2 服务器才会发。
+- `rename`：卡片里点名字改名、点设备块改种类。M1 服务器上名字和设备块照常显示，只是不能点。
+- `renew`：琥珀色小点和"续上"。M1 服务器不发登录到期，本来就不会出现。
+- `addRelay`：连不上时的"加一个中转站"，要等 M4，真实模式里先不显示，只写原因。
+- 和控制线定好了：`proto.UserView.Features`（json `features`），名字是 `approve`、`invitePerson`、`rename`、`renew`、`dnsName`，M2 服务器每份视图都带全，M1 服务器不发。M1 的引擎转发视图时会丢掉不认识的字段，所以 Mac 引擎升到 M2 之前也拿不到，这些控件照样不显示。演示模式全都有。
+- 改名、改种类不按能力藏：M1 服务器就认 `device.rename` 和 `device.setKind`（只是不跟着改 DNS 短名）。客户端的假世界（`DENEB_FAKE=1`）也照 M1 补上了这两个操作。`dnsName`（"更多"里改短名）界面还没做，做的时候再按它显示。
+
+**真实模式里先没有的**（要引擎线做，没做好以前界面不显示，不报错）：
+- Clash 一类软件的提示：引擎现在只报 control、datapath、bind、socks 几种问题，没有"另一个程序在接管连接"。要引擎报一个固定的代码（和"规则"那一行），客户端再把它显示成胶囊。
+- "已连接"计时：要引擎报这台电脑正在用哪台设备的服务、从什么时候开始用。现在的 `State.Usage` 只有别人在用这台电脑的服务。
+
+## 第二批合进仓库
+
+**合并副本**：`/tmp/deneb-merge2` 是"现在的仓库（已含第一批和它的真实数据）+ 第二批 + 接真实数据"，不含第三批。`cmd/deneb` 和 `client/` 测试全过，M1 基线逐帧对比也过（侧边栏有意改了，不参与比较，其余一致），vet 干净。
+
+**接真实数据做了什么**：
+- 暂停：侧边栏的开关走引擎的本机接口 `POST /v1/lan/pause`（和 `deneb lan pause/resume` 一样，范围 ID 是 `proto.LANScope`）。局域网是不是暂停，从引擎状态的 `Scopes[].Paused` 读。拨了以后快照立刻改，不等引擎下一份状态，开关不会弹回去一下。只有这台电脑在里面的局域网才有开关。引擎出错就用引擎自己的话；引擎太旧、没有这个接口，就写"这台电脑上的 Deneb 还不能暂停，更新以后再试"。
+- 在区域之间挪：先加进新的局域网，服务器同意了再从原来的撤出（`sendAfter`），加失败就不撤，设备不会两边都不在；撤销也一样先加后撤。拖出区域就是撤出。这几样都是 M1 就有的操作。
+- "全部"里接受邀请：用第一批接好的 `invite.accept {invitation}`，接受后留在"全部"，新区域出现。邀请只有 M2 服务器才会发。
+- 测试：`TestLivePause`（假世界里暂停和恢复，只停那个局域网的设备）、界面的 `TestLiveAllView`（假世界里打开"全部"、拨开关、把构建服务器拖到周末联机再撤销）。
+- 基线对比允许的像素数从 64 放宽到 128（每个仍只许差 1/255）：跑全量时关卡片那一帧会差 66 个像素，是渲染缓存的抖动。
+
+**要拷进仓库的 17 个文件**（从 `/tmp/deneb-merge2` 拷到仓库同一位置；两个是新文件）：
+`cmd/deneb/actions.go`、`cmd/deneb/allview.go`（新）、`cmd/deneb/allview_test.go`（新）、`cmd/deneb/canvas.go`、`cmd/deneb/links.go`、`cmd/deneb/live_test.go`、`cmd/deneb/m2_test.go`、`cmd/deneb/model.go`、`cmd/deneb/panels.go`、`cmd/deneb/sync.go`、`cmd/deneb/view.go`、`cmd/deneb/view_test.go`、`cmd/deneb/views.go`、`client/live.go`、`client/live_test.go`、`client/model/model.go`、`client/model/op.go`。
+
+也可以在仓库根目录打补丁，结果和合并副本一模一样（已核对）：`patch -p0 < design/plan/m2/client-batch2.patch && patch -p0 < design/plan/m2/client-batch2-real.patch`。
+
+**合进去以后开发窗口里的变化**（Mac 引擎还是 M1）：侧边栏多了"全部"和每个局域网的小开关；"全部"视图、悬停聚焦、在区域之间挪、拖出区域撤出、挪整块区域都能用（用的是 M1 就有的操作）；开关能不能用取决于 Mac 上的引擎有没有暂停接口，没有就给一句白话。
+
+## 第三批合进仓库
+
+**合并副本**：`/tmp/deneb-merge3` 是"现在的仓库（已含第一、二批和它们的真实数据）+ 第三批 + 接真实数据"。
+
+**MyGo 支不支持**：支持，不用写原生代码，也不用给 MyGo 打补丁。`mygo.NewTray` 在 macOS 上就是系统菜单栏的状态栏项（NSStatusItem，模板图、单击右键、换图标都有），`mygo.NewFlyout` 挂在托盘上时是一块无边框、不抢焦点的面板（NSPanel，菜单那一层），内容是自绘界面，点外面或按 Esc 收起。第三批演示时用的就是这两样。
+
+**接真实数据时找到并改掉的**（演示录帧碰不到真窗口，这几处只有真跑才会出事）：
+1. 面板被点外面收起时，MyGo 是把它**销毁**，不是藏起来。原来的写法只建一次面板，第二次点图标就再也打不开。改成 MyGo 文档里的写法：每次点开都新建一块，关掉就销毁。
+2. 主窗口点 × 以后，"打开 Deneb"没有窗口可叫。改成 × 只是藏起窗口，Deneb 留在菜单栏；面板里"打开 Deneb"、点 Dock 图标都把它叫回来；⌘Q 照常退出（退出时不拦）。窗口藏起来时，提示条里扣着的操作当场发出去。
+3. 面板量自己的高度时被窗口的高度卡住：窗口比内容矮，就永远长不高（有了"要你处理"后局域网那组被挤没了）。改成面板不受窗口高度限制地量，窗口跟着它变。第一帧还没排好版时，再要一帧来量。
+4. 窗口藏起来时，主窗口不出帧，面板收起时扣着的同意就发不出去（原来要等下一帧）。改成面板关掉时当场发：`run` 没有界面上下文时也放到后台去做。
+5. 面板里的事超过 560 高时下面被裁掉、"打开 Deneb"看不见。改成中间两组在面板里滚动。
+6. 面板里点的事没办成时，只有主窗口有提示条，而窗口可能看不见。面板头部下面也写一句，4 秒后收起。
+7. 没登录时总状态写成了"还没有局域网"。改成"还没登录"（图标空心），登录了数据还没到时写"正在连接…"。
+8. 菜单栏图标原来是 32 像素，MyGo 会拉成 18 点（36 像素）显示，会发虚。改成 36 像素，星在中间占 16 点。
+9. 深色时系统自己会给面板描一圈细边，面板再画一圈就成了两圈。真面板不再画。
+
+**其他**：图标跟着界面里看到的走（扣着没发的同意也算），窗口和面板每帧末尾、存储每次有新快照、每 30 秒各对一次（登录到期没有新快照也能变）。真面板只淡入淡出（160 毫秒，连系统阴影一起），不做演示里的轻微放大。
+
+**测试**：`TestPanelBeforeTheWorld`（没运行、没登录、正在连接）、`TestPanelScrolls`（中间滚动、头部和打开 Deneb 不动）、`TestPanelSaysProblems`（暂停被拒时面板写原因、开关不动）、`TestPanelAsksItsHeight`（窗口太矮会长高、太高会变矮、最高 560）、`TestLivePanel`（真实模式：假引擎上的 M2 世界，待同意的设备和人、续上登录都能做，操作真的到了服务器，同意要等行收起才发，面板关掉时当场发；开关走引擎的暂停接口；打开 Deneb；M1 服务器上同意和续上不出现、开关还在；引擎停了写"Deneb 没在运行"，图标空心，引擎回来就恢复）。竞态检测跑过。
+
+**在这台 Mac 上真跑过一遍**：单独编了一个检查程序（演示数据、托盘 ID 另起，不碰开发窗口），真的状态栏项和面板：点开淡入、收起淡出后销毁、再点又能打开、有事时面板长高到 364、图标在实心/带点/空心之间换、主窗口 × 后藏起、面板里打开 Deneb 窗口回来、⌘Q 退出。截图里面板位置、圆角、阴影、细边都对。**没看到那颗星**：图标的位置上是一个「«」，像是这台 Mac 上隐藏菜单栏图标的功能（系统设置或菜单栏工具）把新图标收起来了；面板能正常弹在它下面。合进去以后如果在菜单栏找不到星，先看这个。
+
+**主会话的修复**：16:2x 主会话修了"卡片开着时托盘偏左"（`panels.go` 加 `bottomRight`，`canvas.go` 的 `trayZone` 跟着改，新测试 `traycenter_test.go`，`toast_test.go`、`selfcheck_test.go`、`links_test.go` 改了拖放落点），已经放进仓库。合并副本 16:27 把这 6 个文件同步进来了；第三批要拷的文件和它们不重叠，拷的时候不会把修复盖掉。带 `DENEB_FRAMES` 跑 `TestFrames` 时（基线对比只有这时才跑），这个修复让 22 帧和 M1 基线对不上：卡片开着时托盘（和它上面的提示条）原来在卡片左边居中，现在在整张画布正中，侧边栏以外只差底部那一条。不含第三批的仓库现状也一样，像素数几乎相同。合并副本的 `view_test.go` 加了 `trayCentered`：这 22 帧从 500 DIP 往下那一条按有意改动不比，上面照样和基线比，所以要拷的文件多了这一个，一共 13 个。
+
+**核对**：合并副本里第三批以外的代码在 16:27 同步成了仓库当时的样子（控制线在做 M3，`proto`、`engine`、`control` 这一个多小时有改动，都是只加不改），在这上面：`go build ./...`、vet 干净；`cmd/deneb` 和 `client/` 共 68 个测试全过（16:41），M1 基线逐帧对比在内（托盘那一条按上面说的不比）；面板和真实模式的测试在竞态检测下也过。第三批菜单栏的录帧和改动前比：3456 个文件里 3361 个逐字节相同，其余每帧最多十来个像素、差 12/255 以内，是渲染缓存的抖动。第一、二批的 M2 录帧没法拿来比前后：同一份代码录两遍，就有四成多的帧不一样（连线上流动的光、计时数字跟着真实时间走），这批改动也没碰主窗口的画法（`sync.go` 里两处改动只在面板开着、窗口藏起来时才走）。
+
+**要拷进仓库的 13 个文件**（从 `/tmp/deneb-merge3` 拷到仓库同一位置；8 个是新文件）：
+`client/demo.go`、`cmd/deneb/main.go`、`cmd/deneb/model.go`、`cmd/deneb/sync.go`、`cmd/deneb/view_test.go`，新的 `cmd/deneb/menubar.go`、`cmd/deneb/menubar_test.go`、`cmd/deneb/systray.go`、`cmd/deneb/trayglyph.go`、`cmd/deneb/trayicon_test.go`、`cmd/deneb/trayicons/solid.png`、`cmd/deneb/trayicons/dot.png`、`cmd/deneb/trayicons/hollow.png`。
+
+也可以在仓库根目录打补丁再拷图标，结果和合并副本一模一样（已核对）：`patch -p0 < design/plan/m2/client-batch3.patch && patch -p0 < design/plan/m2/client-batch3-real.patch && mkdir -p cmd/deneb/trayicons && cp design/plan/m2/client-batch3-trayicons/*.png cmd/deneb/trayicons/`。
+
+**合进去以后开发窗口里的变化**：菜单栏多一颗 Deneb 的星（要是被隐藏图标的功能收起来了，就看不见），点它弹出面板；点主窗口的 × 窗口只是藏起来，Deneb 还在跑，`mygo dev` 也不会跟着结束，要退出用 ⌘Q。面板里的开关、同意、续上和主窗口是同一份数据。
+
+## M2 真机验收（界面这一侧，2026-11-08 17:0x）
+
+- **测试**：`cmd/deneb/real2_test.go` 的 `TestRealAcceptance2`，和 M1 的 `TestRealAcceptance` 共用同一个测试台，在测试器里跑，连这台 Mac 的真引擎和真服务器，所以开发窗口里也看得到。现在放在 `/tmp/deneb-real2/cmd/deneb/real2_test.go`，只有这一个新文件，等主会话放进仓库。不设 `DENEB_REAL2` 就跳过。
+- **跑法**：`DENEB_REAL2=3,12,11,2 DENEB_FRAMES=/tmp/real2/light go test -run 'TestRealAcceptance2$' -v ./cmd/deneb`；深色再加 `DENEB_DARK=1`。
+- **阿杰那边**：用 ssh 在他的 NAS（hk-spare 的 `deneb-node` 容器）和台式机（Windows 测试机）上跑 `denebd`。命令行没有同意、拒绝、开关"新设备要同意"的子命令，所以用 `denebd op <操作> '<JSON>'` 发。
+- **会动哪些东西**：第 3、12 条建一个"验收临时"局域网，测完删掉。第 11 条先把构建服务器撤出周末联机，打开阿杰的"新设备要同意"，测完放回、关掉。第 2 条在这台 Mac 的引擎里换网，再挡住、放开到阿杰的 NAS 的直连。每一条都在测试结束时复原。
+- **结果**：第 1、2、3、6、11 条都通过，第 12 条只差续上（要等 hk-155 重新部署带上 `deneb-control expire`，再请引擎线临时停掉一台设备的引擎：在线的设备每 15 秒自动续期）；第 2 条里引擎改走中转比 M1 慢（5.9–6.5 s）；自查找到 3 处待定。数字都填在 `design/plan/m2-acceptance.md` 对应的行里。
+
+## M2 验收第 13 条的三处修改（2026-11-08 17:4x，等放进仓库）
+
+主会话定了改法，在 `/tmp/deneb-merge4`（仓库现状 + 下面这些）里改好：
+- **拖进要同意的局域网**：`client/model/op.go` 的 `With(lan.addDevice)` 按服务器的规则判断，非拥有者带进来、拥有者开着"新设备要同意"时，直接算作等待（原来先算成已加进，等服务器回来才变虚线）。提示条写"构建服务器等阿杰同意"，撤销就是撤回。
+- **被拒绝**：`reconcile` 发现我的设备原来在等、现在既不在等也不在里面，就提示"阿杰没有同意构建服务器加入「周末联机」"，虚线块保持虚线飞回托盘（`turnedDown`）。原来那一下会被当成"刚被同意"（`d.waited && !d.pending`），离开时间被清零，设备当场落进托盘，看起来就是一下子消失。
+- **中转站避开名字**：`place()` 里，中转站自己挑的位置每次出现时都检查一遍：连线（按实际画的曲线取点）离每个设备名字的文字至少 6 点，也不穿过别的设备块；不行就在中间偏下那个位置周围由近到远找。用户亲手拖过的位置在 places 里记一个 `relayHandKey`，以后不动。演示里设计好的中转站位置离"这台电脑"的名字约 9 点，照旧不动，所以 M1 基线帧不变。
+- **测试**：`TestAddDeviceWaitsForTheOwner`（模型）、`TestMyDeviceWaitsAndIsTurnedAway`、`TestRelayKeepsTracksOffNames`（中转站在设备左下方，自己挑的位置、上次自己停的位置、亲手放的位置三种）。`cmd/deneb` 和 `client/` 共 71 个测试全过，M1 基线逐帧对比在内。
+- **要拷的 9 个文件**（从 `/tmp/deneb-merge4` 拷到仓库同一位置，3 个是新文件）：`cmd/deneb/canvas.go`、`cmd/deneb/model.go`、`cmd/deneb/panels.go`、`cmd/deneb/sync.go`、`client/model/op.go`、`client/model/op_test.go`，新的 `cmd/deneb/turndown_test.go`、`cmd/deneb/relayname_test.go`、`cmd/deneb/real2_test.go`（M2 真机验收的测试，不设 `DENEB_REAL2` 就跳过）。也可以在仓库根目录 `patch -p0 < design/plan/m2/client-m2-acceptance.patch`，结果和副本一样（已核对）。
+
+## M2 剩下的界面：红光、"已连接"计时、Clash 胶囊、面板头部（2026-11-08 18:xx，等放进仓库）
+
+在 `/tmp/deneb-merge5`（仓库现状 + 下面这些）里做好：
+- **面板头部照实说**（主会话定）：都连上了才写"都连上了"；连不上写"N 台连不上"（琥珀），正在连接写"正在连接…"，不在线写"N 台不在线"（灰），几种都有时按卡片的先后只说最要紧的那种。菜单栏图标照旧（连不上本来就带小点）。`TestPanelSaysWhatIsNotConnected`。
+- **红光**（场景 5，第 4 条）：模型加 `Snapshot.Cuts`；Live 认 `cut` 事件，按这台电脑在那个局域网里的服务列表给服务起名，在快照里留 6 秒。画布上：那台设备的连线上一小段红光，从它那头跑向这台电脑，到门口散成一个小圈（共约 1.1 s）；它的第二行写"X被关了"，4 s 后回原样。演示里阿杰的台式机在用这台电脑的远程桌面，关掉就能看到。`TestClosingAServiceInUse`、`TestLiveTakesCutsAndUsage`；录帧 `TestM2ClosedFrames`（`DENEB_M2`），浅色深色逐帧检测干净。
+- **"已连接"计时**：Live 认 `State.using` 和 usage 事件里的 `using`，取每台设备最早那条连接的开始时间（界面早就会画，第一批做的）。`TestLiveUsingAndProxy`。
+- **Clash 胶囊**：`State.engine.problems` 里的 `proxy` 换成第一批做好的琥珀色胶囊，短句"Clash 可能挡住连接"、卡片一句"Clash 一类的软件正在接管网络，局域网里的设备可能连不上"（引擎分不出是哪个软件，原话里有网卡名和地址，对普通人太技术）、规则照引擎给的。只在内核模式出现，这台 Mac 用户态看不到。
+- **真机**（19:24–19:26，引擎 m2-11081833）：红光和计时都在真引擎上通过，浅色深色各一遍，结果在验收清单第 4、5 条。之前（18:3x）被挡住是引擎 watch 丢了 usage、cut 事件，引擎线修好了。当时报的两点：① usage 事件只在 usage 不为空时才推（`api.go` 的 `if usage != nil`），只有 using 变了、或 usage 变空时都不推，计时收不到开始和结束；② 关掉服务时没推 `cut`（`datapath.go` 的 `usesFor(e.nm, cut)` 可能已经用了新图）。复现办法和录帧都在验收清单第 4、5 条。引擎改好、Mac 的引擎换上后再录：`DENEB_REAL2=5t,4 DENEB_LONGCONN=<为本机编的 longconn> DENEB_FRAMES=… go test -run 'TestRealAcceptance2$' ./cmd/deneb`。
+- **测试**：`cmd/deneb` 和 `client/` 共 75 个全过，M1 基线逐帧对比在内；菜单栏的录帧和用户看过的那版一致。
+- **要拷的 12 个文件**（从 `/tmp/deneb-merge5`，2 个是新的）：`cmd/deneb/links.go`、`cmd/deneb/menubar.go`、`cmd/deneb/menubar_test.go`、`cmd/deneb/model.go`、`cmd/deneb/real2_test.go`、`cmd/deneb/sync.go`、新的 `cmd/deneb/closed_test.go`；`client/demo.go`、`client/live.go`、`client/live_test.go`、`client/model/model.go`、新的 `client/live_cut_test.go`。或者 `patch -p0 < design/plan/m2/client-m2-usage.patch`（已核对）。
+
+## 第 8 条的值守（2026-11-08 19:4x，等放进仓库）
+
+换网和睡眠由主会话在机器上真的做（关 Wi-Fi 15 秒、睡 10 分钟定时唤醒），界面这边只看。`TestRealAcceptance2` 加了一步 `watch`（`cmd/deneb/realwatch_test.go`，`real2_test.go` 里登记一行）：
+- 在真引擎上停在"全部"视图，按墙上时钟一直看到 `DENEB_WATCH` 结束；不因为等不到什么而退出。睡眠时进程停住、墙上时钟跳，跳了多少记一行；界面的时钟跟着墙上时钟走。
+- 每台设备的第二行、标题那句、菜单栏面板的头部和图标，一变就带毫秒时刻记一行到 `DENEB_WATCH_LOG`（默认 `/tmp/real2/watch.log`，接着往后写），引擎自己报的路径也记在旁边；每秒存一张 590×370 的小图到 `DENEB_WATCH_FRAMES`（默认 `/tmp/real2/watch/`，按时刻起名）。
+- 结束时汇总：每样东西说过哪些话、各几次共多久；有没有出现过"断开、连不上、出错、失败、错误、没在运行、不在线"；每台设备最后一次回到"直接连上"或"经…中转"的时刻；墙上时钟跳过几次。
+- 试跑：75 秒、45 秒各一次。第二次在中间挡住到 NAS 的直连、同时 ping 它，日志里先是引擎报 relay，2 秒后界面写"经香港中转"，放开后回到"直接连上"，汇总也对。
+- 起法：`DENEB_REAL2=watch DENEB_WATCH=20m go test -run 'TestRealAcceptance2$' -v -count=1 -timeout 0 ./cmd/deneb`（`-timeout 0`，不然 go test 默认十分钟就停）。
+- 睡醒后卡 31 秒（测试 Mac 20:30）：是值守自己，不是界面主循环，也不是本机接口。值守把测试器的时钟一下推进 10 分钟，测试器会把这 10 分钟的每一帧挨个补画（连线的光每秒 60 帧，约 3.6 万帧）。同一段时间里引擎那一路照常在记：醒后 0.27 s 各台"正在连接"，1–2 s 后"直接连上"，所以本机接口在睡眠后好好的。真正的窗口不补帧，醒来直接画当前这一帧。改法：时钟大跳时换一个新的测试器，从当前时刻开始（`client-m2-watchfix.patch`，只改 `realwatch_test.go`）。在测试 Mac 上验过：20:47:48 睡下，20:47:53 被网络包叫醒（这台测试 Mac 一睡就会被 Wi-Fi 上的包叫醒，只有 20:20 那次睡满了 10 分钟），日志里只记了一次 3.5 s 的跳，下一秒就接着记，没有再卡。卡多久本来跟睡多久成正比，改了以后不再补帧，睡多久都一样。
+- 要拷的 2 个文件：`cmd/deneb/real2_test.go`、新的 `cmd/deneb/realwatch_test.go`；或 `patch -p0 < design/plan/m2/client-m2-watch.patch`。
+
+## 这台电脑没联网（DESIGN §6.10，2026-11-08 19:5x，演示已交付，等用户看）
+
+起因：主会话 19:45 在这台 Mac 上真关了 15 秒 Wi-Fi（用户叫停了，以后这类测试只在另找的测试机上做），值守日志显示断网约 6 s 后三台都写"连不上"，标题写"1 台连上了"，菜单栏面板"3 台连不上"、带点的星。问题在这台电脑，不在对面，这么说会吓到人。
+- **设计**：先写进 DESIGN §6.10。标题"这台电脑没联网，联网后会自动连上"（灰点）；别的设备变灰，写"等这台电脑联网"，连线静止的点线；卡片连接那一行同一句、不带按钮；菜单栏空心星，面板头部"这台电脑没联网"、各局域网"等这台电脑联网"，"要你处理"里不放连不上；网回来先"正在连接…"再连上。
+- **演示**：`/tmp/deneb-nonet` 里做好（模型 `Snapshot.NoNetwork`，演示 ⌥⌘L：没联网 → 网回来 → 2 秒后连上）。录帧窗口、菜单栏面板，浅色深色，逐帧检测干净；`TestNoNetworkSaysSo` 断网期间每一帧都查不出"连不上"。全量 76 个测试过，M1 基线帧不变。
+- **交付**：桌面 `Deneb组网demo/` 下以 `20261108-1956_M2-31`、`M2-32` 开头的 16 个文件（视频 + 截图，各有深色）。
+- **接真实数据**（用户 2026-11-08 看过，点了头）：在 `/tmp/deneb-merge7` 做好。Live 认 `State.engine.problems` 里的 `no-network`（引擎线确认了这个名字：没有默认路由，或者默认路由走的网卡没有地址就报；默认路由被代理的 TUN 占着时，看引擎绑的那块网卡；网回来就撤，并推一次 state；还没进构建）；在引擎还没报这个代码之前，用一个保守的办法顶着：控制服务器连不上，没有一台连着，而且至少有一台被报成连不上，才算没联网。只是"正在连接"不算，因为引擎刚启动时就是这样。`TestLiveNoNetwork`。全量 77 个测试过，M1 基线帧不变。
+- **限制**：保守办法要等控制服务器那条连接断掉才成立，可能比对端被报成连不上晚几秒，那几秒画面上还会写"连不上"。所以最终要靠引擎在断网那一刻就报 `no-network`。
+- **要拷的 13 个文件**（从 `/tmp/deneb-merge7`）：`client/model/model.go`、`client/demo.go`、`client/live.go`、`client/live_test.go`、`cmd/deneb/main.go`、`cmd/deneb/sync.go`、`cmd/deneb/model.go`、`cmd/deneb/canvas.go`、`cmd/deneb/panels.go`、`cmd/deneb/view.go`、`cmd/deneb/menubar.go`、`cmd/deneb/realwatch_test.go`（顺带值守的修复），新的 `cmd/deneb/nonet_test.go`。或 `patch -p0 < design/plan/m2/client-m2-nonet.patch`（已核对；它已经包含 `client-m2-watchfix.patch`，两个不要都打）。
+
 ## 真实模式还要的（用户点头以后）
 
 - 控制线的新字段和操作都已经加了（见下一节）。
 - "加一个中转站"要等 M4 的中转站；第一批 demo 里点了就让连不上的设备经香港中转。
 - "上线时告诉我"窗口不在前台时要用系统通知，演示里只有提示条。
 - 暂停（`lan.pause`）要引擎做、引擎报状态（局域网的 `paused`），控制服务器不管；"全部"视图里的摆放按"局域网 + 设备"记在本机的 places 里。
+
+## M3 要接的字段（控制线 2026-11-08 告知）
+
+控制线已把 M3 的视图字段和分享操作加进 proto，本机 `-dev` 支持，方案在 `design/plan/m3/control.md`。界面要用的：`UserView.SharedWithMe`（"共享给我"，每项有分享 id、设备的精简信息、谁分的或公共设备所在局域网名、开给我的服务）、`DeviceView.Shares`、`DeviceView.PublicLAN`、`Seats.Left`（剩 2 个以下才显示"还能加 N 人"）、`InvitePreview.SeatsFull`；操作 `share.create {device, person, services}` → `result.share`、`share.revoke {share}`（撤销 = 再发一次 create，原样回来）、`service.set` 带 `share`、`device.setPublic {device, lan}`；拒绝 `conflict "已经有了"`、`seats_full`；能力 `proto.M3Features`（多 `share`、`publicDevice`、`seats`）。面板里"共享给我"一组（DESIGN §7.1 第 4 项）到时候接这里。
+
+主会话后来定了三件（控制线转告）：
+- **收回分享**：界面点收回时立刻发 `share.revoke`（访问马上断），提示条"已收回 X · 撤销"；点撤销发 `share.create`（同一台设备、同一个人、同样的服务），服务器原样恢复；提示条走了而没点撤销（到时、被新提示条顶掉、切画布、窗口藏起来），发 `share.release {share}`，位置马上放出来。客户端没发的话，服务器 10 秒后自己放。界面线已向控制线确认。
+- **接收人自己不要**：`share.leave {share}`，分享方那边悄悄少一台，不提醒。
+- **设备共享模式**：`LANView.mode` 为 `"lan"`（默认）或 `"share"`，拥有者用 `lan.setMode {lan, mode}` 切。共享模式下成员看这个局域网只有名字、拥有者和自己，分到的设备在 `sharedWithMe` 里（`fromLAN` 写局域网名）；拥有者看得到全部成员和设备，每台设备的 `shares` 就是"展开成员看他的设备"那份数据。能力 `proto.FeatureShareMode = "shareMode"`。
+
+## M4 中转站要接的（控制线 2026-11-08 告知，服务器只在本机测过）
+
+方案在 `design/plan/m4/control.md` §2、§3、§8、§11。能力 `"relays"`（`proto.M4Features`）。操作：`relay.create {name}` 回 `relay` 和只显示一次、7 天有效的登记口令 `relayToken`（卡片要能复制）；`relay.token {relay}`；`relay.rename`；`relay.delete`；`relay.add {lan, relay}`（拖进局域网，只有主人，只能拖进他在的局域网；公共中转站不用拖）；`relay.remove {lan, relay}`（拖回托盘，主人或局域网拥有者，撤销就是再 add）。视图：`UserView.MyRelays`（拖进了哪些局域网、登记过没有、口令到期、在线、离线时的 lastSeen、seeded 的不能改名删除）、`UserView.Relays`、`Relay.pin` / `rateLimit`（公共的限速要在"更多"里写明）、`LANView.AddedRelays`（没登记的拖进来只在这里）。用量 `GET /device/v1/relay-usage`（卡片打开时取，不推；按局域网的那一行写"约"）。"能看到什么"那句按 Source/Owner 由界面拼。
+
+注意：界面只经引擎的本机接口和服务器说话，用量要请引擎线在本机接口上转一下（像 userview、preview 那样）。引擎线已接好：`GET /v1/relay-usage` 原样转发服务器的用量（`proto.RelayUsage`），localclient 里有 `RelayUsage` 可以直接调，卡片打开时取。另有 `scopes[].relay`：这个范围实际在用的中转站，和 `LANView.Relays[0]` 不一样时显示"改走公共中转站"。
 
 ## 分三批交
 
