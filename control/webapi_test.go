@@ -85,12 +85,18 @@ func TestWebAPI(t *testing.T) {
 	if st := b.do("GET", proto.PathWebUserView, nil, nil, nil); st != 401 {
 		t.Fatalf("the view logged out: %d", st)
 	}
-	var eb proto.ErrorBody
-	if st := b.do("POST", proto.PathWebLogin, proto.WebLoginRequest{Email: "nobody@deneb.test"}, &eb, nil); st != 404 || !strings.Contains(eb.Error.Message, "没有开通") {
-		t.Fatalf("an unknown email: %d %+v", st, eb.Error)
+	// An email with no account gets the same code step as one with
+	// (TestLoginAnswersAlike), and nothing names who has one.
+	if r := b.login("nobody@deneb.test", ""); r.Step != "code" || r.Account != "nobody@deneb.test" {
+		t.Fatalf("an unknown email: %+v", r)
 	}
-	if r := b.login(" Jie@deneb.test ", ""); r.Step != "code" || r.Account != "登录到阿杰（jie@deneb.test）" || r.Person != "" {
+	if r := b.login(" Jie@deneb.test ", ""); r.Step != "code" || r.Account != "jie@deneb.test" || r.Person != "" ||
+		r.CodeLife != 600 || r.ResendAfter != 60 {
 		t.Fatalf("the email step: %+v", r)
+	}
+	var eb proto.ErrorBody
+	if st := b.do("POST", proto.PathWebLogin, proto.WebLoginRequest{Email: "jie at deneb.test"}, &eb, nil); st != 400 || !strings.Contains(eb.Error.Message, "格式不对") {
+		t.Fatalf("a malformed email: %d %+v", st, eb.Error)
 	}
 	if st := b.do("POST", proto.PathWebLogin, proto.WebLoginRequest{Email: "jie@deneb.test", Code: "999999"}, nil, nil); st != 400 {
 		t.Fatalf("a wrong code: %d", st)

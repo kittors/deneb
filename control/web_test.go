@@ -78,11 +78,17 @@ func TestLoginPages(t *testing.T) {
 	if _, page := b.get(ts.URL + "/login?c=NOPENOPENOPE"); !strings.Contains(page, "过期") || !strings.Contains(page, "deneb login") || !strings.Contains(page, "deneb status") {
 		t.Fatalf("an unknown link:\n%s", page)
 	}
-	if _, page := b.post(ts.URL+"/login/email", url.Values{"c": {c}, "email": {"nobody@deneb.test"}}); !strings.Contains(page, "还没有开通") {
+	// An email with no account gets the same code step as one with: the
+	// page does not tell who has an account (TestLoginAnswersAlike).
+	if _, page := b.post(ts.URL+"/login/email", url.Values{"c": {c}, "email": {"nobody@deneb.test"}}); !strings.Contains(page, `name="code"`) || strings.Contains(page, "开通测试账号") {
 		t.Fatalf("an unknown email:\n%s", page)
 	}
-	if _, page := b.post(ts.URL+"/login/email", url.Values{"c": {c}, "email": {"Kittors@deneb.test"}}); !strings.Contains(page, `name="code"`) || !strings.Contains(page, "000000") || !strings.Contains(page, "登录到 kittors（kittors@deneb.test）") {
+	if _, page := b.post(ts.URL+"/login/email", url.Values{"c": {c}, "email": {"Kittors@deneb.test"}}); !strings.Contains(page, `name="code"`) || !strings.Contains(page, "000000") ||
+		!strings.Contains(page, "如果 kittors@deneb.test 能登录 Deneb") || strings.Contains(page, "登录到") {
 		t.Fatalf("code step:\n%s", page)
+	}
+	if _, page := b.post(ts.URL+"/login/email", url.Values{"c": {c}, "email": {"not an email"}}); !strings.Contains(page, "邮箱的格式不对") || !strings.Contains(page, `name="email"`) {
+		t.Fatalf("a malformed email:\n%s", page)
 	}
 	if _, page := b.post(ts.URL+"/login/code", url.Values{"c": {c}, "email": {"kittors@deneb.test"}, "code": {"123456"}}); !strings.Contains(page, "验证码不对") {
 		t.Fatalf("a wrong code:\n%s", page)
@@ -220,7 +226,7 @@ func TestLoginLogs(t *testing.T) {
 	mu.Unlock()
 	for _, want := range []string{
 		`login: link ` + c[:4] + `… for "hk-155" (linux) from 127.0.0.1`,
-		`login: "nobody@deneb.test" has no account`,
+		`login: code asked for "nobody@deneb.test" (code ` + c[:4] + `…, from 127.0.0.1): no account, nothing sent`,
 		`login: wrong code for "jie@deneb.test"`,
 		`logged in as jie@deneb.test in a browser at 127.0.0.1`,
 		`login page: no login waits for code ` + c[:4] + `…`,

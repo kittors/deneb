@@ -27,6 +27,9 @@ func TestBackup(t *testing.T) {
 	os.MkdirAll(dir, 0o755)
 	stale := filepath.Join(dir, backupName(clk.now())+".tmp")
 	os.WriteFile(stale, []byte("cut short"), 0o644)
+	// A copy from before M7, written 0644: kept, and closed.
+	old := filepath.Join(dir, backupName(clk.now().AddDate(0, 0, -1)))
+	os.WriteFile(old, []byte("an older copy"), 0o644)
 	name, err := s.backup()
 	if err != nil || name != backupName(clk.now()) {
 		t.Fatalf("backup: %q, %v", name, err)
@@ -40,6 +43,9 @@ func TestBackup(t *testing.T) {
 	}
 	if _, err := os.Stat(stale); !os.IsNotExist(err) {
 		t.Fatal("the copy cut short is still there")
+	}
+	if fi, err := os.Stat(old); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("the older copy: %v, %v", fi.Mode(), err)
 	}
 	// For trying deploy/control/restore-drill.sh here: a copy to drill on.
 	if out := os.Getenv("DENEB_BACKUP_OUT"); out != "" {

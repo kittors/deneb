@@ -169,9 +169,13 @@ func newID(prefix string) string {
 	return prefix + "_" + strings.ToLower(randomCode(10))
 }
 
-// attempts limits tries of a verification code per email, so a six-digit
-// code cannot be guessed on a public server.
+// attempts limits tries per key in a sliding window: of a verification
+// code per email, and (other instances) per address, or sends per email.
 type attempts struct {
+	// limit tries in window; zero means maxAttempts in attemptsWindow.
+	limit  int
+	window time.Duration
+
 	mu    sync.Mutex
 	tries map[string][]time.Time
 	swept time.Time
@@ -182,19 +186,33 @@ const (
 	attemptsWindow = 15 * time.Minute
 )
 
+func (a *attempts) max() int {
+	if a.limit > 0 {
+		return a.limit
+	}
+	return maxAttempts
+}
+
+func (a *attempts) win() time.Duration {
+	if a.window > 0 {
+		return a.window
+	}
+	return attemptsWindow
+}
+
 // take counts a try at key and reports whether it may go ahead: at most
-// maxAttempts in attemptsWindow. Checking and counting are one step under
-// the lock, so guesses sent all at once cannot each pass the check before
-// any is counted (M7 review). A right code calls reset, so only wrong ones
-// add up.
+// the limit in the window. Checking and counting are one step under the
+// lock, so tries sent all at once cannot each pass the check before any
+// is counted (M7 review). A right code calls reset (per email) or refund
+// (per address), so only wrong ones add up.
 func (a *attempts) take(key string, now time.Time) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.tries == nil {
 		a.tries = map[string][]time.Time{}
 	}
-	// Emails nobody tried lately go, so made-up ones do not pile up.
-	if now.Sub(a.swept) >= attemptsWindow {
+	// Keys nobody tried lately go, so made-up ones do not pile up.
+	if now.Sub(a.swept) >= a.win() {
 		a.swept = now
 		for k := range a.tries {
 			if len(a.recent(k, now)) == 0 {
@@ -203,7 +221,7 @@ func (a *attempts) take(key string, now time.Time) bool {
 		}
 	}
 	recent := a.recent(key, now)
-	if len(recent) >= maxAttempts {
+	if len(recent) >= a.max() {
 		return false
 	}
 	a.tries[key] = append(recent, now)
@@ -216,10 +234,19 @@ func (a *attempts) reset(key string) {
 	delete(a.tries, key)
 }
 
+// refund takes back the latest try at key: it turned out not to count.
+func (a *attempts) refund(key string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if t := a.tries[key]; len(t) > 0 {
+		a.tries[key] = t[:len(t)-1]
+	}
+}
+
 func (a *attempts) recent(key string, now time.Time) []time.Time {
 	var out []time.Time
 	for _, t := range a.tries[key] {
-		if now.Sub(t) < attemptsWindow {
+		if now.Sub(t) < a.win() {
 			out = append(out, t)
 		}
 	}

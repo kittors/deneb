@@ -197,7 +197,7 @@ func (s *Server) adminApprove(login, email string) (*AdminApproveResult, error) 
 		return nil, errNotFound("没有等着登录的这台设备，或者链接过期了")
 	}
 	e := normEmail(email)
-	if _, ok := s.codes[e]; !ok {
+	if _, ok := s.testCodes[e]; !ok {
 		return nil, errForbidden("只能批准给种子文件里的测试账号：" + e + " 不在里面")
 	}
 	p := s.state.Load().w.byEmail[e]

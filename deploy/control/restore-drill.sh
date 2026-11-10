@@ -41,13 +41,14 @@ esac
 
 # The part that runs on the server, in a directory of its own that goes
 # when it is done: the newest backup (or the one named) into it, and the
-# check on that. HOST=. runs it on this machine instead, with REMOTE pointing
-# at a directory laid out like the server's, to try the script out.
+# check on that. The directory is the first argument, and its cleanup is set
+# before anything else can fail.
 on_server() {
 	cat <<'EOS'
 set -eu
-rdir=$1 name=$2 remote=$3 url=$4
+rdir=$1
 trap 'rm -rf "$rdir"' EXIT
+name=${2-} remote=$3 url=$4
 cd "$rdir"
 gunzip drill.test.gz
 chmod 700 drill.test
@@ -63,21 +64,53 @@ DENEB_RESTORE_COPY="$rdir/data" DENEB_RESTORE_SEED="$remote/data/seed.json" DENE
 EOS
 }
 
+# quote makes $1 one word for the shell that reads a command line back: in
+# single quotes, any single quote in it closed, escaped and reopened. An
+# empty one stays a word (''), which ssh would otherwise drop.
+quote() {
+	printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
+# remote runs a command line on HOST as ssh does: one string, which the
+# shell there splits into words. HOST=. runs it here the same way, with
+# REMOTE pointing at a directory laid out like the server's, to try the
+# script out. put copies a file there.
+remote() {
+	if [ "$HOST" = . ]; then
+		sh -c "$1"
+	else
+		ssh "$HOST" "$1"
+	fi
+}
+put() {
+	if [ "$HOST" = . ]; then
+		cp "$1" "$2"
+	else
+		scp -q "$1" "$HOST:$2"
+	fi
+}
+
 bin=$(mktemp -d)
-trap 'rm -rf "$bin"' EXIT
+rdir=
+# The temporary directory there goes even if this stops before the check
+# runs (a failed copy, say); after it ran, it is gone already.
+cleanup() {
+	rm -rf "$bin"
+	if [ -n "$rdir" ]; then
+		remote "rm -rf $(quote "$rdir")" || true
+	fi
+}
+trap cleanup EXIT
 if [ "$HOST" = . ]; then
 	go test -c -o "$bin/drill.test" ./control
 else
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go test -c -o "$bin/drill.test" ./control
 fi
 gzip -9 "$bin/drill.test"
-if [ "$HOST" = . ]; then
-	rdir=$(mktemp -d)
-	chmod 700 "$rdir"
-	cp "$bin/drill.test.gz" "$rdir/"
-	on_server | sh -s -- "$rdir" "$name" "$REMOTE" "$PUBLIC_URL"
-	exit
-fi
-rdir=$(ssh "$HOST" 'd=$(mktemp -d /tmp/deneb-drill.XXXXXX) && chmod 700 "$d" && echo "$d"')
-scp -q "$bin/drill.test.gz" "$HOST:$rdir/drill.test.gz"
-on_server | ssh "$HOST" sh -s -- "$rdir" "$name" "$REMOTE" "$PUBLIC_URL"
+rdir=$(remote 'd=$(mktemp -d /tmp/deneb-drill.XXXXXX) && chmod 700 "$d" && echo "$d"')
+case "$rdir" in
+/tmp/deneb-drill.*) ;;
+*) echo "no temporary directory there: $rdir" >&2; rdir=; exit 1 ;;
+esac
+put "$bin/drill.test.gz" "$rdir/drill.test.gz"
+on_server | remote "sh -s -- $(quote "$rdir") $(quote "$name") $(quote "$REMOTE") $(quote "$PUBLIC_URL")"

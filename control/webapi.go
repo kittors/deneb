@@ -1,7 +1,6 @@
 package control
 
 import (
-	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -126,44 +125,37 @@ func (s *Server) handleWebLoginStep(withCode bool) http.HandlerFunc {
 	}
 }
 
-// webLogin answers a login step: without a code, whose account the email
-// is (in this deployment the code is the test account's, and no email is
-// sent); with one, the session.
+// webLogin answers a login step. Without a code it mails one, if the email
+// can log in, and answers the same either way (M7); with one, it logs in:
+// the session.
 func (s *Server) webLogin(w http.ResponseWriter, r *http.Request, req proto.WebLoginRequest) {
 	email := normEmail(req.Email)
-	p := s.state.Load().w.byEmail[email]
-	if _, ok := s.codes[email]; !ok || p == nil {
-		s.logf("web login: %q has no account, from %s", email, remoteIP(r))
-		s.writeErr(w, r, errNotFound("这个邮箱还没有开通测试账号"))
+	code := strings.TrimSpace(req.Code)
+	from := loginFrom{what: "web login", ip: remoteIP(r)}
+	if code == "" {
+		if err := s.askCode(email, from); err != nil {
+			s.writeErr(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, proto.WebLoginResult{Step: "code", Account: email,
+			CodeLife: int(codeLife / time.Second), ResendAfter: int(codeResend / time.Second)})
 		return
 	}
-	account := pangu("登录到" + p.DisplayName + "（" + p.Email + "）")
-	code := strings.TrimSpace(req.Code)
-	if code == "" {
-		writeJSON(w, http.StatusOK, proto.WebLoginResult{Step: "code", Account: account})
+	p, err := s.checkCode(email, code, from)
+	if err != nil {
+		s.writeErr(w, r, err)
 		return
 	}
 	now := s.now()
-	if !s.tries.take(email, now) {
-		s.logf("web login: %q is blocked for too many wrong codes, from %s", email, remoteIP(r))
-		s.writeErr(w, r, newErr(http.StatusTooManyRequests, proto.ErrForbidden, "试错的次数太多了，请 15 分钟后再试"))
-		return
-	}
-	if subtle.ConstantTimeCompare([]byte(code), []byte(s.codes[email])) != 1 {
-		s.logf("web login: wrong code for %q, from %s", email, remoteIP(r))
-		s.writeErr(w, r, errInvalid("验证码不对"))
-		return
-	}
-	s.tries.reset(email)
 	token := newRelaySecret() // 256 random bits
 	if _, err := s.db.Exec(`INSERT INTO web_sessions (id, person, created_at, expires_at, from_ip) VALUES (?, ?, ?, ?, ?)`,
-		hashSecret(token), p.ID, ms(now), ms(now.Add(webSessionLife)), remoteIP(r)); err != nil {
+		hashSecret(token), p, ms(now), ms(now.Add(webSessionLife)), remoteIP(r)); err != nil {
 		s.writeErr(w, r, err)
 		return
 	}
 	s.logf("web login: %s in a browser at %s", email, remoteIP(r))
 	http.SetCookie(w, s.sessionCookie(token, int(webSessionLife.Seconds())))
-	writeJSON(w, http.StatusOK, proto.WebLoginResult{Step: "done", Account: account, Person: p.ID})
+	writeJSON(w, http.StatusOK, proto.WebLoginResult{Step: "done", Account: email, Person: p})
 }
 
 func (s *Server) handleWebLogout(w http.ResponseWriter, r *http.Request) {

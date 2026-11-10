@@ -122,7 +122,9 @@ func finishBackup(path string) error {
 }
 
 // pruneBackups keeps the newest backupsDaily copies, and of the older ones
-// the newest of each week, backupsWeekly weeks of them.
+// the newest of each week, backupsWeekly weeks of them. Those it keeps are
+// made only the server's to read, copies from before M7 too, which were
+// written 0644.
 func pruneBackups(dir string, now time.Time) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -134,8 +136,14 @@ func pruneBackups(dir string, now time.Time) {
 			copies = append(copies, n)
 		}
 	}
-	for _, n := range backupsToDrop(copies) {
-		os.Remove(filepath.Join(dir, n))
+	drop := backupsToDrop(copies)
+	for _, n := range copies {
+		path := filepath.Join(dir, n)
+		if slices.Contains(drop, n) {
+			os.Remove(path)
+		} else if fi, err := os.Stat(path); err == nil && fi.Mode().Perm()&0o077 != 0 {
+			os.Chmod(path, 0o600)
+		}
 	}
 }
 

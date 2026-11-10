@@ -113,6 +113,13 @@ func main() {
 		lifetime    = flag.Duration("login-lifetime", control.DefaultLoginLifetime, "how long a device's login lasts if the device does not come back; shorten it to see logins run out")
 		seatLimit   = flag.Int("seat-limit", control.DefaultSeatLimit, "people each person's LANs and shares may hold, themselves included; -1 for no limit")
 		relayImage  = flag.String("relay-image", control.DefaultRelayImage, "the Docker image the relays' one-line install command runs")
+		mailMode    = flag.String("mail", "auto", "how login codes go out: smtp, log (with -dev only: into the log), none, or auto (smtp if a host is set, log with -dev, else none)")
+		smtpHost    = flag.String("smtp-host", "", "SMTP server for the login codes; also DENEB_SMTP_HOST or <data>/mail.json, where the password goes (never a flag)")
+		smtpPort    = flag.Int("smtp-port", 0, "SMTP port (default 465 with -smtp-tls tls, else 587)")
+		smtpUser    = flag.String("smtp-username", "", "SMTP account (password: DENEB_SMTP_PASSWORD or <data>/mail.json)")
+		smtpFrom    = flag.String("smtp-from", "", `who the codes are from: "Deneb <noreply@example.com>"`)
+		smtpTLS     = flag.String("smtp-tls", "", "tls (implicit, port 465) or starttls (port 587)")
+		openSignup  = flag.Bool("open-signup", false, "let an email with no account log in: its account is made when its code checks out")
 	)
 	var relays relayFlags
 	flag.Var(&relays, "relay", `a relay as key=value pairs, repeatable; replaces the seed's: "id=hk,name=香港,host=derp.example.com,ipv4=1.2.3.4,derp=443,stun=3478"`)
@@ -180,6 +187,13 @@ func main() {
 		seed.Relays = relays
 	}
 
+	mailer, err := setUpMail(*mailMode, *dataDir, *dev, control.SMTPConfig{
+		Host: *smtpHost, Port: *smtpPort, Username: *smtpUser, From: *smtpFrom, TLS: *smtpTLS,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	// The certificate comes first: relay join codes carry its pin.
 	var cert atomic.Pointer[tls.Certificate]
 	var loadCert func() (string, error)
@@ -211,6 +225,8 @@ func main() {
 		SeatLimit:     *seatLimit,
 		Pin:           pin,
 		RelayImage:    *relayImage,
+		Mailer:        mailer,
+		OpenSignup:    *openSignup,
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -315,6 +331,61 @@ func check(u string) int {
 		return 1
 	}
 	return 0
+}
+
+// setUpMail picks how the login codes go out. The SMTP settings come from
+// <data>/mail.json, the environment over it, and the flags over both; the
+// password never from a flag, which ps and docker inspect show.
+func setUpMail(mode, dataDir string, dev bool, flags control.SMTPConfig) (control.Mailer, error) {
+	c, err := control.LoadSMTPConfig(dataDir, os.Getenv)
+	if err != nil {
+		return nil, err
+	}
+	if flags.Host != "" {
+		c.Host = flags.Host
+	}
+	if flags.Port != 0 {
+		c.Port = flags.Port
+	}
+	if flags.Username != "" {
+		c.Username = flags.Username
+	}
+	if flags.From != "" {
+		c.From = flags.From
+	}
+	if flags.TLS != "" {
+		c.TLS = flags.TLS
+	}
+	if mode == "auto" {
+		switch {
+		case c.Host != "":
+			mode = "smtp"
+		case dev:
+			mode = "log"
+		default:
+			mode = "none"
+		}
+	}
+	switch mode {
+	case "smtp":
+		m, err := control.NewSMTPMailer(c)
+		if err != nil {
+			return nil, err
+		}
+		log.Printf("mail: login codes go out through %s", m)
+		return m, nil
+	case "log":
+		// Whoever reads the log could log in as anyone.
+		if !dev {
+			return nil, fmt.Errorf("-mail log only goes with -dev")
+		}
+		log.Printf("mail: login codes go into this log (development)")
+		return control.LogMailer{Logf: log.Printf}, nil
+	case "none":
+		log.Printf("mail: no mail set up; only the seed's test accounts can log in")
+		return nil, nil
+	}
+	return nil, fmt.Errorf("-mail %q: want smtp, log, none or auto", mode)
 }
 
 // adminFlags reads the flags the admin commands share and returns the

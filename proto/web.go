@@ -5,7 +5,7 @@ package proto
 // (UserView, Op, OpResult, StreamFrame, RelayUsage); a session cookie
 // takes the place of a device's token, and there is no "this device".
 const (
-	PathWebLoginEmail = "/api/v1/login/email" // POST WebLoginRequest{email} → WebLoginResult, step "code"
+	PathWebLoginEmail = "/api/v1/login/email" // POST WebLoginRequest{email} → WebLoginResult, step "code"; a code goes out by mail
 	PathWebLoginCode  = "/api/v1/login/code"  // POST WebLoginRequest{email, code} → WebLoginResult, step "done"; sets the cookie
 	PathWebLogin      = "/api/v1/login"       // POST either of the two above, by whether code is there
 	PathWebLogout     = "/api/v1/logout"      // POST (no body) → {}; clears it
@@ -25,7 +25,10 @@ const (
 const WebSessionCookie = "deneb_session"
 
 // WebLoginRequest is the login form: the email first, then the email and
-// its code.
+// its code. A code is six digits, mailed for each login: it works once,
+// within CodeLife. (The deployment's test accounts, at reserved domains
+// such as deneb.test, have a fixed code from its seed instead; nothing is
+// mailed to them.)
 type WebLoginRequest struct {
 	Email string `json:"email"`
 	Code  string `json:"code,omitempty"`
@@ -33,11 +36,22 @@ type WebLoginRequest struct {
 
 // WebLoginResult is where the login stands.
 type WebLoginResult struct {
-	// Step is "code" (the email has an account: ask for its code) or
-	// "done" (logged in, the cookie set).
+	// Step is "code" (type the code that went to the email) or "done"
+	// (logged in, the cookie set). The code step answers the same for
+	// every well-formed email, with an account or without, so no one
+	// learns from it who has one (M7): a code goes out only if the email
+	// can log in. A wrong code, or one for an email that cannot, is the
+	// same 400.
 	Step string `json:"step"`
-	// Account says whose the code is for: "登录到阿杰（jie@deneb.test）".
+	// Account is the email the code is for, as the server took it
+	// (trimmed, lower case). It names no one: "登录到阿杰" would tell who
+	// has an account.
 	Account string `json:"account,omitempty"`
+	// CodeLife and ResendAfter, on the code step, are how long a code
+	// works and how long until asking again mails it again, in seconds:
+	// "10 分钟内有效", "60 秒后可以重发". Asking sooner changes nothing.
+	CodeLife    int `json:"codeLife,omitempty"`
+	ResendAfter int `json:"resendAfter,omitempty"`
 	// Person is who is logged in now, once the step is "done".
 	Person PersonID `json:"person,omitempty"`
 }

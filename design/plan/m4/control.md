@@ -149,7 +149,12 @@
 
 Web 管理端是浏览器里的程序，不经引擎，直接连控制服务器的 `/api/v1`。数据格式和设备接口一样（`proto` 里的类型，路径常量在 `proto/web.go`），差别只在登录方式和"哪台设备"：
 
-- **登录**（邀请卡里一步一屏）：`POST /api/v1/login/email {email}` → `{step: "code", account: "登录到阿杰（jie@deneb.test）"}`（这个部署不发邮件，验证码是测试账号的）；`POST /api/v1/login/code {email, code}` → `{step: "done", account, person}`，同时发会话 cookie `deneb_session`（HttpOnly、SameSite=Lax、HTTPS 时 Secure，30 天，服务器只存哈希）。`POST /api/v1/login` 两步合一（有没有 code）也行。邮箱没开通 → 404；没填验证码、验证码不对 → 400；同一个邮箱错 5 次 → 429，15 分钟后再试。`POST /api/v1/logout` 注销。没登录的请求一律 401（`ErrorBody`，`code: unauthorized`）。
+- **登录**（邀请卡里一步一屏；11-10 起每次登录发新码，见 [m7/control-security.md](../m7/control-security.md) §6）：
+  - `POST /api/v1/login/email {email}` → `{step: "code", account: <邮箱>, codeLife: 600, resendAfter: 60}`。这个邮箱能登录，就往它发一个新码：6 位，10 分钟内有效，只能用一次。测试账号不发信，用种子里的码。
+  - 对每个格式对的邮箱，不管开没开通，回答都一样，所以不说是谁。一分钟内再要不重发。
+  - `POST /api/v1/login/code {email, code}` → `{step: "done", account, person}`，同时发会话 cookie `deneb_session`（HttpOnly、SameSite=Lax、HTTPS 时 Secure，30 天，服务器只存哈希）。`POST /api/v1/login` 两步合一（有没有 code）也行。
+  - 出错时：邮箱格式不对、没填验证码、验证码不对（错的、过期的、用过的，或者这个邮箱没开通）→ 400；同一个邮箱错 5 次 → 429，15 分钟后再试；同一个地址一小时要码超过 30 次 → 429。
+  - `POST /api/v1/logout` 注销。没登录的请求一律 401（`ErrorBody`，`code: unauthorized`）。
 - **同源**：Web 程序要和控制服务器同源（由控制服务器或同一个反向代理提供；开发时用开发服务器的代理），cookie 才带得上。控制服务器现在用自签证书，浏览器会先提示证书不受信任；对普通人要换成有域名的正式证书，部署时再定。
 - **防跨站**：所有 POST 必须 `Content-Type: application/json`（否则 415），并过 CrossOriginProtection（`Sec-Fetch-Site`/`Origin` 是别的站就 403）。
 - `GET /api/v1/userview` → `proto.UserView`（这个人的视图，同设备拿到的一样）。

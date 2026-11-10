@@ -35,8 +35,17 @@ type Config struct {
 	// Dev turns on what only a development server may have: POST
 	// /dev/approve, which completes a device login without a browser.
 	Dev bool
-	// Seed has the test accounts, their codes and the relays.
+	// Seed has the accounts, the test accounts' fixed codes and the
+	// relays.
 	Seed Seed
+	// Mailer mails the login codes (M7); nil mails none, and only the
+	// seed's test accounts, with their fixed codes, can log in.
+	Mailer Mailer
+	// OpenSignup lets an email with no account log in: it gets a code, and
+	// the account is made when the code checks out. Off, only the seed's
+	// accounts and those made before can log in; either way the answers do
+	// not tell who has an account.
+	OpenSignup bool
 	// LoginLifetime is how long a device's login lasts without the device
 	// coming back; zero means DefaultLoginLifetime. Test deployments make
 	// it short to see logins run out.
@@ -77,8 +86,16 @@ type Server struct {
 	hub  *hub
 
 	logins *loginTable
-	tries  attempts
-	codes  map[string]string // verification codes from the seed, by email
+	// testCodes are the seed's test accounts' fixed codes, by email; every
+	// other login gets a code by mail (mailed).
+	testCodes map[string]string
+	mailed    *loginCodes
+	tries     attempts // wrong codes per email
+	wrongs    attempts // wrong codes per address
+	asks      attempts // codes asked for per address
+	mailQ     chan mailJob
+	mailStop  context.CancelFunc
+	mailDone  chan struct{}
 
 	// mu serializes changes. state is swapped whole after each one, so
 	// readers never lock.
@@ -145,7 +162,10 @@ func New(cfg Config) (*Server, error) {
 		db:        db,
 		hub:       newHub(cfg.Now),
 		logins:    newLoginTable(),
-		codes:     map[string]string{},
+		testCodes: map[string]string{},
+		mailed:    newLoginCodes(),
+		wrongs:    attempts{limit: maxWrongPerAddress},
+		asks:      attempts{limit: maxAsksPerAddress, window: time.Hour},
 		keepAlive: proto.StreamKeepAlive,
 		relayLive: newRelayLive(),
 		versions:  newVersionWaiter(),
@@ -155,6 +175,7 @@ func New(cfg Config) (*Server, error) {
 		return nil, err
 	}
 	s.routes()
+	s.startMail()
 	return s, nil
 }
 
@@ -238,7 +259,10 @@ func (s *Server) load(q querier, network proto.Network) (*World, error) {
 }
 
 // Close closes the database. Streams end with their requests.
-func (s *Server) Close() error { return s.db.Close() }
+func (s *Server) Close() error {
+	s.stopMail()
+	return s.db.Close()
+}
 
 // Network is the deployment's address space.
 func (s *Server) Network() proto.Network { return s.state.Load().w.Network }

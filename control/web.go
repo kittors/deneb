@@ -1,7 +1,6 @@
 package control
 
 import (
-	"crypto/subtle"
 	"errors"
 	"hash/fnv"
 	"html/template"
@@ -37,14 +36,14 @@ func (s *Server) webRoutes(m *http.ServeMux) {
 
 // loginPage is what the login template shows.
 type loginPage struct {
-	Step    string // none, expired, email, code, done, error
-	Code    string // the device's login code, carried through the forms
-	Device  *pageDevice
-	Email   string
-	Account string // on the code step, whose account it is: "登录到阿杰（jie@deneb.test）"
-	Error   string
-	Dev     bool
-	Done    string // the done step's sentence
+	Step   string // none, expired, email, code, done, error
+	Code   string // the device's login code, carried through the forms
+	Device *pageDevice
+	Email  string
+	Sent   string // on the code step: where the code went, if anywhere
+	Error  string
+	Dev    bool
+	Done   string // the done step's sentence
 }
 
 type pageDevice struct {
@@ -127,15 +126,13 @@ func (s *Server) handleLoginEmail(w http.ResponseWriter, r *http.Request) {
 	}
 	page.Email = normEmail(r.PostFormValue("email"))
 	page.Step = "email"
-	p := s.state.Load().w.byEmail[page.Email]
-	if _, ok := s.codes[page.Email]; !ok || p == nil {
-		s.logf("login: %q has no account (code %s, from %s)", page.Email, shortCode(pl.code), remoteIP(r))
-		page.Error = "这个邮箱还没有开通测试账号"
-		s.render(w, http.StatusOK, loginTmpl, page)
+	// The same answer for every email, with an account or not (M7).
+	if err := s.askCode(page.Email, s.loginFrom(r, pl)); err != nil {
+		s.renderLoginError(w, err, &page)
 		return
 	}
 	page.Step = "code"
-	page.Account = pangu("登录到" + p.DisplayName + "（" + p.Email + "）")
+	page.Sent = codeSent(page.Email)
 	s.render(w, http.StatusOK, loginTmpl, page)
 }
 
@@ -148,27 +145,40 @@ func (s *Server) handleLoginCode(w http.ResponseWriter, r *http.Request) {
 	}
 	page.Email = normEmail(r.PostFormValue("email"))
 	page.Step = "code"
-	p := s.state.Load().w.byEmail[page.Email]
-	if p != nil {
-		page.Account = pangu("登录到" + p.DisplayName + "（" + p.Email + "）")
-	}
-	now := s.now()
-	if !s.tries.take(page.Email, now) {
-		s.logf("login: %q is blocked for too many wrong codes (code %s, from %s)", page.Email, shortCode(pl.code), remoteIP(r))
-		page.Error = "试错的次数太多了，请 15 分钟后再试"
-		s.render(w, http.StatusTooManyRequests, loginTmpl, page)
+	page.Sent = codeSent(page.Email)
+	p, err := s.checkCode(page.Email, strings.TrimSpace(r.PostFormValue("code")), s.loginFrom(r, pl))
+	if err != nil {
+		s.renderLoginError(w, err, &page)
 		return
 	}
-	want, ok := s.codes[page.Email]
-	got := strings.TrimSpace(r.PostFormValue("code"))
-	if !ok || p == nil || subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
-		s.logf("login: wrong code for %q (code %s, from %s)", page.Email, shortCode(pl.code), remoteIP(r))
-		page.Error = "验证码不对"
-		s.render(w, http.StatusOK, loginTmpl, page)
-		return
+	s.finishPage(w, r, pl, p, &page)
+}
+
+func (s *Server) loginFrom(r *http.Request, pl *pendingLogin) loginFrom {
+	return loginFrom{what: "login", ip: remoteIP(r), link: shortCode(pl.code)}
+}
+
+// renderLoginError shows a refused step again with why: a wrong code, a
+// malformed email, too many tries.
+func (s *Server) renderLoginError(w http.ResponseWriter, err error, page *loginPage) {
+	status, msg := http.StatusOK, "没有成功，请稍后再试"
+	var ae *apiError
+	if errors.As(err, &ae) {
+		msg = ae.body.Message
+		if ae.status == http.StatusTooManyRequests {
+			status = ae.status
+		}
+	} else {
+		s.logf("login page: %v", err)
 	}
-	s.tries.reset(page.Email)
-	s.finishPage(w, r, pl, p.ID, &page)
+	page.Error = msg
+	s.render(w, status, loginTmpl, *page)
+}
+
+// codeSent is the code step's sentence. It says the same whether the email
+// has an account or not.
+func codeSent(email string) string {
+	return "如果 " + email + " 能登录 Deneb，验证码已经发过去了，" + strconv.Itoa(int(codeLife/time.Minute)) + " 分钟内有效，只能用一次。"
 }
 
 // finishPage logs p in on the device and shows the done step.
@@ -315,6 +325,7 @@ input:focus { border-color: #3B82F6; box-shadow: 0 0 0 3px rgba(59, 130, 246, .1
   background: #3B82F6; color: #fff; font: inherit; font-weight: 500; text-align: center; text-decoration: none; cursor: pointer; }
 .error { color: #D1242F; font-size: 13px; margin: 8px 0 0; }
 .hint { font-size: 13px; color: #8C959F; margin: 16px 0 0; }
+.link { border: 0; padding: 0; background: none; color: #3B82F6; font: inherit; cursor: pointer; }
 .who { display: flex; align-items: center; gap: 12px; margin: 0 0 16px; }
 .ball { width: 40px; height: 40px; border-radius: 50%; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 600; flex: none; }
 code { display: block; margin-top: 6px; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: #F6F7F9;
@@ -348,7 +359,7 @@ var loginTmpl = template.Must(template.New("login").Parse(pageHead + `
 </form>
 {{- else if eq .Step "code"}}
 <h1>输入验证码</h1>
-<p>{{.Account}}</p>
+<p>{{.Sent}}</p>
 {{template "device" .}}
 <form method="post" action="/login/code">
 <input type="hidden" name="c" value="{{.Code}}">
@@ -358,7 +369,12 @@ var loginTmpl = template.Must(template.New("login").Parse(pageHead + `
 {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
 <button class="button" type="submit">登录</button>
 </form>
-<p class="hint">{{if .Dev}}开发模式：验证码都是 000000。{{else}}测试期间不发邮件，测试账号的验证码写在服务器的种子文件里。{{end}}</p>
+<form method="post" action="/login/email" class="hint">
+<input type="hidden" name="c" value="{{.Code}}">
+<input type="hidden" name="email" value="{{.Email}}">
+没收到？过一分钟可以 <button class="link" type="submit">重新发</button>；一直收不到，可能是这个邮箱还没有开通。
+</form>
+<p class="hint">{{if .Dev}}开发模式：测试账号的验证码都是 000000，别的邮箱的验证码写在服务器的日志里。{{else}}测试账号不发邮件，它们的验证码写在服务器的种子文件里。{{end}}</p>
 {{- else if eq .Step "done"}}
 <h1>登录好了</h1>
 <p>{{.Done}}</p>

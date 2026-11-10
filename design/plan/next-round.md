@@ -1,5 +1,22 @@
 # 下一轮上线：等用户在场时一起做
 
+## 11-10 23:0x 第二轮上线（用户点头："现在做"）
+
+服务器和引擎都从 GitHub 上的 372e417 编，两条线正在改的代码不进这一轮。
+
+- **控制服务器**（23:08，主会话）：
+  - 部署前在 hk-155 上用线上数据的一致副本跑 `TestProdCopy`：schema 10，没有新迁移，27 台设备照常。副本测完删了。
+  - 部署停了 2.18 s，比上次长，因为部署脚本先停服务、拷一份数据目录再起新版。五台设备 2 s 内都回来了。
+  - 数据目录、`backup`、`tls` 都是 700。旧的每日备份文件是 0644，放在 700 的目录里。新格式的备份明天 UTC 0 点后写第一份。
+  - 恢复演练：用 `deneb-20261110.db`，integrity ok，27 台设备、3 个中转站、3 个分享。不指定备份名时脚本会出错，已交控制线；出错留在服务器上的临时目录已删。
+  - `device-delete` 删掉了 mia 名下的 deneb-u26（`d_ou45hpm57u`）；`backups` 管理命令正常。
+- **四台测试机**（23:12）：都换成 m2-11102311，回滚用 `deploy-nodes.sh previous`；测试 Mac 的旧版留作 `denebd.m2-11092227.bak`。五台都连着、都登录，用户的 Mac ping 四台都通。用户的 Mac 没换。
+- **Windows 新装法**（23:17–23:21）：全部通过，见 m6-acceptance.md 的 i2。大包见 m5-acceptance.md 的 w2。
+- **交引擎线的两件**：
+  - 构建服务器和 NAS 换版以后直连不回来，一直经公共中转站。两边都在发直连探测，却一个回应都收不到，也不在退避。换版前是直连。
+  - 大包 4 组里有 3 组各丢 1 个：尾巴那块先到、头一块还没到，就被丢了。
+- **M4 r5 用量**：在线上数据的副本上看过，通过，见 m4-acceptance.md。
+
 ## 11-09 21:1x 起已上线（用户点头："现在做"）
 
 - **控制服务器**（主会话做）：
@@ -54,14 +71,13 @@
 - 看设计：M3 三批，M4 第 1 批（客户端线正在做）。看过满意了，桌面端代码再进仓库；
 - 要不要提交。现在什么都没提交。
 
-## 再下一轮：控制线 11-10 攒的（都在工作区、本机测过，等用户点头）
+## 再下一轮：控制线攒的（在工作区、本机测过，等用户点头）
 
-- **控制服务器**：一次部署，没有新的数据库迁移。
-  - M7 安全审查的修复（[m7/control-security.md](m7/control-security.md)）；
-  - 每天的备份不再带签名密钥（[m7/control-ops.md](m7/control-ops.md) §1）；
-  - 新操作 `device.delete` 和管理命令 `devices`、`device-delete`、`sessions`、`backups`。
-- **部署后**：
-  1. 在 hk-155 上跑一次恢复演练：`HOST=hk-155 deploy/control/restore-drill.sh`。会在服务器 `/tmp` 放一分钟文件。
-  2. **待删**：mia 名下的 `deneb-u26`（客户端线 Linux 虚拟机里测完留下的，已登出），主会话来删：
-     - `docker exec deneb-control deneb-control devices -person mia@deneb.test`，找出它的 id；
-     - `docker exec deneb-control deneb-control device-delete -device <id>`。
+- **已上线**：安全审查的修复、备份不带签名密钥、`device.delete` 和 `devices`、`device-delete`、`sessions`、`backups` 四个管理命令，都在 11-10 23:08 那一轮上了。部署后的恢复演练和删 deneb-u26 也做完了，见上面"第二轮上线"。
+- **还没上线的控制服务器改动**：一次部署，没有新的数据库迁移。
+  - 每次登录发新验证码，两个登录入口不再透露邮箱有没有开通，开放注册的开关默认关（[m7/control-security.md](m7/control-security.md) §6）。
+    - 线上 4 个测试账号都在 `deneb.test` 下，照旧用种子里的码，测试设备不受影响。
+    - 发信要用户给一个 SMTP 账号，写进 hk-155 的 `data/mail.json`。没给的话，只有测试账号能登录，和现在一样。
+  - 每天写备份时，把留着的旧备份也收紧到 0600（[m7/control-ops.md](m7/control-ops.md) §1）。
+- **恢复演练脚本**：不指定备份名时出错的毛病修好了（[m7/control-ops.md](m7/control-ops.md) §2）。这是本机的工具，不用部署。下次上服务器时，可以不指定备份名再跑一次 `HOST=hk-155 deploy/control/restore-drill.sh`，验一下。
+- **hk-155 上 `deneb-20261110.db`**：带着现在这把签名密钥，到 11-18 才会按保留规则删掉；在那以前别拷出那台机器（[m7/control-ops.md](m7/control-ops.md) §1）。

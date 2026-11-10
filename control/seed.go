@@ -184,11 +184,16 @@ func (s *Server) applySeed() error {
 	codes := map[string]string{}
 	for _, a := range seed.Accounts {
 		e := normEmail(a.Email)
-		if e == "" || !strings.Contains(e, "@") {
+		if !validEmail(e) {
 			return fmt.Errorf("seed: account email %q", a.Email)
 		}
 		if a.Code == "" {
-			return fmt.Errorf("seed: account %s has no code", e)
+			continue // a real account: it gets its codes by mail
+		}
+		// A fixed code never changes and is in a file: only for test
+		// accounts, at domains where no one receives mail (M7 review).
+		if !isTestEmail(e) {
+			return fmt.Errorf("seed: account %s has a fixed code, which only test accounts may have (at .test, .example, .invalid, .localhost or example.com); leave it out and the code goes by mail", e)
 		}
 		codes[e] = a.Code
 	}
@@ -200,7 +205,7 @@ func (s *Server) applySeed() error {
 			return fmt.Errorf("seed: %w", err)
 		}
 	}
-	s.codes = codes
+	s.testCodes = codes
 
 	_, err := s.change("", func(tx *sql.Tx, w *World) error {
 		changed := false
