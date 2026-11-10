@@ -40,6 +40,7 @@ ssh "$HOST" "
 		--cpus 1 --memory 256m --memory-swap 256m --pids-limit 256 \
 		--log-opt max-size=10m --log-opt max-file=3 \
 		-v $REMOTE/data:/data \
+		-v /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro \
 		deneb-control:prev -listen :$PORT -data /data -seed /data/seed.json -public-url $PUBLIC_URL
 	sleep 3
 	docker ps --filter name=^$NAME\$ --format '{{.Names}} {{.Status}}'

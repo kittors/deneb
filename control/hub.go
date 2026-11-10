@@ -1,6 +1,7 @@
 package control
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"net/http"
@@ -206,8 +207,17 @@ func (h *hub) deliver(s *sub, w *World, v uint64, isOnline online, now time.Time
 	if f.UserView != nil {
 		f.UserView.Version = 0
 	}
-	plain, _ := json.Marshal(f)
-	sum := sha256.Sum256(plain)
+	// Encoded into a buffer that is used again: most frames are found
+	// unchanged, and a fresh copy of each, every change, was most of the
+	// garbage with thousands of streams (the load test, design/plan/m7/
+	// control-ops.md §4).
+	buf := frameBufs.Get().(*bytes.Buffer)
+	buf.Reset()
+	json.NewEncoder(buf).Encode(f)
+	sum := sha256.Sum256(buf.Bytes())
+	if buf.Cap() <= maxPooledFrame {
+		frameBufs.Put(buf)
+	}
 	f.Version = v
 	if f.NetMap != nil {
 		f.NetMap.Version = v
@@ -228,6 +238,12 @@ func (h *hub) deliver(s *sub, w *World, v uint64, isOnline online, now time.Time
 	s.pending, s.sent, s.lastHash, s.lastV = b, true, sum, v
 	s.signal()
 }
+
+// frameBufs are buffers to encode frames into for their hash; a buffer
+// grown past maxPooledFrame (a map of hundreds of peers) is let go.
+var frameBufs = sync.Pool{New: func() any { return new(bytes.Buffer) }}
+
+const maxPooledFrame = 1 << 20
 
 // signal wakes the writer; s.mu is held.
 func (s *sub) signal() {

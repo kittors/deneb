@@ -126,6 +126,10 @@ func (w *World) netMap(id proto.DeviceID, version uint64, isOnline online) *prot
 	for _, sc := range nm.Scopes {
 		scopeRelays[sc.ID] = sc.Relays
 	}
+	// The peers' slice at its size at once: a Peer is big, and growing
+	// the slice one append at a time was a quarter of the garbage of every
+	// change (the load test, design/plan/m7/control-ops.md §4).
+	nm.Peers = make([]proto.Peer, 0, len(peers))
 	for pid := range peers {
 		p := w.devices[pid]
 		scopes, paused := nonNil(shared[pid]), pausedBy[pid]

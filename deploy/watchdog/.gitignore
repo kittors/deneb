@@ -1,0 +1,5 @@
+# Built binaries (build.sh), and the deployments' files: they hold the
+# machines' addresses and the alert bot's key.
+/bin/
+/watch.*.json
+!/watch.example.json

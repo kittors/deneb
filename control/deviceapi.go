@@ -3,12 +3,14 @@ package control
 import (
 	"database/sql"
 	"encoding/json"
+	"maps"
 	"net"
 	"net/http"
 	"net/netip"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -474,33 +476,101 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request, c *caller)
 	}
 }
 
-// markOnline publishes a device coming online or going offline. Going
-// offline also stamps when it was last seen.
+// Who comes and goes. A device's stream opening, or closing past the
+// grace, changes its peers' maps and the views of those who see it: a new
+// version. The flips are gathered and published together, at most once a
+// second, rather than one change each: after a restart every device
+// comes back within seconds, and one change each had the server work out
+// every stream's frame once per device, the square of the devices (the
+// load test, design/plan/m7/control-ops.md §4). A peer hears of a device
+// coming or going up to a second late; "online" is a hint anyway.
+
+// defaultPresenceDelay is how long flips gather before they are published
+// (Server.presenceDelay; the tests shorten it).
+var defaultPresenceDelay = time.Second
+
+type presence struct {
+	mu      sync.Mutex
+	pending map[proto.DeviceID]bool // device → online, its last flip
+	timer   *time.Timer
+	closed  bool
+}
+
+// markOnline notes a device coming online or going offline, to publish with
+// the others that come and go within presenceDelay.
 func (s *Server) markOnline(id proto.DeviceID, on bool) {
+	p := &s.presence
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return
+	}
+	if p.pending == nil {
+		p.pending = map[proto.DeviceID]bool{}
+	}
+	p.pending[id] = on
+	if p.timer == nil {
+		p.timer = time.AfterFunc(s.presenceDelay, s.flushPresence)
+	}
+}
+
+// flushPresence publishes the flips gathered so far, in one change. Going
+// offline also stamps when the device was last seen.
+func (s *Server) flushPresence() {
+	p := &s.presence
+	p.mu.Lock()
+	flips := p.pending
+	p.pending, p.timer = nil, nil
+	closed := p.closed
+	p.mu.Unlock()
+	if closed || len(flips) == 0 {
+		return
+	}
+	now := s.now()
 	v, err := s.change("", func(tx *sql.Tx, w *World) error {
-		if on || w.devices[id] == nil {
-			return nil
+		for id, on := range flips {
+			if on || w.devices[id] == nil {
+				continue
+			}
+			if _, err := tx.Exec(`UPDATE devices SET last_seen = ? WHERE id = ?`, ms(now), id); err != nil {
+				return err
+			}
 		}
-		_, err := tx.Exec(`UPDATE devices SET last_seen = ? WHERE id = ?`, ms(s.now()), id)
-		return err
+		return nil
 	})
 	if err != nil {
-		s.logf("mark %s online=%v: %v", id, on, err)
+		s.logf("publish %d devices coming and going: %v", len(flips), err)
 		return
 	}
 	// Who comes and goes, with what engine: after a restart this is how one
 	// sees every device come back.
 	st := s.state.Load()
-	if d := st.w.devices[id]; d != nil {
+	ids := slices.Sorted(maps.Keys(flips))
+	for _, id := range ids {
+		d := st.w.devices[id]
+		if d == nil {
+			continue
+		}
 		owner := ""
 		if p := st.w.people[d.Owner]; p != nil {
 			owner = p.Email
 		}
 		state := "offline"
-		if on {
+		if flips[id] {
 			state = "online"
 		}
 		s.logf("device %s (%s, %q, %s) %s, engine %q; version %d", d.ID, d.Name, d.DisplayName, owner, state, d.EngineVersion, v)
+	}
+}
+
+// stopPresence drops the flips not published yet: the server is closing.
+func (s *Server) stopPresence() {
+	p := &s.presence
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.closed = true
+	if p.timer != nil {
+		p.timer.Stop()
 	}
 }
 

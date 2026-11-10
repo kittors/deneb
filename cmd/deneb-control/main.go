@@ -22,6 +22,7 @@
 //	deneb-control sessions [-revoke <email>]              # browsers logged in; log all of one account's out
 //	deneb-control backups                                 # the database's daily copies (<data>/backup)
 //	deneb-control devices [-person <email>]               # the devices, and in what state
+//	deneb-control alerts [-n 20]                          # the problems now and the last alerts
 //	deneb-control device-delete -device <id>              # delete one, whoever's it is
 //
 // In the container: docker exec deneb-control deneb-control approve ...
@@ -40,6 +41,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -47,6 +49,7 @@ import (
 	"time"
 
 	"github.com/kittors/deneb/control"
+	"github.com/kittors/deneb/control/alert"
 	"github.com/kittors/deneb/proto"
 )
 
@@ -96,6 +99,8 @@ func main() {
 			os.Exit(runBackups(os.Args[2:]))
 		case "devices":
 			os.Exit(runDevices(os.Args[2:]))
+		case "alerts":
+			os.Exit(runAlerts(os.Args[2:]))
 		case "device-delete":
 			os.Exit(runDeviceDelete(os.Args[2:]))
 		}
@@ -120,6 +125,9 @@ func main() {
 		smtpFrom    = flag.String("smtp-from", "", `who the codes are from: "Deneb <noreply@example.com>"`)
 		smtpTLS     = flag.String("smtp-tls", "", "tls (implicit, port 465) or starttls (port 587)")
 		openSignup  = flag.Bool("open-signup", false, "let an email with no account log in: its account is made when its code checks out")
+		alertURL    = flag.String("alert-webhook", "", "where alerts go: a WeCom, Feishu, DingTalk, Telegram or Bark bot's URL, or any JSON webhook; it holds the bot's key, so rather put it in <data>/alert.json or DENEB_ALERT_URL, which ps does not show")
+		alertKind   = flag.String("alert-kind", "", "wecom, feishu, dingtalk, telegram, bark or webhook (default: from the URL's host)")
+		name        = flag.String("name", "", "who the alerts say they are from (default: the public URL's host)")
 	)
 	var relays relayFlags
 	flag.Var(&relays, "relay", `a relay as key=value pairs, repeatable; replaces the seed's: "id=hk,name=香港,host=derp.example.com,ipv4=1.2.3.4,derp=443,stun=3478"`)
@@ -130,6 +138,7 @@ func main() {
 	if *healthcheck != "" {
 		os.Exit(check(*healthcheck))
 	}
+	setMemoryLimit()
 
 	if *listen == "" {
 		*listen = ":47443"
@@ -194,6 +203,11 @@ func main() {
 		log.Fatal(err)
 	}
 
+	alerts, err := setUpAlerts(*dataDir, *alertURL, *alertKind)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	// The certificate comes first: relay join codes carry its pin.
 	var cert atomic.Pointer[tls.Certificate]
 	var loadCert func() (string, error)
@@ -227,6 +241,8 @@ func main() {
 		RelayImage:    *relayImage,
 		Mailer:        mailer,
 		OpenSignup:    *openSignup,
+		Alerts:        alerts,
+		Name:          *name,
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -271,6 +287,7 @@ func main() {
 				case <-time.After(24 * time.Hour):
 					if _, err := loadCert(); err != nil {
 						log.Printf("renew certificate: %v", err)
+						srv.Notify("cert-renew", "证书续不上了", err.Error()+"；证书 397 天有效，还剩 30 天时开始续，每天试一次")
 					}
 				}
 			}
@@ -329,6 +346,98 @@ func check(u string) int {
 	if resp.StatusCode != http.StatusOK {
 		fmt.Fprintln(os.Stderr, resp.Status)
 		return 1
+	}
+	return 0
+}
+
+// setMemoryLimit keeps the Go heap within four fifths of the container's
+// memory limit, unless GOMEMLIMIT says otherwise: thousands of streams make
+// a lot of garbage at each change, and the heap may otherwise grow to twice
+// what is live before the collector runs, past the limit, where the kernel
+// kills the server (the load test, design/plan/m7/control-ops.md §4).
+func setMemoryLimit() {
+	if os.Getenv("GOMEMLIMIT") != "" {
+		return
+	}
+	for _, p := range []string{"/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"} {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		v, err := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64)
+		if err != nil || v <= 0 || v >= 1<<60 { // "max", or v1's "no limit"
+			return
+		}
+		debug.SetMemoryLimit(v / 5 * 4)
+		log.Printf("memory: the container may use %d MB; the heap keeps within %d MB", v>>20, v/5*4>>20)
+		return
+	}
+}
+
+// setUpAlerts reads where alerts go: <data>/alert.json, the environment
+// (DENEB_ALERT_*) over it, the flags over both. None set, they are only
+// logged (and kept for deneb-control alerts).
+func setUpAlerts(dataDir, url, kind string) (alert.Sender, error) {
+	c, err := alert.LoadConfig(filepath.Join(dataDir, "alert.json"), os.Getenv)
+	if err != nil {
+		return nil, err
+	}
+	if url != "" {
+		c.URL = url
+	}
+	if kind != "" {
+		c.Kind = kind
+	}
+	if c.URL == "" {
+		log.Printf("alerts: nowhere set to send them; they go into this log and deneb-control alerts")
+		return nil, nil
+	}
+	s, err := alert.NewSender(c)
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("alerts: to %s", s)
+	return s, nil
+}
+
+// runAlerts shows the problems firing now and the last alerts, newest
+// first.
+func runAlerts(args []string) int {
+	var n *int
+	socket, _ := adminFlags("alerts", args, func(fs *flag.FlagSet) {
+		n = fs.Int("n", 20, "how many of the last alerts to show")
+	})
+	a, err := control.AdminListAlerts(socket)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	if len(a.Active) == 0 {
+		fmt.Println("现在没有问题")
+	} else {
+		fmt.Println("现在的问题：")
+		for _, al := range a.Active {
+			fmt.Printf("  %s 起  %s  %s\n", alert.Clock(al.At), al.Title, al.Text)
+		}
+	}
+	if len(a.Recent) == 0 {
+		fmt.Println("还没有提醒")
+		return 0
+	}
+	fmt.Println("最近的提醒：")
+	outcome := map[string]string{alert.Sent: "发出去了", alert.Held: "冷却中没发", alert.Logged: "只记了日志", alert.Failed: "没发出去"}
+	kind := map[alert.Kind]string{alert.Firing: "警报", alert.Resolved: "恢复", alert.Info: "消息"}
+	for i := len(a.Recent) - 1; i >= 0 && i >= len(a.Recent)-*n; i-- {
+		r := a.Recent[i]
+		line := fmt.Sprintf("  %s  %s  %s", alert.Clock(r.At), kind[r.Kind], r.Title)
+		if r.Text != "" {
+			line += "：" + r.Text
+		}
+		line += "（" + outcome[r.Outcome]
+		if r.Error != "" {
+			line += "：" + r.Error
+		}
+		fmt.Println(line + "）")
 	}
 	return 0
 }

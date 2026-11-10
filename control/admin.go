@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kittors/deneb/control/alert"
 	"github.com/kittors/deneb/proto"
 )
 
@@ -80,6 +81,7 @@ func (s *Server) ServeAdmin(ctx context.Context, path string) error {
 	m.HandleFunc("POST /expire", s.handleAdminExpire)
 	m.HandleFunc("GET /seats", s.handleAdminSeats)
 	m.HandleFunc("POST /seats", s.handleAdminSetSeats)
+	m.HandleFunc("GET /alerts", s.handleAdminAlerts)
 	m.HandleFunc("GET /devices", s.handleAdminDevices)
 	m.HandleFunc("POST /device-delete", s.handleAdminDeleteDevice)
 	m.HandleFunc("GET /backups", s.handleAdminBackups)
@@ -578,6 +580,33 @@ func AdminDevices(path, email string) ([]AdminDevice, error) {
 func AdminDeleteDevice(path string, id proto.DeviceID) (*AdminDevice, error) {
 	var out AdminDevice
 	if err := adminCall(path, "POST", "/device-delete", AdminDeviceDeleteRequest{Device: id}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// AdminAlerts are the problems firing now and the last alerts, sent or
+// not (deneb-control alerts).
+type AdminAlerts struct {
+	Active []alert.Alert  `json:"active"`
+	Recent []alert.Record `json:"recent"`
+}
+
+func (s *Server) handleAdminAlerts(w http.ResponseWriter, r *http.Request) {
+	active, recent := s.Alerts()
+	if active == nil {
+		active = []alert.Alert{}
+	}
+	if recent == nil {
+		recent = []alert.Record{}
+	}
+	writeJSON(w, http.StatusOK, AdminAlerts{Active: active, Recent: recent})
+}
+
+// AdminListAlerts lists the alerts, through the admin socket at path.
+func AdminListAlerts(path string) (*AdminAlerts, error) {
+	var out AdminAlerts
+	if err := adminCall(path, "GET", "/alerts", nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

@@ -17,16 +17,22 @@ import (
 // sweepEvery is how often the clock is checked.
 const sweepEvery = 30 * time.Second
 
-// RunMaintenance sweeps until ctx ends.
+// RunMaintenance sweeps, and checks the server's health (health.go),
+// until ctx ends.
 func (s *Server) RunMaintenance(ctx context.Context) {
 	t := time.NewTicker(sweepEvery)
 	defer t.Stop()
+	h := time.NewTicker(healthEvery)
+	defer h.Stop()
+	s.checkHealth()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
 			s.sweep()
+		case <-h.C:
+			s.checkHealth()
 		}
 	}
 }

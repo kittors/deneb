@@ -34,11 +34,15 @@ const (
 // every hour after.
 func (s *Server) RunBackups(ctx context.Context) {
 	for {
-		if name, err := s.backup(); err != nil {
+		name, err := s.backup()
+		if err != nil {
 			s.logf("backup: %v", err)
 		} else if name != "" {
 			s.logf("backup: wrote %s", name)
 		}
+		s.health.mu.Lock()
+		s.health.backupErr = err
+		s.health.mu.Unlock()
 		select {
 		case <-ctx.Done():
 			return

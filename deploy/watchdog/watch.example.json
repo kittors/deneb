@@ -1,0 +1,18 @@
+{
+  "name": "hk-spare",
+  "alert": {
+    "kind": "wecom",
+    "url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=<the bot's key>"
+  },
+  "every": "1m",
+  "daily": "09:00",
+  "checks": [
+    {"name": "hk-155 的控制服务器", "kind": "https", "url": "https://203.0.113.10:47443/healthz", "pin": "sha256:<the control server's pin, data/tls/pin.txt>"},
+    {"name": "公共中转站「香港」", "kind": "derp", "addr": "203.0.113.10:47445", "pin": "sha256:<the relay's pin, deneb-control relays>"},
+    {"name": "公共中转站「香港」的 STUN", "kind": "stun", "addr": "203.0.113.10:47478"},
+    {"name": "旧中转站", "kind": "derp", "addr": "198.51.100.4:33443", "serverName": "derp.example.com"},
+    {"name": "旧中转站的 STUN", "kind": "stun", "addr": "198.51.100.4:3478"},
+    {"name": "备份", "kind": "backup", "dir": "/backup", "maxAge": "26h"},
+    {"name": "磁盘", "kind": "disk", "dir": "/backup", "minFree": 0.15}
+  ]
+}

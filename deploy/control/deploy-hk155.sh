@@ -14,6 +14,12 @@
 # deneb-control:prev (rollback-hk155.sh puts it back). A redeploy restarts
 # the server: engines reconnect within seconds, and login links not used
 # yet stop working.
+#
+# The image is empty, with no CAs: the host's bundle goes in read-only, so
+# the server can reach the mail service (login codes) and the alert bot over
+# TLS. Their settings are files in the data directory, never in this
+# repository: data/mail.json and data/alert.json, 0600, owned by nobody
+# (design/plan/m7/control-security.md §6, control-ops.md §3).
 set -eu
 HOST=${HOST:-hk-155}
 PORT=${PORT:-47443}
@@ -76,6 +82,7 @@ ssh "$HOST" "
 		--cpus 1 --memory 256m --memory-swap 256m --pids-limit 256 \
 		--log-opt max-size=10m --log-opt max-file=3 \
 		-v $REMOTE/data:/data \
+		-v /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro \
 		$TAG -listen :$PORT -data /data -seed /data/seed.json -public-url $PUBLIC_URL
 	sleep 3
 	docker ps --filter name=^$NAME\$ --format '{{.Names}} {{.Status}}'

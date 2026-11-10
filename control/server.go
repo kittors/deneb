@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -22,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/kittors/deneb/control/alert"
 	"github.com/kittors/deneb/proto"
 )
 
@@ -41,6 +43,11 @@ type Config struct {
 	// Mailer mails the login codes (M7); nil mails none, and only the
 	// seed's test accounts, with their fixed codes, can log in.
 	Mailer Mailer
+	// Alerts is where the server's alerts go (design/plan/m7/control-ops.md
+	// §3); nil logs them only. Name is who they say they are from; empty,
+	// the public URL's host.
+	Alerts alert.Sender
+	Name   string
 	// OpenSignup lets an email with no account log in: it gets a code, and
 	// the account is made when the code checks out. Off, only the seed's
 	// accounts and those made before can log in; either way the answers do
@@ -96,6 +103,14 @@ type Server struct {
 	mailQ     chan mailJob
 	mailStop  context.CancelFunc
 	mailDone  chan struct{}
+
+	alerts *alert.Alerter
+	health *health
+
+	// presence gathers devices coming and going (markOnline);
+	// presenceDelay is how long (tests shorten it).
+	presence      presence
+	presenceDelay time.Duration
 
 	// mu serializes changes. state is swapped whole after each one, so
 	// readers never lock.
@@ -166,10 +181,20 @@ func New(cfg Config) (*Server, error) {
 		mailed:    newLoginCodes(),
 		wrongs:    attempts{limit: maxWrongPerAddress},
 		asks:      attempts{limit: maxAsksPerAddress, window: time.Hour},
-		keepAlive: proto.StreamKeepAlive,
-		relayLive: newRelayLive(),
-		versions:  newVersionWaiter(),
+		health:    newHealth(),
+
+		presenceDelay: defaultPresenceDelay,
+		keepAlive:     proto.StreamKeepAlive,
+		relayLive:     newRelayLive(),
+		versions:      newVersionWaiter(),
 	}
+	name := cfg.Name
+	if name == "" {
+		if u, err := url.Parse(cfg.PublicURL); err == nil {
+			name = u.Hostname()
+		}
+	}
+	s.alerts = &alert.Alerter{Source: "deneb-control（" + name + "）", Sender: cfg.Alerts, Logf: cfg.Logf, Now: cfg.Now}
 	if err := s.init(); err != nil {
 		db.Close()
 		return nil, err
@@ -260,6 +285,7 @@ func (s *Server) load(q querier, network proto.Network) (*World, error) {
 
 // Close closes the database. Streams end with their requests.
 func (s *Server) Close() error {
+	s.stopPresence()
 	s.stopMail()
 	return s.db.Close()
 }

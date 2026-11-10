@@ -86,5 +86,16 @@
     - 线上 4 个测试账号都在 `deneb.test` 下，照旧用种子里的码，测试设备不受影响。
     - 发信要用户给一个 SMTP 账号，写进 hk-155 的 `data/mail.json`。没给的话，只有测试账号能登录，和现在一样。
   - 每天写备份时，把留着的旧备份也收紧到 0600（[m7/control-ops.md](m7/control-ops.md) §1）。
+  - 监控和提醒（[m7/control-ops.md](m7/control-ops.md) §3）：服务器自己查公共中转站、备份、磁盘、内存、掉线，发到群机器人；没设机器人时只记日志，用 `deneb-control alerts` 看。机器人的链接写进 hk-155 的 `data/alert.json`，等用户选好再填。
+  - 压测查出来改的（[m7/control-ops.md](m7/control-ops.md) §4）：
+    - 设备上线、下线攒起来，每秒合并成一次改动：重启后几千台设备重连，从排队一个小时左右，变成十几秒；
+    - Go 堆按容器内存的八成设软上限；
+    - 每次改动的垃圾少三成。
+  - 部署脚本把宿主的根证书只读挂进容器，发提醒、发验证码邮件要用。
+- **看门狗**（新，[m7/control-ops.md](m7/control-ops.md) §3）：两台机器各起一个，互相看。配置在本机 `deploy/watchdog/watch.hk-155.json`、`watch.hk-spare.json`，不进仓库：
+  - `HOST=hk-spare deploy/watchdog/deploy.sh`
+  - `HOST=hk-155 BACKUP_DIR=/opt/deneb-control/data/backup deploy/watchdog/deploy.sh`
+
+  脚本先空跑一轮，有一项不过就不启动。
 - **恢复演练脚本**：不指定备份名时出错的毛病修好了（[m7/control-ops.md](m7/control-ops.md) §2）。这是本机的工具，不用部署。下次上服务器时，可以不指定备份名再跑一次 `HOST=hk-155 deploy/control/restore-drill.sh`，验一下。
 - **hk-155 上 `deneb-20261110.db`**：带着现在这把签名密钥，到 11-18 才会按保留规则删掉；在那以前别拷出那台机器（[m7/control-ops.md](m7/control-ops.md) §1）。
