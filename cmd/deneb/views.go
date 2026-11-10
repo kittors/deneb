@@ -14,11 +14,16 @@ import (
 // engine not answering yet, no LAN yet; and the sidebar's new LAN and
 // scene 3's invite card.
 
+// markSize is the mark's size on the starting and login views. The star of
+// DESIGN §15 has no round core: at 52 points it lays down about the ink the
+// earlier one did at 44, and weighs as much beside the button.
+const markSize = 52
+
 // startingView is the window while this computer's engine has not answered
 // yet: the mark, greyed, and one line, as the store keeps trying.
 func (a *app) startingView(c *ui.Context, p *palette) {
 	ui.Column(c).Fill().Background(p.bg).Center().Gap(18).DragWindow().Children(func() {
-		ui.Icon(c, markGlyph).Size(44, 44).TextColor(p.ink3)
+		ui.Icon(c, markGlyph).Size(markSize, markSize).TextColor(p.ink3)
 		if a.engineErr != "" && !a.snap.Engine {
 			ui.Text(c, a.engineErr).FontSize(13).TextColor(p.ink2)
 			return
@@ -33,7 +38,7 @@ func (a *app) startingView(c *ui.Context, p *palette) {
 // once the login is done there; there is no field for a password here.
 func (a *app) loginView(c *ui.Context, p *palette) {
 	ui.Column(c).Fill().Background(p.bg).Center().Gap(22).DragWindow().Children(func() {
-		ui.Icon(c, markGlyph).Size(44, 44).TextColor(p.primary)
+		ui.Icon(c, markGlyph).Size(markSize, markSize).TextColor(p.primary)
 		btn := primaryButton(c, p, "login", "登录", 40, 28, 14)
 		if btn.Clicked() && !a.loggingIn {
 			a.startLogin(c)
@@ -395,8 +400,16 @@ func (a *app) noticeCard(c *ui.Context, p *palette) {
 					a.selected = ""
 				}
 			})
-			if n.Rule != "" {
+			for _, para := range strings.Split(n.Detail, "\n") {
+				if para != "" {
+					ui.Text(c, para).FontSize(12).TextColor(p.ink2).LineHeight(1.5)
+				}
+			}
+			if n.Rule != "" && n.Detail == "" {
+				// Clash's (M2); the others say where in their own words.
 				ui.Text(c, "在它的规则里加上这一条，局域网里的连接就不经过它：").FontSize(12).TextColor(p.ink2)
+			}
+			if n.Rule != "" {
 				ui.Text(c, n.Rule).FontSize(12).FontWeight(500).FontFeatures("tnum").Padding(9, 12).Radius(12).Background(p.well).SingleLine()
 			}
 			ui.Row(c).Gap(8).Margin(4, 0, 0, 0).Children(func() {

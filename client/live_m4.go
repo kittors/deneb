@@ -78,6 +78,20 @@ func takeRelays(s *model.Snapshot, v *proto.UserView, usage *proto.RelayUsage, j
 	for _, rv := range v.MyRelays {
 		mine[rv.ID] = rv
 	}
+	// The relays the LANs use that no one dragged in, other than the public
+	// ones, are the deployment's: the seed file lists them for every LAN
+	// (the derper on hk-spare in the test deployment). No one drags them or
+	// takes them away, as no one does the public ones, and they show as
+	// one of those, to their owner too.
+	listed, added := map[proto.RelayID]bool{}, map[proto.RelayID]bool{}
+	for _, lv := range v.LANs {
+		for _, id := range lv.Relays {
+			listed[id] = true
+		}
+		for _, id := range lv.AddedRelays {
+			added[id] = true
+		}
+	}
 	month := map[proto.RelayID]proto.RelayMonth{}
 	if usage != nil {
 		for _, m := range usage.Relays {
@@ -88,10 +102,11 @@ func takeRelays(s *model.Snapshot, v *proto.UserView, usage *proto.RelayUsage, j
 		mr := &model.Relay{ID: model.RelayID(r.ID), Name: r.Name, Owner: model.PersonID(r.Owner),
 			Source: model.RelaySource(r.Source), Addr: relayAddr(r), RateLimit: r.RateLimit}
 		rv, isMine := mine[r.ID]
-		if isMine && rv.Default {
+		deployment := isMine && rv.Default || listed[r.ID] && !added[r.ID] && r.Source != proto.RelayPublic
+		if deployment {
 			mr.Source, mr.Owner = model.RelayPublic, ""
 		}
-		if isMine && !rv.Default {
+		if isMine && !deployment {
 			// A Deneb relay that stopped checking in is down: the devices
 			// that went through it go through the public one meanwhile.
 			mr.Down = rv.Registered && !rv.Online && !rv.Seeded
@@ -106,28 +121,13 @@ func takeRelays(s *model.Snapshot, v *proto.UserView, usage *proto.RelayUsage, j
 		if mr.Name == mr.Addr {
 			mr.Name = ""
 		}
-		if m, ok := month[r.ID]; ok && isMine {
+		if m, ok := month[r.ID]; ok && isMine && !deployment {
 			takeMonth(mr, m, s.Me)
 		}
 		s.Relays[mr.ID] = mr
 	}
 	for _, j := range v.RelayJoins {
 		s.RelayJoins = append(s.RelayJoins, model.RelayJoin{ID: j.ID, Command: joins[j.ID], Expires: j.ExpiresAt})
-	}
-	// The LANs' relays that someone dragged in: mine where my relay says
-	// it is, the others' wherever the LAN lists them.
-	for _, l := range s.LANs {
-		l.AddedRelays = nil
-		for _, id := range l.Relays {
-			r := s.Relays[id]
-			if r == nil || r.Public() {
-				continue
-			}
-			if rv, ok := mine[proto.RelayID(id)]; ok && !slices.Contains(rv.LANs, proto.LANID(l.ID)) {
-				continue
-			}
-			l.AddedRelays = append(l.AddedRelays, id)
-		}
 	}
 }
 

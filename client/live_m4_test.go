@@ -21,8 +21,8 @@ func m4View() *proto.UserView {
 	return &proto.UserView{Version: 9, Me: "me", Features: []string{proto.FeatureRelays},
 		People: []proto.Person{{ID: "me", Name: "kittors"}, {ID: "jie", Name: "jie", DisplayName: "阿杰"}},
 		LANs: []proto.LANView{
-			{ID: "work", Name: "工作室", Owner: "me", Relays: []proto.RelayID{"srv", "pub", "seed"}},
-			{ID: "weekend", Name: "周末联机", Owner: "jie", Relays: []proto.RelayID{"jiesrv", "pub", "seed"}},
+			{ID: "work", Name: "工作室", Owner: "me", Relays: []proto.RelayID{"srv", "pub", "seed"}, AddedRelays: []proto.RelayID{"srv"}},
+			{ID: "weekend", Name: "周末联机", Owner: "jie", Relays: []proto.RelayID{"jiesrv", "pub", "seed", "jieseed"}, AddedRelays: []proto.RelayID{"jiesrv"}},
 		},
 		Relays: []proto.Relay{
 			{ID: "pub", Name: "香港", Source: proto.RelayPublic, IPv4: netip.MustParseAddr("203.0.113.10"), RateLimit: 2_000_000},
@@ -30,6 +30,8 @@ func m4View() *proto.UserView {
 			{ID: "srv", Name: "公司机房", Source: proto.RelayServer, Owner: "me", IPv4: netip.MustParseAddr("198.51.100.4")},
 			{ID: "spare", Name: "198.51.100.9", Source: proto.RelayServer, Owner: "me", IPv4: netip.MustParseAddr("198.51.100.9")},
 			{ID: "jiesrv", Name: "东京", Source: proto.RelayServer, Owner: "jie", IPv4: netip.MustParseAddr("203.0.113.20")},
+			// Another deployment relay, someone else's: listed, dragged in by no one.
+			{ID: "jieseed", Name: "上海", Source: proto.RelayServer, Owner: "jie", IPv4: netip.MustParseAddr("203.0.113.30")},
 		},
 		MyRelays: []proto.RelayView{
 			{ID: "seed", Registered: true, Seeded: true, Default: true},
@@ -94,6 +96,9 @@ func TestLiveM4Relays(t *testing.T) {
 	}
 	if jie == nil || jie.Source != model.RelayServer || jie.Owner != "jie" || s.MineRelay(jie) {
 		t.Errorf("阿杰's server: %+v", jie)
+	}
+	if js := s.Relays["jieseed"]; js == nil || !js.Public() || js.Owner != "" {
+		t.Errorf("a deployment relay of someone else's: %+v", js)
 	}
 	work, weekend := s.LAN("work"), s.LAN("weekend")
 	if !slices.Equal(work.AddedRelays, []model.RelayID{"srv"}) || !slices.Equal(weekend.AddedRelays, []model.RelayID{"jiesrv"}) {

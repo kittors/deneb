@@ -91,6 +91,9 @@ type Snapshot struct {
 	// cable out), as its engine finds: the view says so, calmly, rather
 	// than that every device cannot be reached (DESIGN §6.10).
 	NoNetwork bool
+	// Kernel: the engine has its network adapter, as the system service
+	// (or as root): the first time's step for the adapter is done (M6).
+	Kernel bool
 	// Cuts are the uses of this computer's services it cut just now, a
 	// service closed or a person refused while they used it (scene 5): each
 	// plays a short red light on that device's link, and its second line
@@ -113,6 +116,7 @@ const (
 	FeatureRenew        = "renew"        // a device's login renewed from another of its owner's
 	FeatureAddRelay     = "addRelay"     // a relay added to a LAN in a click: M4's, no server lists it yet
 	FeatureRelays       = "relays"       // M4: the relays' cards, the tray's relays, one's own server (DESIGN §6.12)
+	FeatureDiagnostics  = "diagnostics"  // M6: this computer's card exports a diagnostics package (DESIGN §6.14)
 
 	// M3's (DESIGN §6.11).
 	FeatureShare        = "share"        // a device given to one person; the devices given to me
@@ -208,6 +212,11 @@ type Notice struct {
 	Short   string // a few words, for the header's pill: "Clash 可能挡住连接"
 	Message string
 	Rule    string
+	// Detail says more, under the message; Settings is where the system's
+	// settings fix it, for the card's "去系统设置" (M5, DESIGN §6.13): empty
+	// while the system has no switch for Deneb.
+	Detail   string
+	Settings string
 }
 
 // Login is when a device's login runs out. Only my own devices tell the

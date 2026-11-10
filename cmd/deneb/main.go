@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os"
 	"path/filepath"
@@ -24,9 +25,19 @@ func main() {
 	a.sims = sims
 	if lc != nil {
 		go keepEngine(a, lc)
+		// This computer's diagnostics package, from the engine (M6, DESIGN
+		// §6.14); the demo only pretends.
+		a.diagnostics = func() (string, error) { return saveDiagnostics(lc) }
+		// The first time's steps (M6, DESIGN §7.3): signing in here, to
+		// the server whose pin the window knows (others in the browser);
+		// the network adapter, where the window puts it in.
+		a.signer = client.NewSignIn(lc, map[string]string{m1Control: m1ControlPin})
+		a.onboarded, a.saveOnboarded = onboardedState()
+		a.adapter = adapterInstaller(lc)
 	}
 	a.copyText = mygo.Clipboard.WriteText
 	a.openURL = mygo.Shell.OpenExternal
+	a.reveal = mygo.Shell.ShowItemInFolder
 	// Invite links (deneb://join/<token>), from the landing page or pasted
 	// into a browser. Registered before Run, to get the one the app opens
 	// with.
@@ -151,6 +162,13 @@ const (
 	m1ControlPin = "sha256:a90009bbefa6cbcad0971350099e2bb54c4f9968a8cdf1401ab54c6861cf0dd4"
 )
 
+// notAllowedText is what the window says when this computer's engine is
+// another account's: the one that installed Deneb on Linux, or its
+// service on Windows. It runs, and reinstalling would not help; this
+// account cannot use it (localclient.ErrNotAllowed). The user chose the
+// wording on 11-10: it says what to do.
+const notAllowedText = "Deneb 在这台电脑上是给另一个账户用的，请换回那个账户"
+
 // keepEngine keeps this computer's engine running while the window is open
 // (§2.4: in user-space mode the client starts it, detached, so that closing
 // the window never takes a connection down): it starts the engine when
@@ -176,10 +194,14 @@ func keepEngine(a *app, lc *localclient.Client) {
 		err := lc.EnsureRunning(ctx, localclient.SpawnOptions{Binary: bin, Env: env})
 		cancel()
 		msg := ""
-		if err != nil {
+		switch {
+		case errors.Is(err, localclient.ErrNotAllowed):
+			// Nothing to start: the engine is there, for another account.
+			msg = notAllowedText
+		case err != nil:
 			log.Printf("deneb: starting the engine: %v", err)
 			msg = "启动不了 Deneb 引擎，请重新安装 Deneb"
-		} else if !followed {
+		case !followed:
 			followed = true
 			go followEngineOnce(lc)
 		}

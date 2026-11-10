@@ -20,7 +20,13 @@ func (a *app) view(c *ui.Context) {
 	// the store's snapshot, which the canvas is brought to.
 	a.drain(c)
 	a.sync(c)
+	a.checkOnboard()
 	p := colors(c)
+	if o := a.onboard; o != nil && o.leaving.IsZero() {
+		// The first time's steps, the whole window (DESIGN §7.3).
+		a.onboardView(c, p)
+		return
+	}
 	switch {
 	case !a.snap.Engine && a.snap.Version == 0, a.snap.LoggedIn && !a.snap.Loaded:
 		a.startingView(c, p)
@@ -48,6 +54,15 @@ func (a *app) view(c *ui.Context) {
 			a.inviteLayer(c, p)
 		})
 		a.personChip(c, p)
+		if a.chrome != nil {
+			// The window buttons as the system draws them, for the
+			// recordings of Windows and Linux (DESIGN §7.2).
+			a.chrome(c, p, bar)
+		}
+		if a.onboard != nil {
+			// The first time's steps fading away over the window.
+			a.onboardOver(c, p)
+		}
 	})
 }
 

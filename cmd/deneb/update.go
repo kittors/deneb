@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"io"
@@ -19,13 +20,20 @@ import (
 	"github.com/kittors/deneb/engine/localapi/apitype"
 )
 
+// appIcon is the update window's icon, the app's own (mygo.json's), built
+// in: among the resources, every platform's package would carry it as a
+// file of its own beside the icon that platform already has (DESIGN §15).
+//
+//go:embed icon.png
+var appIcon []byte
+
 // Updates (design/plan/m6/client.md, i4). MyGo's updater checks the latest
 // release in the background, a day apart, and offers what it finds in its
 // window, drawn in native UI as Deneb's are. Only builds with updates in
 // mygo.json check: development builds never do, nor the .deb, which a new
 // .deb updates with its engine.
 func useUpdater() {
-	mygo.Use(native.New(updater.Options{}))
+	mygo.Use(native.New(updater.Options{Icon: appIcon}))
 	if dir := os.Getenv("DENEB_UPDATE_SOURCE"); dir != "" {
 		// A release before it is published, from a folder that holds what
 		// `mygo build` wrote for it. Its files must be signed with the key

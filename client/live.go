@@ -50,6 +50,9 @@ type Live struct {
 	usage    *proto.RelayUsage
 	joins    map[string]string
 	usageNow chan struct{}
+	// proxy is which proxy program runs here, for the notice of one taking
+	// the connections (M6).
+	proxy runningProxy
 }
 
 // NewLive returns the store of the engine lc talks to. It watches nothing
@@ -301,6 +304,10 @@ func (l *Live) buildLocked(now time.Time) *model.Snapshot {
 					s.Features[f] = true
 				}
 			}
+			// The engine's, not the server's: this computer's diagnostics
+			// package (M6, DESIGN §6.14); an engine before it says so when
+			// asked. Not with an M1 server, whose window shows M1's.
+			s.Features[model.FeatureDiagnostics] = true
 		}
 		if v.Me != "" {
 			s.Me = model.PersonID(v.Me)
@@ -355,6 +362,12 @@ func (l *Live) buildLocked(now time.Time) *model.Snapshot {
 			for _, r := range lv.Relays {
 				ml.Relays = append(ml.Relays, model.RelayID(r))
 			}
+			// The ones people dragged in, as an M4 server says.
+			for _, r := range lv.AddedRelays {
+				if s.Can(model.FeatureRelays) {
+					ml.AddedRelays = append(ml.AddedRelays, model.RelayID(r))
+				}
+			}
 			if ml.Mode == model.ModeShare && ml.Owner != s.Me {
 				// A member of a LAN that only hands out devices has of it
 				// what it gives them, under "共享给我" (DESIGN §6.11).
@@ -394,10 +407,14 @@ func (l *Live) buildLocked(now time.Time) *model.Snapshot {
 	// people have.
 	for _, p := range st.Engine.Problems {
 		if p.Code == apitype.ProblemProxy {
-			s.Notices = append(s.Notices, model.Notice{Code: p.Code, Short: "Clash 可能挡住连接",
-				Message: "Clash 一类的软件正在接管网络，局域网里的设备可能连不上", Rule: p.Rule})
+			// Which program it is, the store looks for among the running
+			// ones (M6, DESIGN §6.14); the engine does not say.
+			if app, ok := l.proxy.known(now, func() { l.update(func(time.Time) {}) }); ok {
+				s.Notices = append(s.Notices, proxyNotice(p.Code, p.Rule, app))
+			}
 		}
 	}
+	s.Kernel = st.Mode == apitype.ModeKernel
 	paths, next := l.deb.at(now)
 	s.Paths = paths
 	// M4: how long a round trip through each relay takes, as the devices

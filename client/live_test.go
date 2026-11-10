@@ -383,6 +383,9 @@ func TestLivePause(t *testing.T) {
 // rule with it (DESIGN §6.7, §6.8).
 func TestLiveUsingAndProxy(t *testing.T) {
 	w, l := live(t, fakeworld.Ready)
+	// Clash runs here (M6, DESIGN §6.14: the store names the program it
+	// finds running).
+	l.SetRunningPrograms(func(context.Context) ([]string, error) { return []string{"launchd", "verge-mihomo"}, nil })
 	waitFor(t, l, "the world", func(s *model.Snapshot) bool { return len(s.LANs) == 2 })
 	t0 := time.Date(2026, 11, 8, 18, 0, 0, 0, time.UTC)
 	build := apitype.DeviceID(fakeworld.Build)

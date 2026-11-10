@@ -7,9 +7,9 @@
   "urlSchemes": [
     "deneb"
   ],
-  "icon": "resources/icon.png",
+  "icon": "icon.png",
   "macos": {
-    "icon": "resources/Deneb.icns"
+    "icon": "Deneb.icns"
   },
   "windows": {
     "installerInclude": "../../deploy/windows/installer.nsh"

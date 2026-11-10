@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -193,6 +195,8 @@ type notice struct {
 	commit func(c *ui.Context)
 	// orb: it is about a relay, whose ball leads it (M4).
 	orb bool
+	// undoLabel names its button when that is no undo: "在访达中显示" (M6).
+	undoLabel string
 }
 
 // pending is an op the view sent that the store has not confirmed yet. It
@@ -229,6 +233,15 @@ type app struct {
 	// system's app for it: the window's, or a test's.
 	copyText func(string)
 	openURL  func(string) error
+	// signer signs this computer in from the first step; adapter puts the
+	// network adapter in as an administrator, where the window does that
+	// (Windows); onboarded: the first time's steps were done on this
+	// computer, or put off, which saveOnboarded keeps. The real window's:
+	// the demo pretends (DESIGN §7.3).
+	signer        signer
+	adapter       func(ctx context.Context) error
+	onboarded     bool
+	saveOnboarded func()
 
 	people  map[string]*person
 	members []string  // the people of the LAN, in the order they joined
@@ -237,6 +250,26 @@ type app struct {
 	trayOff map[string]*ui.Point
 	slots   map[string]ui.Point // where each tray item's slot is in the canvas, from the last layout
 	relays  []*relayStop
+	// strip is the height of the strip the window buttons take above the
+	// header, where they are at the top right (DESIGN §7.2); platform is
+	// where the app runs, as runtime.GOOS says ("windows": the system
+	// rounds and outlines the tray's panel); chrome, set by the
+	// recordings, draws the window buttons as the system does.
+	strip float32
+	// onboard is the first time's steps while they show (DESIGN §7.3).
+	onboard *onboarding
+	// diagAt is when the diagnostics package began to be put together, while
+	// it is (DESIGN §6.14); diagBusy, while the engine puts it together.
+	// diagnostics has the engine put it together into the downloads, and
+	// says where (nil in the demo, which pretends); reveal shows a file in
+	// this system's file manager.
+	diagAt      time.Time
+	diagBusy    bool
+	diagnostics func() (string, error)
+	reveal      func(path string)
+
+	platform string
+	chrome   func(c *ui.Context, p *palette, bar ui.TitleBar)
 	// M4's relays in the tray and their cards (DESIGN §6.12): the "谁在用"
 	// chips as a card opened; the install commands asked for here, by
 	// their join, the one whose card the "+" opened, and when each was
@@ -408,6 +441,9 @@ func newApp(s client.Store, pl *places) *app {
 		beams:     map[string]*beamRun{},
 		geos:      map[string]*linkGeo{},
 	}
+	// Where the app runs: the first time's words and the toasts say what
+	// this system calls things (DESIGN §7.3, §6.14).
+	a.platform = runtime.GOOS
 	a.sync(nil)
 	if len(a.snap.LANs) > 0 {
 		a.lan = a.snap.LANs[0].ID

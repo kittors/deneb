@@ -312,7 +312,10 @@ func (d *Demo) Simulate(event string) {
 			if n := d.m3Event(s, event, now); n != s {
 				return n
 			}
-			return d.m4Event(s, event, now)
+			if n := d.m4Event(s, event, now); n != s {
+				return n
+			}
+			return d.m6Event(s, event, now)
 		}
 		return &n
 	})

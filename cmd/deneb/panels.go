@@ -486,7 +486,12 @@ func (a *app) toastView(c *ui.Context, p *palette, w, h float32, now time.Time) 
 						}
 						u.Transition(ui.ElementTransition{Duration: 120 * time.Millisecond, Colors: true})
 						u.AnimatePose(pressPose(u, 0.94), ui.Snappy)
-						u.Children(func() { ui.Text(c, "撤销").FontSize(13).FontWeight(600).TextColor(p.primary) })
+						label := "撤销"
+						if tn.undoLabel != "" {
+							// Not an undo: what to do next (§6.14).
+							label = tn.undoLabel
+						}
+						u.Children(func() { ui.Text(c, label).FontSize(13).FontWeight(600).TextColor(p.primary) })
 						if u.Clicked() {
 							undo := tn.undo
 							a.toast = nil
@@ -858,6 +863,9 @@ func (a *app) card(c *ui.Context, p *palette) {
 							top = 8
 						}
 						ui.Text(c, line).FontSize(12).TextColor(p.ink2).Padding(top, 4, 0, 4).SingleLine()
+					}
+					if d.id == a.self && a.snap.Can(model.FeatureDiagnostics) {
+						a.diagnosticsRow(c, p)
 					}
 				})
 			}

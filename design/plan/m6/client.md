@@ -81,25 +81,25 @@
   - 界面 deb 的依赖、文件位置看过都对；引擎用 `-X main.version` 写进去的版本对得上；Windows 的第三方许可证汇总一共 25 段（Go、23 个模块、Wintun）。
   - 连跑两遍，`SHA256SUMS` 不重复。
   - **没做到**：这台 Mac 没有 makensis，Windows 安装包没编出来，`installer.nsh` 还是没编过。装 makensis（`brew install makensis`）就能在本机出安装包；也可以等用户点头后，在 Windows 测试机上装一次、更新一次、卸载一次。
-- **别的**：`resources/` 里的 `Deneb.icns`（mac 的图标，700 KB）也被带进了 Windows 和 Linux 的包，没坏处，但白占地方。挪进 `resources/darwin/` 就只进 mac 的包；图标归 logo 那边，没动。
+- **别的**：`resources/` 里的 `Deneb.icns`（mac 的图标，700 KB）也被带进了 Windows 和 Linux 的包，没坏处，但白占地方。挪进 `resources/darwin/` 就只进 mac 的包；图标归 logo 那边，没动。（11-11：挪进 `resources/darwin/` 以后 Mac 的包里还是两份，最后放到了 `cmd/deneb/` 下，见下面"M6 第 1 批合进工作区"。）
 - **以后**：发版用 `mygo build -upload` 传到 GitHub 的草稿 Release（要 `gh` 和 `updates` 配置），引擎的 deb 用 `gh release upload` 补上。要不要做 GitHub Actions 自动打包，等开始发版再定。
 
-## 这台电脑的 Deneb 由别的账户在用时，窗口说什么（11-10，等用户定文案）
+## 这台电脑的 Deneb 由别的账户在用时，窗口说什么（用户 11-10 选了 B，11-11 合进工作区）
 
 - 什么时候出现：一台电脑上，Deneb 引擎只给一个账户用。Linux 上是装包的那个人，Windows 上是装服务时登录着的那个人。换了别的账户打开窗口，引擎在跑，但不让这个账户连（引擎线的 `localclient.ErrNotAllowed`）。
 - 现在窗口会说"启动不了 Deneb 引擎，请重新安装 Deneb"，不对：引擎没坏，重装也没用。
-- 补丁 `client-patches/m6-window-not-allowed.patch`（笔记目录，没合）：
+- 补丁 `client-patches/m6-window-not-allowed.patch` 的做法 11-11 随 M6 第 1 批合进工作区，那句话用用户选的 B："Deneb 在这台电脑上是给另一个账户用的，请换回那个账户"。当时的补丁：
   - 接住这个错，不再去起引擎，在"正在连接"那个位置换成一句话。
   - 窗口起用户态引擎时照旧传 M1 服务器地址。正式版引擎自己带着，但开发和测试机上用的测试版（denebtest）不带；不传的话，点"登录"会报"没有配置 Deneb 服务器地址。"（引擎线 11-10 提醒）。
   - 三个平台 vet 和单测都过了（用 `-overlay` 验的，没动工作区）。
-- 那一句话，补丁里先用 A，等用户选：
+- 那一句话，补丁里先用 A，用户 11-10 选了 B：
   - A："这台电脑上的 Deneb 正由另一个账户使用，这个账户打不开它"
   - B："Deneb 在这台电脑上是给另一个账户用的，请换回那个账户"
   - 命令行引擎线已经写成："这台电脑上的 Deneb 引擎在为别的用户运行，这个用户用不了它。"
 
-## i5、i6、i7 的设计（11-09 23:53 交付，等用户看）
+## i5、i6、i7 的设计（11-09 23:53 交付，用户 11-10 按推荐批了）
 
-- 设计写在 DESIGN §7.3（首次打开的引导）、§6.14（导出诊断包、别的代理软件），主树已合，都标了"设计稿，等用户看过"。
+- 设计写在 DESIGN §7.3（首次打开的引导）、§6.14（导出诊断包、别的代理软件），主树已合，当时标了"设计稿，等用户看过"，11-11 改成"用户 11-10 看过，按推荐定"。
 - 演示在副本 `/tmp/deneb-m6` 里（M5 的副本再加 M6）：
   - `cmd/deneb/onboard.go`：引导的三步，加上诊断包那一行；
   - `client/demo_m6.go`：事件 `m6`、`m6-fresh`、`notice-surge`、`notice-v2rayn`；
@@ -107,6 +107,26 @@
 - 交付在 `~/Desktop/Deneb组网demo/M6-装得上/第1批-首次打开/`，6 个场景各有浅色、深色录像和截图：01 登录（邮箱、验证码，错了格子抖一下）、02 装网卡（为什么要权限、等系统允许、装好了；另有"先不装"的截图）、03 新建第一个局域网、04 加入朋友的局域网（粘贴链接、看邀请、加入）、05 导出诊断包、06 别的代理软件的提示（Surge、v2rayN）。
 - 12 段录像用 `frame-check.py` 查过，都没有单帧跳变、没有突然跳变；录帧用 `DENEB_M6=<目录> go test -run 'TestM6Frames$' ./cmd/deneb`，交付脚本是 `/tmp/deneb-tools/review/deliver_m6.py`。
 - 没做的：
-  - 真客户端里的引导、装服务（Windows 的 runas，mac 的 SMAppService）、诊断包接引擎的 `GET /v1/diagnostics`，都等用户看过设计；
-  - 正式的登录方式等用户定；
+  - 真客户端里的引导、装服务（Windows 的 runas，mac 的 SMAppService）、诊断包接引擎的 `GET /v1/diagnostics`，都等用户看过设计（11-11 做了：Windows 照引擎线的新流程装服务，mac 的 SMAppService 随 i1 搁置）；
+  - 正式的登录方式等用户定（用户 11-10 按推荐：照现在的邮箱加验证码，在窗口里填）；
   - 托盘图标、应用图标等 logo 会话换完再跟上。
+
+## M6 第 1 批合进工作区（11-11）
+
+- **合法**：补丁 `client-patches/m6-desktop-batch1-on-m5.patch` 是对着 M5 的副本做的，M5 还没合（另一个会话在单独的工作区做）。所以拿 M5 副本当底版，三方合到 M4 的状态上：`panels.go` 直接取 M6 的，`client/demo.go`、`client/model/model.go` 合并干净，`cmd/deneb/model.go`、`view.go`、`views.go` 各一处冲突，都取 M6 那边。
+- **给 M5 留的桩**（M5 合进来时由那个会话收拾）：
+  - `cmd/deneb/model.go`：`strip`、`platform`、`chrome` 三个字段照 M5 的原样写着；`platform` 在 `newApp` 里设成这台电脑的系统，M6 拿它定装网卡那一步出不出、提示条说"在访达中显示"还是"在资源管理器中显示"；`strip`、`chrome` 还没人设。
+  - `cmd/deneb/view.go`：`if a.chrome != nil { a.chrome(c, p, bar) }` 留着，M5 不设就什么都不做。
+  - `client/model/model.go`：`Notice` 的 `Detail`、`Settings` 照 M5 的原样加上（M6 的提示要用 `Detail`）；M5 的本地网络提示 `LocalNetwork` 没加。
+  - `cmd/deneb/m6frames_test.go`：`Simulate("m5")` 在没有 M5 时什么都不做；清目录的函数叫 `resetDir`，和 M5 的 `reset` 一样，M5 进来后留一个。
+  - 演示录像：05 诊断包、06 代理软件两场的画布是 M4 的世界（没有 M5 的"公司机房"），卡片和胶囊和用户批过的逐像素一样；M5 进来后再录一遍就回到批过的样子。
+- **接上真的**：
+  - 别的账户：`localclient.ErrNotAllowed` 时说 B，不再去起引擎。
+  - 导出诊断包：`cmd/deneb/diag.go`，引擎打包存进「下载」，提示条带"在访达中显示"（`mygo.Shell.ShowItemInFolder`）。
+  - 代理软件：`client/proxy.go`，在正在跑的程序里找是哪个，按它的写法说。
+  - 首次打开：`client/signin.go`（窗口里登录）、`cmd/deneb/firstrun.go`（只出现一次、Windows 装网卡）、`onboard.go` 里真的和演示的两条路。
+- **中转站的一处修正（M4 的代码）**：用 Leo 的账号录首次打开时，画布上多了一个"香港 · 拥有者的服务器"：种子文件给每个局域网都配的那台（hk-spare 上的），在别人的局域网里被当成了朋友拖进来的。改成照服务器给的 `addedRelays` 认谁拖进来的；没人拖、又不是公共的，就是部署配的，当公共的显示。r6 用改过的代码重跑过。
+- **安装包里的图标**：三个图标都从 `resources/` 挪到 `cmd/deneb/` 下、`mygo.json` 旁边：`icon.png`（Windows、Linux 打包用的方块）、`icon-dev.png`（开发版）、`Deneb.icns`（Mac）。`resources/` 里的文件会原样进每个平台的包：原来 Windows、Linux 的包里多带 `Deneb.icns` 和 `icon.png`，Mac 的包里 `Deneb.icns` 有两份（打包时另做了一份 `AppIcon.icns`）。先挪进 `resources/darwin/` 试过，Mac 的包里还是两份，所以放到资源目录外面，由 `mygo.json` 指过去。`icon.png` 还有一个用处：MyGo 的更新窗口在运行时从资源目录读它当左上角的图标，三个平台都是；现在编进程序（`update.go` 的 `appIcon`）交给更新窗口，样子不变，总大小也不变。打了三个平台的包看过：Windows 只有 `Deneb.exe`；Linux 只有它自己的桌面图标（`deneb.png` 几张，打包时从 `icon.png` 做的）；Mac 只剩 `AppIcon.icns`，dmg 从 7.2 MB 降到 6.5 MB。图标是 logo 线 11-11 换的新版（43225f6），这里只挪了位置，DESIGN §15 里客户端那一句跟着改了。以后换图标，换 `cmd/deneb/` 下这三个文件。
+- **登录和启动画面的星**：logo 线换的新星没有圆核，同样 44 点看着比原来轻。单独量一颗星盖住的面积：旧星 44 点 177 平方点，新星 44 点 117，48 点 140，52 点 164；浅色、深色和"登录"按钮并排看，52 点最像原来，就用 52 点（`views.go` 的 `markSize`），按钮跟着往下挪 4 点。DESIGN §15 的"44 点星"改成 52 点。对照图放在桌面交付的 `品牌/第3批-精致版/` 里（"登录和启动画面的星_44和52点"，浅色、深色）。
+- **测过**：副本里（M4 加 M6，旧 logo）三个平台 vet；`client`、`cmd/deneb` 全部测试（新加：窗口里登录对着一个长得像登录页的 TLS 服务器、指纹不对拒绝、不认得的服务器交给浏览器；代理软件四种和找程序；首次打开在假引擎上从登录走到建局域网、只出现一次、下一步怎么跳；诊断包的文件名和重名）；M1 基线 50 帧；演示 6 场两种颜色重录，42 张静帧里引导那几场只差新的星，诊断包、代理软件两场只差 M5 的画布，卡片和胶囊一样；12 段录像干净。合进工作区（带新 logo、52 点的星、挪过的图标）以后：真客户端 i5、i7 浅色、深色各一遍，4 段录像干净；工作区里三个平台 vet、gofmt 干净，`client`、`cmd/deneb` 全部测试和 M1 基线 50 帧都过了；三个平台的包打过（跳过安装器），看了里面的文件。
+
