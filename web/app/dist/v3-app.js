@@ -1048,12 +1048,15 @@
         return [r1((r.left - c.left + r.width / 2) / z), r1((r.top - c.top + r.height / 2) / z), r1(r.width / z), r1(r.height / z)];
       };
       const f = { t: Math.round(now), h: this.held || 0, e: {}, l: {} };
+      // (web) Each page's boxes under its own names: a device on two LANs'
+      // pages is two boxes, one going as the other comes, not one jumping.
+      const pg = this.page ? this.page + '/' : '';
       for (const id in this.nodes) {
         const n = this.nodes[id];
         const tile = n.el.querySelector('.tile, .orb') || n.el;
         const nm = n.el.querySelector(':scope > .name');
-        f.e['node:' + id] = [...box(tile), op(n.el), (n.el.__wiggle || 0) > now ? 1 : 0, this.held === id ? 1 : 0];
-        if (nm) f.e['name:' + id] = [...box(nm), op(nm), 0, this.held === id ? 1 : 0];
+        f.e['node:' + pg + id] = [...box(tile), op(n.el), (n.el.__wiggle || 0) > now ? 1 : 0, this.held === id ? 1 : 0];
+        if (nm) f.e['name:' + pg + id] = [...box(nm), op(nm), 0, this.held === id ? 1 : 0];
       }
       for (const k in this.links) {
         const l = this.links[k];
@@ -1063,7 +1066,7 @@
       for (const sel of ['.area', '.toast', ...(this.o.trace || [])])
         for (const el of document.querySelectorAll(sel)) {
           const key = el.dataset.id || el.dataset.d || el.dataset.k;
-          if (key && el.offsetParent) f.e[sel + ':' + key] = [...box(el), op(el), 0, el.classList.contains('lifted') || el.classList.contains('ghost') || el.classList.contains('dragging') ? 1 : 0];
+          if (key && el.offsetParent) f.e[sel + ':' + pg + key] = [...box(el), op(el), 0, el.classList.contains('lifted') || el.classList.contains('ghost') || el.classList.contains('dragging') ? 1 : 0];
         }
       if (this.sheetEl) f.sheet = this.sheetEl.style.display !== 'none' ? op(this.sheetEl) : -1;
       // Stepped aside for something on the move, or coming back: a fade
@@ -1089,13 +1092,19 @@
     const k = '__soft_' + key;
     let st = el[k];
     if (!st) st = el[k] = { sp: new D.Spring(from, { duration: 360, bounce: 0 }), off: null };
+    // (web) At rest within a hundredth of the way it has to go, at most 0.2:
+    // a width in pixels rests as before; a scale (0.62 → 1) no longer
+    // snaps to its end at 0.8.
+    const span = Math.abs(target - (st.off ? st.sp.sample(D.now()).x : from)) || 1;
+    st.tol = Math.min(0.2, span * 0.01);
+    st.vtol = Math.min(4, span * 0.2);
     st.sp.to(target);
     st.apply = apply;
     st.done = done;
     if (!st.off)
       st.off = D.onFrame((now) => {
         const { x, v } = st.sp.sample(now);
-        if (Math.abs(x - st.sp.target) < 0.2 && Math.abs(v) < 4) {
+        if (Math.abs(x - st.sp.target) < st.tol && Math.abs(v) < st.vtol) {
           st.off();
           delete el[k];
           st.apply(st.sp.target, true);

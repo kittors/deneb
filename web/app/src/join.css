@@ -475,3 +475,18 @@ body {
   background: var(--bg);
   box-shadow: var(--shadow-md);
 }
+/* The members' balls under the invite's head (§14.5). */
+.jc-stack {
+  display: flex;
+  margin: 14px 0 0 58px;
+}
+.jc-stack .ball {
+  width: 26px;
+  height: 26px;
+  font-size: 11px;
+  margin-left: -5px;
+  box-shadow: 0 0 0 2px var(--bg), inset 0 -1.5px 3px rgba(0, 0, 0, 0.14);
+}
+.jc-stack .ball:first-child {
+  margin-left: 0;
+}

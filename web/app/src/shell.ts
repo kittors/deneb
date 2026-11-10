@@ -7,8 +7,10 @@ import './v3-glyphs.ts';
 import './v3-links.ts';
 import './v3-app.ts';
 import tokens from './tokens.js';
-import { colorIndex, listedLANs } from './model.ts';
-import type { UserView, LANView, PersonID } from './model.ts';
+import { colorIndex, listedLANs, sharedOnly } from './model.ts';
+import type { UserView, LANView, PersonID, InvitePreview } from './model.ts';
+import { ApiError } from './api.ts';
+import { D } from './clock.ts';
 import type { Ctx } from './main.ts';
 
 // The design's drawing lives on window: App (the frame, canvas, drag,
@@ -85,6 +87,8 @@ export function people(v: UserView): void {
     P[p.id] = { name: p.id === v.me ? '我' : p.displayName || p.name, full: p.displayName || p.name, ch: p.initial || (p.displayName || p.name).slice(0, 1), c: tokens.color.owners[colorIndex(v.me, p.id)] };
   }
   for (const l of v.lans) P[PUBLIC(l.id)] = { name: l.name, full: l.name, ch: l.name.slice(0, 1), c: tokens.color.owners[5] };
+  // Whoever invites me by name too (they may be no one I know yet).
+  for (const inv of v.invitations || []) if (!P[inv.inviter.id]) P[inv.inviter.id] = { name: inv.inviter.displayName || inv.inviter.name, full: inv.inviter.displayName || inv.inviter.name, ch: inv.inviter.initial || (inv.inviter.displayName || inv.inviter.name).slice(0, 1), c: tokens.color.owners[colorIndex(v.me, inv.inviter.id)] };
   // Whoever shares with me has a ball and a color, listed among the people or not.
   for (const s of v.sharedWithMe || []) if (!P[s.from]) P[s.from] = { name: s.fromLAN || '别人', full: s.fromLAN || '别人', ch: (s.fromLAN || '?').slice(0, 1), c: tokens.color.owners[colorIndex(v.me, s.from)] };
 }
@@ -133,8 +137,18 @@ export function frame(root: HTMLElement, ctx: Ctx, sel: string): Any {
       if (was !== down && last) app.setTitle(...last);
     });
   }
+  // Another page: the canvas and the header's words fade in over the old
+  // ones' place (DESIGN §14.10 M3-13 "画布淡入替换"), as the desktop's LANs.
+  const switching = !!current && current.sel !== sel;
   current = { ctx, sel };
+  if (switching)
+    for (const el of [app.canvas, app.win.querySelector('.head')] as HTMLElement[]) el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 220, easing: 'ease-out' });
   if (!seenShares) seenShares = new Set((v.sharedWithMe || []).map((s) => s.share));
+  if (!seenInvites) {
+    // An invite by name waiting when the page opens shows its card once.
+    seenInvites = new Set();
+    D.after(700, () => current && checkInvites(current.ctx.view()));
+  }
   // Where the user put things is kept per page (a device of mine has a
   // place in each LAN, and one in 我的设备).
   app.page = sel;
@@ -159,32 +173,53 @@ export function clear(): void {
   }
   for (const k of Object.keys(app.links)) app.unlink(k);
   app.canvas.replaceChildren(...[...app.canvas.children].filter((c: Element) => c.classList.contains('links')));
-  app.onNodeBounds = app.onNodeTarget = app.onNodeDrop = app.onNodeDragging = app.onNodeEnd = app.onDeviceClick = app.onSheetClose = null;
+  app.onNodeBounds = app.onNodeTarget = app.onNodeDrop = app.onNodeDragging = app.onNodeEnd = app.onDeviceClick = app.onSheetClose = app.onNodeStart = null;
   app.spotRules = null;
-  if (app.inviteBtn) app.inviteBtn.style.display = 'none';
+  // A page may let a held node up into the header (a LAN's, to the balls).
+  delete app.clampTile;
+  if (app.inviteBtn) {
+    app.inviteBtn.style.display = 'none';
+    app.inviteBtn.classList.remove('full');
+  }
+  const head = app.win.querySelector('.head');
+  head.querySelector('.seat-line')?.remove();
+  head.querySelector('.stack-hint')?.remove();
+  const stack = head.querySelector('.stack');
+  stack.className = 'stack';
+  stack.replaceChildren();
+  head.querySelector('.title').classList.remove('clickable');
+  head.querySelector('.title').onclick = null;
 }
 
 // The sidebar, as the desktop's (DESIGN.md §7, §14.3): my LANs; 我的设备,
 // 共享给我 and the relays; then the console of each LAN I own. What the
 // web does not have yet (全部, 新建局域网) is left out rather than shown
-// dead.
+// dead. A LAN I wait to be let into is a grey row, "等同意" (§6.7); one of
+// mine with someone or something waiting for me has a small blue dot.
 function side(v: UserView, sel: string, ctx: Ctx): void {
   const P = App.PEOPLE;
-  const row = (id: string, label: string, lead: string, tail = '') => `<div class="nav ${id === sel ? 'on' : ''}" data-id="${esc(id)}" role="link" tabindex="0">${lead}<span class="nav-label">${esc(spaced(label))}</span>${tail}</div>`;
+  const row = (id: string, label: string, lead: string, tail = '', cls = '') => `<div class="nav ${id === sel ? 'on' : ''} ${cls}" data-id="${esc(id)}" role="link" tabindex="0">${lead}<span class="nav-label">${esc(spaced(label))}</span>${tail}</div>`;
   const dots = (l: LANView) => `<span class="dots">${l.members.filter((m) => m.state === 'joined').slice(0, 3).map((m) => App.dot(P[m.person] ? P[m.person].c : tokens.color.owners[1])).join('')}</span>`;
-  const lans = listedLANs(v);
+  const lans = v.lans.filter((l) => !sharedOnly(v, l));
   const count = (n: number) => (n > 0 ? `<span class="count">${n}</span>` : '');
   const shared = (v.sharedWithMe || []).filter((s) => !leaving.has(s.share)).length;
-  let html = lans.length ? `<div class="group">局域网</div>` + lans.map((l) => row('lan:' + l.id, l.name, dots(l))).join('') + `<div class="gap"></div>` : '';
+  const waits = (l: LANView) => l.owner === v.me && (l.members.some((m) => m.state === 'pending') || l.devices.some((d) => d.pending));
+  const lanRow = (l: LANView) => (l.pending ? row('lan:' + l.id, l.name, dots(l), `<span class="wait-tag">等同意</span>`, 'wait') : row('lan:' + l.id, l.name, dots(l), waits(l) ? `<span class="ndot" aria-label="有等你同意的"></span>` : ''));
+  // Invites made out to me by name, put off: a grey row each, which shows
+  // the invite again (§6.7 "收到的邀请").
+  const invs = (v.invitations || []).filter((i) => i.state === 'pending');
+  const invRow = (i: InvitePreview) => row('invitation:' + i.invite, `${i.inviter.displayName || i.inviter.name}邀请你 · ${i.lanName}`, `<span class="dots">${App.dot(P[i.inviter.id]?.c || tokens.color.owners[1])}</span>`, '', 'wait');
+  let html = lans.length || invs.length ? `<div class="group">局域网</div>` + lans.map(lanRow).join('') + invs.map(invRow).join('') + `<div class="gap"></div>` : '';
   html += `<div class="group">设备</div>` + row('mine', '我的设备', G.ui('home', 18), count(v.devices.filter((d) => d.owner === v.me && !d.publicLAN).length));
   html += row('shared', '共享给我', G.ui('inbox', 18), count(shared)) + row('relays', '中转站', G.ui('relayLine', 18));
-  for (const l of lans.filter((x) => x.owner === v.me)) html += `<div class="gap"></div><div class="group">${esc(spaced('管理' + l.name))}</div>` + row('share:' + l.id, '设备共享', G.ui('share', 18));
+  for (const l of listedLANs(v).filter((x) => x.owner === v.me)) html += `<div class="gap"></div><div class="group">${esc(spaced('管理' + l.name))}</div>` + row('share:' + l.id, '设备共享', G.ui('share', 18));
   const list = app.win.querySelector('.side-list');
   list.innerHTML = html;
   for (const nav of list.querySelectorAll('.nav[data-id]')) {
     const go = () => {
       const id = (nav as HTMLElement).dataset.id as string;
       const [kind, arg] = id.includes(':') ? [id.slice(0, id.indexOf(':')), id.slice(id.indexOf(':') + 1)] : [id, ''];
+      if (kind === 'invitation') return showInvitation(arg, ctx);
       ctx.go(kind === 'lan' ? '/lan/' + encodeURIComponent(arg) : kind === 'share' ? '/share/' + encodeURIComponent(arg) : '/' + kind);
     };
     nav.addEventListener('click', go);
@@ -195,15 +230,70 @@ function side(v: UserView, sel: string, ctx: Ctx): void {
 // Shares I let go of (共享给我's 不要了) whose undo is still up: off the page
 // and out of the count already; the server hears of it when the undo goes.
 export const leaving = new Set<string>();
+// People whose seat I am freeing (the seats' card) while the undo is up:
+// out of my seats already (DESIGN.md §6.11 位置).
+export const freeing = new Set<string>();
+
+// showInvitation is an invite made out to me by name, as a card at the top
+// right (§6.7, as the desktop's): who and where, and what is in it; "以后再
+// 说" puts it off (its row stays), "加入" joins and goes there.
+export function showInvitation(id: string, ctx: Ctx): void {
+  const v = ctx.view();
+  const inv = (v.invitations || []).find((i) => i.invite === id);
+  if (!app || !inv) return;
+  const from = inv.inviter.displayName || inv.inviter.name;
+  const people = inv.members || [];
+  const sub = inv.seatsFull ? `${from}的位置满了，腾出来就能加入` : people.length ? `里面有 ${people.length} 个人，${inv.devices ?? 0} 台设备` : '';
+  const s = app.sheet(
+    `<div class="top person-top">${App.ball(inv.inviter.id, 'big')}<div><b>${esc(spaced(`${from}邀请你加入「${inv.lanName}」`))}</b>${sub ? `<span>${esc(spaced(sub))}</span>` : ''}</div></div>` +
+      `<div class="seat-foot inv-foot"><button class="btn ghost sm" type="button" data-act="later">以后再说</button><button class="btn primary sm" type="button" data-act="join">加入</button></div>`,
+    'invitation:' + id,
+  );
+  (s.querySelector('[data-act="later"]') as HTMLElement).onclick = () => app.closeSheet();
+  const join = s.querySelector('[data-act="join"]') as HTMLButtonElement;
+  join.onclick = async () => {
+    join.disabled = true;
+    app.closeSheet();
+    try {
+      const r = await ctx.op('invite.accept', { invitation: id });
+      ctx.go('/lan/' + encodeURIComponent(r.result?.lan || inv.lan));
+    } catch (e) {
+      app.toast(e instanceof ApiError ? e.message : '没能加入，再试一次', {});
+    }
+  };
+}
+
+// The sidebar's rows something held can be let go on, in canvas
+// coordinates (a device of mine, a person, a relay onto a LAN's row).
+export function sideRowAt(p: { x: number; y: number }, kind = 'lan'): { id: string; el: HTMLElement } | null {
+  if (!app) return null;
+  for (const el of app.win.querySelectorAll(`.side .nav[data-id^="${kind}:"]`) as NodeListOf<HTMLElement>) {
+    const r = app.rectOf(el);
+    if (p.x >= r.x - 2 && p.x <= r.x + r.w + 2 && p.y >= r.y - 2 && p.y <= r.y + r.h + 2) return { id: (el.dataset.id as string).slice(kind.length + 1), el };
+  }
+  return null;
+}
+export const sideRow = (id: string, kind = 'lan'): HTMLElement | null => (app ? app.win.querySelector(`.side .nav[data-id="${kind}:${CSS.escape(id)}"]`) : null);
 
 // When the view changes, the sidebar follows (a LAN joined, a name changed).
 // Something newly shared with me lights its row up a moment, as a LAN that
 // comes in does on the desktop (one I let go of and took back does not).
 let seenShares: Set<string> | null = null;
+let seenInvites: Set<string> | null = null;
+// checkInvites shows the card of an invite by name not seen yet this visit,
+// unless a card is open (then its row in the sidebar has it).
+function checkInvites(v: UserView): void {
+  if (!app || !current || !seenInvites) return;
+  const invs = (v.invitations || []).filter((i) => i.state === 'pending').map((i) => i.invite);
+  const fresh = invs.find((id) => !seenInvites!.has(id));
+  for (const id of invs) seenInvites.add(id);
+  if (fresh && app.sheetEl.style.display === 'none') showInvitation(fresh, current.ctx);
+}
 export function follow(v: UserView): void {
   if (!app || !current) return;
   people(v);
   side(v, current.sel, current.ctx);
+  checkInvites(v);
   const ids = (v.sharedWithMe || []).map((s) => s.share);
   const fresh = seenShares ? ids.filter((id) => !seenShares!.has(id)) : [];
   for (const id of ids) seenShares?.add(id);

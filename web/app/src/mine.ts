@@ -1,13 +1,14 @@
 // 我的设备 on the web (DESIGN.md §14.11): every device of mine, in a LAN or
 // not, in rows in the middle, each saying whether it is online (as a LAN's
-// canvas does on the web). Its card says which of my LANs it is in: a
-// click on one goes there; on one it is not in (dashed, "+"), adds it,
-// with undo (DESIGN.md §6.4's click instead of a drag). It lists whom I
-// have shared it with, each taken back with the ×, with undo (the seat is
-// let go once the undo is gone, share.release), and says that it is one
-// way. With no device yet, "this computer" dashed opens the download card
-// and fills in when this computer logs in.
-import { frame, clear, follow, App, G, esc, spaced, glyphOf, nameOf, ago, rows } from './shell.ts';
+// canvas does on the web). Dragged onto a LAN's row in the sidebar, it goes
+// into that LAN (§6.4); its card says which of my LANs it is in: a click
+// on one goes there; on one it is not in (dashed, "+"), adds it, with undo.
+// Its "分享给" is the LAN card's (sharecard.ts): whom it goes to, what it
+// opens to them, "+", the × that takes it back. With no device yet, "this
+// computer" dashed opens the download card and fills in when this computer
+// logs in.
+import { frame, clear, follow, App, G, esc, spaced, glyphOf, nameOf, ago, rows, sideRowAt } from './shell.ts';
+import { can, shareSection, wireShare, forget } from './sharecard.ts';
 import { D } from './clock.ts';
 import { ApiError } from './api.ts';
 import { downloadCard } from './download.ts';
@@ -86,6 +87,7 @@ export function minePage(root: HTMLElement, ctx: Ctx, _route: Route): () => void
     if (d.pending) return openDownload();
     const dv = devOf(id);
     if (!dv) return;
+    if (app.selected !== id) forget();
     app.selected = id;
     app.select(id);
     const st = d.off ? { c: '#a1a1aa', t: d.off, s: '它开机、连上网就会回来' } : { c: '#22C55E', t: '在线', s: '别人能用你开放的服务' };
@@ -97,30 +99,57 @@ export function minePage(root: HTMLElement, ctx: Ctx, _route: Route): () => void
           : `<button class="chip lan-add" data-l="${esc(l.id)}" aria-label="加进${esc(l.name)}">${G.ui('plus', 14)}${esc(spaced(l.name))}</button>`,
       )
       .join('');
-    const shares = (dv.shares || []).filter((s) => s.person !== v.me);
-    const shareChips = shares.map((s) => `<span class="mchip" data-k="${esc(s.person)}">${App.ball(s.person)}${esc(spaced(nameOf(v, s.person)))}<button class="x" title="收回" aria-label="从${esc(nameOf(v, s.person))}收回">${G.ui('close', 12)}</button></span>`).join('');
-    const oneWay = shares.length === 1 ? `只有${nameOf(v, shares[0].person)}能连你，反过来不行` : '只有他们能连你，反过来不行';
     const addrs = (dv.addrs || []).map((a) => a.replace(/\/\d+$/, '')).join('、');
+    const name = can(v, 'rename') ? `<button class="name-edit" type="button" title="改名">${esc(spaced(d.name))}</button>` : `<b>${esc(spaced(d.name))}</b>`;
     const sh = app.sheet(
       `<div class="top"><div class="tile-s"><div class="tile" style="--c:${P[v.me].c}">${G.device(d.type, 20)}</div></div>` +
-        `<div><b>${esc(spaced(d.name))}</b><span>我的设备</span></div>` +
+        `<div>${name}<span>我的设备</span></div>` +
         `<button class="icon-btn sheet-close" title="关闭" aria-label="关闭">${G.ui('close', 16)}</button></div>` +
         `<div class="status"><span class="badge" style="--c:${st.c}">${G.ui('online', 16)}</span><div>${esc(st.t)}<small>${esc(st.s)}</small></div></div>` +
         (lans.length ? `<div class="label">局域网</div><div class="people lan-chips">${chips}</div>` : '') +
-        (shares.length ? `<div class="label">分享给</div><div class="mchips open">${shareChips}</div><div class="hint">${esc(spaced(oneWay))}</div>` : '') +
+        shareSection(v, dv) +
         `<div class="card-foot"><button class="more">更多${G.ui('chevron', 14)}</button></div><div class="detail"><p>${esc(addrs ? '地址 ' + addrs : '')}</p></div>`,
       id,
     );
     for (const b of sh.querySelectorAll('.lan-in')) (b as HTMLElement).onclick = () => ctx.go('/lan/' + encodeURIComponent((b as HTMLElement).dataset.l as string));
     for (const b of sh.querySelectorAll('.lan-add')) (b as HTMLElement).onclick = () => addTo(id, (b as HTMLElement).dataset.l as string);
-    for (const x of sh.querySelectorAll('.mchip .x')) (x as HTMLElement).onclick = () => revoke(id, ((x as HTMLElement).closest('.mchip') as HTMLElement).dataset.k as string);
+    wireShare(app, ctx, () => v, sh, () => openCard(id), { parent: cv, x: centerX() });
+    const nb = sh.querySelector('.name-edit') as HTMLElement | null;
+    if (nb) nb.onclick = () => rename(nb, d.name, (to) => ctx.op('device.rename', { device: id, name: to }), () => openCard(id));
+  }
+  // rename turns a name into a field in place (§6.9): Enter or a click away
+  // keeps it, Esc goes back.
+  function rename(el: HTMLElement, name: string, save: (name: string) => Promise<unknown>, redraw: () => void): void {
+    const input = App.h(`<input class="name-input" type="text" maxlength="40" aria-label="名字">`) as HTMLInputElement;
+    input.value = name;
+    el.replaceWith(input);
+    input.focus();
+    input.select();
+    let done = false;
+    const end = (keep: boolean) => {
+      if (done) return;
+      done = true;
+      const to = input.value.trim();
+      if (keep && to && to !== name) save(to).catch((e) => failed(e, '没能改名，再试一次'));
+      redraw();
+    };
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') end(true);
+      else if (e.key === 'Escape') {
+        e.stopPropagation();
+        end(false);
+      }
+    });
+    input.addEventListener('blur', () => end(true));
   }
   app.onDeviceClick = (id: string) => openCard(id);
   app.onSheetClose = () => (app.selected = null);
   const again = (id: string) => app.selected === id && app.sheetEl.style.display !== 'none' && openCard(id);
   const failed = (e: unknown, text: string) => app.toast(e instanceof ApiError ? e.message : text, { parent: cv, x: centerX() });
 
-  // Into a LAN, from the card (lan.addDevice); undo takes it out again.
+  // Into a LAN (lan.addDevice), from the card or a drag onto its row; undo
+  // takes it out again. A LAN that wants its owner to let new devices in:
+  // the toast says it waits (§6.7).
   async function addTo(id: string, lan: string): Promise<void> {
     const l = v.lans.find((x) => x.id === lan);
     const d = DEVS[id];
@@ -130,32 +159,63 @@ export function minePage(root: HTMLElement, ctx: Ctx, _route: Route): () => void
     } catch (e) {
       return void failed(e, '没能加进去，再试一次');
     }
-    app.toast(`已把${d.name}加进${l.name}`, {
+    const waits = l.approveDevices && l.owner !== v.me;
+    app.toast(spaced(waits ? `${d.name}等${nameOf(v, l.owner)}同意` : `已把${d.name}加进${l.name}`), {
       dev: { type: d.type, owner: v.me },
       x: centerX(),
       undo: () => ctx.op('lan.removeDevice', { lan, device: id }).catch((e) => failed(e, '没能撤销，再试一次')),
     });
   }
-  // Taken back from someone: at once, with undo (the same share again); the
-  // seat goes once the undo is gone.
-  function revoke(id: string, person: string): void {
-    const dv = devOf(id), d = DEVS[id];
-    const s = dv?.shares?.find((x) => x.person === person);
-    if (!dv || !d || !s) return;
-    let undone = false;
-    ctx.op('share.revoke', { share: s.id }).catch((e) => failed(e, '没能收回，再试一次'));
-    app.toast(`已从${nameOf(v, person)}收回${d.name}`, {
-      dev: { type: d.type, owner: v.me },
-      x: centerX(),
-      undo: () => {
-        undone = true;
-        ctx.op('share.create', { device: id, person }).catch((e) => failed(e, '没能撤销，再试一次'));
-      },
-      gone: () => {
-        if (!undone) ctx.op('share.release', { share: s.id }).catch(() => {});
-      },
-    });
-  }
+
+  // ---- Onto a LAN's row in the sidebar (§6.4) ------------------------------------------------
+  // A device in the hand may go left, over the sidebar; on a LAN's row the
+  // row lights up and the device's second line says, in blue, what letting
+  // go does; on one it is in already, it says so, and goes back home.
+  app.clampTile = function (n: { id: string }, p: { x: number; y: number }) {
+    const q = App.prototype.clampTile.call(this, n, p);
+    // Over the sidebar it goes where the hand goes, up to its top rows.
+    if (p.x < q.x) {
+      q.x = Math.max(-200, p.x);
+      q.y = Math.max(-60, Math.min(q.y, p.y));
+    }
+    return q;
+  };
+  type Aim = { kind: string; el?: HTMLElement; lan?: string; has?: boolean; shrink?: number };
+  app.onNodeTarget = (n: { kind: string; id: string }, p?: { x: number; y: number }): Aim | null => {
+    if (n.kind !== 'device' || n.id === SELF || !p || p.x >= 0) return null;
+    const r = sideRowAt(p);
+    if (!r) return { kind: 'side', shrink: 0.62 };
+    const l = v.lans.find((x) => x.id === r.id);
+    const has = !!l && (l.devices.some((x) => x.device === n.id) || l.pending || (l.mode === 'share' && l.owner !== v.me));
+    return { kind: 'lan', el: has ? undefined : r.el, lan: r.id, has, shrink: 0.62 };
+  };
+  // Over the sidebar the tile is small (the row shows under it), its name
+  // gone, and a word beside it says what letting go does: blue when it
+  // goes in, grey when it is there already (§6.4).
+  const note = App.h(`<span class="rnote dnote"></span>`) as HTMLElement;
+  app.dragLayer.appendChild(note);
+  app.onNodeDragging = (n: { id: string; el: HTMLElement; x: number; y: number }, _p: unknown, t: Aim | null) => {
+    const l = t && t.lan ? v.lans.find((x) => x.id === t.lan) : null;
+    const text = l ? spaced(t!.has ? `${l.name}里已经有了` : `松手，加进${l.name}`) : '';
+    if (note.textContent !== text) note.textContent = text;
+    note.classList.toggle('go', !!l && !t!.has);
+    note.style.opacity = text ? '1' : '0';
+    note.style.left = n.x + 24 + 'px';
+    note.style.top = n.y + 'px';
+    (n.el.querySelector('.name') as HTMLElement).style.opacity = t ? '0' : '';
+  };
+  app.onNodeDrop = (n: { id: string; home: { x: number; y: number } }, t: Aim) => {
+    if (t.kind === 'lan' && !t.has && t.lan) {
+      // The row takes it with a soft blue flash, as a LAN that comes in.
+      t.el?.animate([{ background: 'color-mix(in srgb, var(--primary) 16%, var(--bg))' }, { background: 'color-mix(in srgb, var(--primary) 16%, var(--bg))', offset: 0.3 }], { duration: 1100, easing: 'ease-out' });
+      void addTo(n.id, t.lan);
+    }
+    app.settle(n, n.home, D.Smooth);
+  };
+  app.onNodeEnd = (n: { id: string; el: HTMLElement }) => {
+    note.style.opacity = '0';
+    (n.el.querySelector('.name') as HTMLElement).style.opacity = '';
+  };
 
   // ---- The download card, for "this computer" (§14.7) ---------------------------------------
   function openDownload(): void {
@@ -211,6 +271,7 @@ export function minePage(root: HTMLElement, ctx: Ctx, _route: Route): () => void
   if (D.recording) import('./rec-mine.ts').then(() => ((window as unknown as Record<string, unknown>).__ready = true));
   return () => {
     off();
+    note.remove();
     clear();
   };
 }

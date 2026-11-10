@@ -195,6 +195,10 @@ export interface InvitePreview {
   alreadyIn?: boolean;
   needsApproval?: boolean;
   seatsFull?: boolean;
+  // Who is in it already and how many devices it has (no emails): given
+  // while the link still works, or to someone in it already.
+  members?: Person[];
+  devices?: number;
 }
 
 export interface UserView {

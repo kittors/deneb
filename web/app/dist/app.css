@@ -1809,6 +1809,507 @@ body {
   margin-top: 10px;
 }
 
+/* ---- M3 on the web, filled in (DESIGN.md §6.7, §6.8, §6.11; 11-11) --------------------------- */
+
+/* The header's stack, live: a ball each, dashed for someone waiting or
+   invited (§6.7), the × on the pointer; it spreads for a held device of
+   mine, the balls it cannot go to faint, the one under the hand ringed. */
+.head .right {
+  position: relative;
+}
+.head .title.clickable {
+  cursor: pointer;
+}
+.stack.live {
+  align-items: center;
+}
+.sball {
+  position: relative;
+  display: inline-grid;
+  margin-left: -6px;
+  border-radius: 50%;
+  transition: margin-left 0.42s cubic-bezier(0.3, 1.15, 0.5, 1), opacity 0.16s ease-out, transform 0.22s cubic-bezier(0.3, 1.3, 0.5, 1);
+}
+.sball:first-child {
+  margin-left: 0;
+}
+.sball[data-how='member']:not(.me) {
+  cursor: pointer;
+}
+.stack .sball .ball {
+  margin-left: 0;
+}
+.stack.spread .sball {
+  margin-left: 8px;
+}
+.stack.spread .sball:first-child {
+  margin-left: 0;
+}
+.sball.faint {
+  opacity: 0.4;
+}
+.sball.aim {
+  transform: scale(1.15);
+}
+.sball.aim .ball {
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 3.5px var(--primary), inset 0 -1.5px 3px rgba(0, 0, 0, 0.14);
+}
+.sball.ghost {
+  opacity: 0.35;
+}
+/* Waiting or invited: the ball's shape in a dashed line of their color,
+   their initial faint, over a white ground. */
+.sball .dash {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1.5px dashed color-mix(in srgb, var(--c) 80%, transparent);
+  background: linear-gradient(color-mix(in srgb, var(--c) 8%, transparent), color-mix(in srgb, var(--c) 8%, transparent)), var(--bg);
+  color: color-mix(in srgb, var(--c) 75%, transparent);
+  font-size: 12px;
+  font-weight: 600;
+  transition: opacity 0.22s ease-out;
+}
+.sball[data-how='waits'],
+.sball[data-how='invited'] {
+  cursor: pointer;
+}
+.sball[data-how='waits']:hover {
+  transform: translateY(-2px);
+}
+.sball .x,
+.dev > .x,
+.pchip .x,
+.seat-ball .x {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--bg);
+  color: var(--ink-2);
+  box-shadow: 0 2px 6px rgba(9, 9, 11, 0.12);
+  cursor: pointer;
+  opacity: 0;
+  transform: scale(0.6);
+  transition: opacity 0.14s ease-out, transform 0.22s cubic-bezier(0.3, 1.3, 0.5, 1);
+}
+.sball[data-how='member'] .x {
+  display: none;
+}
+.sball:hover .x,
+.dev:hover > .x,
+.pchip:hover .x,
+.seat-ball .x {
+  opacity: 1;
+  transform: none;
+}
+.sball .x:hover,
+.dev > .x:hover,
+.pchip .x:hover,
+.seat-ball .x:hover {
+  color: var(--ink);
+}
+/* The line under the balls and "邀请朋友": what letting go does over a
+   ball (blue when it gives it), or how many more people my seats take. */
+.stack-hint {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  font-size: 12px;
+  color: var(--ink-3);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.stack-hint.go {
+  color: var(--primary);
+}
+/* "邀请朋友" with my seats full: a dashed grey outline, still a button. */
+.head .btn.primary.full {
+  background: transparent;
+  color: var(--ink-2);
+  box-shadow: inset 0 0 0 1.5px transparent;
+  outline: 1.5px dashed var(--ink-3);
+  outline-offset: -1.5px;
+  transition: background 0.2s, color 0.2s, outline-color 0.2s, transform 0.18s cubic-bezier(0.3, 1.5, 0.5, 1);
+}
+.head .btn.primary.full:hover {
+  background: var(--well);
+  transform: translateY(-1px);
+}
+
+/* A device that waits for the owner: dashed, its × on the pointer. */
+.dev > .x {
+  top: -6px;
+  right: -6px;
+  z-index: 2;
+}
+/* A login to renew (§6.8): an amber dot on the tile's corner; a click
+   renews it. */
+.dev > .renew {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  z-index: 2;
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: #f59e0b;
+  box-shadow: 0 0 0 2px var(--bg);
+  cursor: pointer;
+  transition: transform 0.22s cubic-bezier(0.3, 1.3, 0.5, 1);
+}
+.dev > .renew:hover {
+  transform: scale(1.2);
+}
+
+/* Waiting to be let in: the owner's ball and a word, in the middle. */
+.waiting {
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  transform: translate(-50%, -50%);
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+.ball.big {
+  width: 40px;
+  height: 40px;
+  font-size: 16px;
+}
+
+/* Cards: chips of people and devices (分享给, a person's card, the LAN's
+   members), the picker, what a share opens. */
+.pchips,
+.picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.picker {
+  margin-top: 10px;
+}
+.pchip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 12px 0 4px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--well);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.16s ease-out, box-shadow 0.16s ease-out, opacity 0.16s ease-out, transform 0.2s cubic-bezier(0.3, 1.5, 0.5, 1);
+}
+.pchip:hover {
+  background: var(--well-2);
+}
+.pchip:active:not(.still) {
+  transform: scale(0.95);
+}
+.pchip.still {
+  cursor: default;
+}
+.pchip.still:hover {
+  background: var(--well);
+}
+.pchip.open {
+  background: var(--well-2);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--primary) 50%, transparent);
+}
+.pchip .ball {
+  width: 26px;
+  height: 26px;
+  font-size: 11px;
+}
+.pchip .pn {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pchip.devchip {
+  padding-left: 4px;
+}
+.pchip .tile-xs {
+  position: relative;
+  width: 26px;
+  height: 26px;
+}
+.pchip .tile-xs .tile {
+  border-radius: 8px;
+}
+.pchip .tile-xs .tile::before {
+  left: 4px;
+  top: 2px;
+  width: 14px;
+  height: 7px;
+}
+/* "+", or "+ 分享给别人" when it goes to no one yet: dashed. */
+.pchip.plus {
+  width: 34px;
+  padding: 0;
+  justify-content: center;
+  background: transparent;
+  color: var(--ink-2);
+  box-shadow: inset 0 0 0 1.5px transparent;
+  outline: 1.5px dashed var(--ink-3);
+  outline-offset: -1.5px;
+}
+.pchip.plus.alone {
+  width: auto;
+  padding: 0 14px 0 10px;
+  gap: 6px;
+}
+.pchip.plus:hover,
+.pchip.plus.on {
+  color: var(--primary);
+  outline-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+}
+.pchip.pick.full {
+  opacity: 0.4;
+}
+.share-open .label {
+  margin-top: 12px;
+}
+/* A refused person's ball on a chip: grey with a slash (§6.5), as the
+   "谁能用" chips draw it. */
+.pchip .ball::before,
+.pchip .ball::after {
+  content: '';
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+}
+.pchip .ball::before {
+  inset: 0;
+  background: radial-gradient(circle at 34% 28%, color-mix(in oklab, #a1a1aa 55%, white) 0%, #a1a1aa 52%, color-mix(in oklab, #a1a1aa 82%, black) 100%);
+  opacity: 0;
+  transition: opacity 0.2s ease-out;
+}
+.pchip .ball::after {
+  left: 50%;
+  top: 8%;
+  width: 2px;
+  height: 84%;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--bg);
+  transform: rotate(-45deg) scaleY(0);
+  transition: transform 0.2s ease-out;
+}
+.pchip .ball.off::before {
+  opacity: 1;
+}
+.pchip .ball.off::after {
+  transform: rotate(-45deg) scaleY(1);
+}
+
+/* A person's card, the seats' card, the LAN's card. */
+.sheet .person-top,
+.sheet .lan-top {
+  align-items: center;
+}
+.sheet .lan-mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--well);
+}
+.sheet .lan-mark .dots {
+  display: flex;
+}
+.sheet .lan-mark .ball {
+  width: 16px;
+  height: 16px;
+  margin-left: -5px;
+  box-shadow: 0 0 0 1.5px var(--well);
+}
+.sheet .lan-mark .ball:first-child {
+  margin-left: 0;
+}
+.sheet .seat-top {
+  align-items: center;
+}
+.sheet .seat-top b {
+  font-size: 15px;
+}
+.seat-for {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.seat-balls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}
+.seat-ball {
+  position: relative;
+  display: inline-grid;
+}
+.seat-ball .ball {
+  width: 34px;
+  height: 34px;
+}
+.seat-ball .x {
+  top: -5px;
+  right: -5px;
+  width: 18px;
+  height: 18px;
+}
+.seat-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+.seat-foot:empty {
+  display: none;
+}
+.btn.sm {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+.btn.sm svg {
+  margin-left: -2px;
+}
+/* The status block's one thing to do (§6.8: 续上, 提醒阿杰, 问问阿杰). */
+.status .st-act {
+  margin-left: auto;
+  flex: none;
+  background: var(--bg);
+}
+/* A name changed in place (§6.9): the name is a button, then a field. */
+.sheet .name-edit {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  text-align: left;
+  cursor: text;
+}
+.sheet .name-input {
+  display: block;
+  width: 100%;
+  max-width: 180px;
+  height: 26px;
+  margin: -3px 0 -1px -6px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--well);
+  box-shadow: inset 0 0 0 1.5px var(--primary);
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  outline: none;
+}
+
+/* The capsule a held person goes with, and the word beside it. */
+.mpill .rnote,
+.rnote {
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%) rotate(2deg);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-3);
+  white-space: nowrap;
+  transition: opacity 0.16s ease-out;
+}
+.rnote.go {
+  color: var(--primary);
+}
+
+/* The sidebar: a LAN I wait to be let into is grey, "等同意"; one of mine
+   with something waiting for me has a small blue dot. */
+.nav.wait .nav-label {
+  color: var(--ink-3);
+}
+.nav .wait-tag {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.nav .ndot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-left: auto;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+/* The balls in a card's head are balls, not its second line (.sheet .top
+   span sets that line's size and color). */
+.sheet .top .ball {
+  display: inline-grid;
+  margin: 0;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+.sheet .top .ball.big {
+  font-size: 16px;
+}
+.sheet .lan-mark .ball {
+  font-size: 0;
+}
+/* A long card (分享给 open, a picker) scrolls inside the window. */
+.win.full .sheet {
+  max-height: calc(100% - 108px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.win.full .sheet::-webkit-scrollbar {
+  display: none;
+}
+/* A device's second line while it is held over somewhere it can go: what
+   letting go does, in blue (§6.4). */
+.dev .name small.go {
+  color: var(--primary);
+}
+/* The word beside a device held over the sidebar (我的设备 → a LAN's row). */
+.drag-layer .dnote {
+  left: 0;
+  transform: translateY(-50%);
+  opacity: 0;
+  z-index: 41;
+}
+.inv-foot {
+  gap: 8px;
+}
+
 /* join.css */
 /* The invite page, the login card, the download card and the phone's dock
    (DESIGN.md §14.5–§14.7), on the desktop's tokens (tokens.css). Values not
@@ -2286,6 +2787,21 @@ body {
   border-radius: 20px;
   background: var(--bg);
   box-shadow: var(--shadow-md);
+}
+/* The members' balls under the invite's head (§14.5). */
+.jc-stack {
+  display: flex;
+  margin: 14px 0 0 58px;
+}
+.jc-stack .ball {
+  width: 26px;
+  height: 26px;
+  font-size: 11px;
+  margin-left: -5px;
+  box-shadow: 0 0 0 2px var(--bg), inset 0 -1.5px 3px rgba(0, 0, 0, 0.14);
+}
+.jc-stack .ball:first-child {
+  margin-left: 0;
 }
 
 /* phone.css */

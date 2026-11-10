@@ -23,8 +23,21 @@ addEventListener(
   true,
 );
 addEventListener('pointerup', () => press.animate([{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(1.3)' }], { duration: 260, easing: 'ease-out', fill: 'forwards' }), true);
+// find: a CSS selector, or "base|name|part" for data with ids the server
+// made up: the first base element whose name (aria-label, title or text,
+// spaces aside) starts with name, then part inside it (".dev|阿杰的树莓派|.tile").
+const flat = (s: string | null | undefined) => (s || '').replace(/\s+/g, '');
+w.__find = (sel: string): HTMLElement | null => {
+  if (!sel.includes('|')) return document.querySelector(sel);
+  const [base, name, part] = sel.split('|');
+  const n = flat(name);
+  for (const el of document.querySelectorAll(base) as NodeListOf<HTMLElement>) {
+    if ([el.getAttribute('aria-label'), el.title, el.textContent].some((t) => flat(t).startsWith(n) && t)) return part ? el.querySelector(part) : el;
+  }
+  return null;
+};
 w.__point = (sel: string, x?: number, y?: number) => {
-  const el = document.querySelector(sel) as HTMLElement | null;
+  const el = (w.__find as (s: string) => HTMLElement | null)(sel);
   if (!el) return null;
   const r = el.getBoundingClientRect();
   if (x == null) return { x: r.left + r.width / 2, y: r.top + r.height / 2 };

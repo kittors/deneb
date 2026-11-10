@@ -259,8 +259,14 @@ export function mountJoin(root: HTMLElement, o: JoinOptions): () => void {
       swap(card, head(who, title, `请 ${from} 再发一个`));
       return;
     }
-    const sub = p.seatsFull ? `${from} 的位置满了，腾出来就能加入` : p.needsApproval ? `加入后，要等 ${from} 同意` : '加入后，装上 Deneb 就能用里面的设备';
-    const c = swap(card, head(who, `${from} 邀请你加入「${p.lanName}」`, sub) + `<div class="jc-foot"><button class="btn primary" type="button" data-act="join">加入</button></div>`);
+    // The second line says what is in it (DESIGN §14.5: "里面有 3 个人，5 台
+    // 设备", its members' balls under it); the inviter's seats full, that
+    // joining waits for one (§6.11).
+    const people = p.members || [];
+    const what = people.length ? `里面有 ${people.length} 个人，${p.devices ?? 0} 台设备` : '加入后，装上 Deneb 就能用里面的设备';
+    const sub = p.seatsFull ? `${from} 的位置满了，腾出来就能加入` : p.needsApproval ? `${what}，加入后要等 ${from} 同意` : what;
+    const stack = people.length ? `<div class="jc-stack" aria-label="${esc(people.map((x) => x.displayName || x.name).join('、'))}">${people.slice(0, 8).map((x) => ball(x, me)).join('')}</div>` : '';
+    const c = swap(card, head(who, `${from} 邀请你加入「${p.lanName}」`, sub) + stack + `<div class="jc-foot"><button class="btn primary" type="button" data-act="join">加入</button></div>`);
     // Not focused on arrival: a ring round the button before anyone
     // touched the page reads as something already pressed.
     const btn = c.querySelector('[data-act="join"]') as HTMLButtonElement;

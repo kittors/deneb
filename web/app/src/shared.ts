@@ -13,6 +13,7 @@ import { ApiError } from './api.ts';
 import { downloadCard } from './download.ts';
 import { phoneShared } from './phone.ts';
 import { sharedOnly } from './model.ts';
+import { personCard, wireShare, takeOpenOnShared, forget } from './sharecard.ts';
 import type { Ctx } from './main.ts';
 import type { Route } from './router.ts';
 import type { UserView, SharedDevice } from './model.ts';
@@ -107,13 +108,39 @@ export function sharedPage(root: HTMLElement, ctx: Ctx, _route: Route): () => vo
   function summary(): void {
     const shown = list();
     const on = shown.filter((s) => s.device.online).length;
-    app.setStack([...new Set(shown.map((s) => s.from))]);
+    drawStack([...new Set(shown.map((s) => s.from))]);
     if (!shown.length) {
       // A studio's member who has nothing yet: what will come, and from whom.
       const l = v.lans.find((x) => sharedOnly(v, x) && !x.pending);
       app.setTitle('共享给我', l ? `已加入${l.name}，${nameOf(v, l.owner)}分给你的设备会出现在这里` : '别人分给你的设备会出现在这里', 'none');
     } else if (on === shown.length) app.setTitle('共享给我', shown.length === 1 ? '1 台设备，在线' : `${shown.length} 台设备都在线`, 'ok');
     else app.setTitle('共享给我', `${shown.length} 台设备，${on} 台在线`, 'off');
+  }
+  // The balls of who shares with me: a click on one opens their card
+  // ("分享了 2 台设备给你": what they gave me, and what I gave them).
+  function drawStack(keys: string[]): void {
+    const el = app.win.querySelector('.head .stack') as HTMLElement;
+    if (el.dataset.keys === keys.join(',')) return;
+    el.dataset.keys = keys.join(',');
+    el.innerHTML = keys.map((k) => `<span class="sball" data-k="${esc(k)}" data-how="member" role="button" tabindex="0" aria-label="${esc(spaced(nameOf(v, k)))}">${App.ball(k)}</span>`).join('');
+    for (const b of el.querySelectorAll('.sball') as NodeListOf<HTMLElement>) {
+      b.onclick = () => openPerson(b.dataset.k as string);
+      b.onkeydown = (e) => e.key === 'Enter' && b.click();
+    }
+  }
+  function openPerson(who: string): void {
+    if (!v.people.some((p) => p.id === who)) return;
+    forget();
+    app.selected = 'person:' + who;
+    for (const k in app.nodes) app.nodes[k].el.classList.remove('sel');
+    drawPerson(who);
+  }
+  function drawPerson(who: string): void {
+    const n = list().filter((s) => s.from === who).length;
+    const s = app.sheet(personCard(v, who, `分享了 ${n} 台设备给你`, { dragHint: false }), 'person:' + who);
+    wireShare(app, ctx, () => v, s, () => drawPerson(who), { parent: cv, x: centerX() });
+    // What they gave me is here already: its card, in place.
+    for (const g of s.querySelectorAll('.pchip.given') as NodeListOf<HTMLElement>) g.onclick = () => openCard(g.dataset.given as string);
   }
   summary();
 
@@ -238,8 +265,15 @@ export function sharedPage(root: HTMLElement, ctx: Ctx, _route: Route): () => vo
     }
     if (DEVS[SELF] && !noDevice()) dropSelf();
     summary();
+    // A person's card open follows too.
+    const k: string | null = app.sheetKey;
+    if (k && k.startsWith('person:') && app.sheetEl.style.display !== 'none') drawPerson(k.slice(7));
   }
   const off = ctx.onView(sync);
+  {
+    const want = takeOpenOnShared();
+    if (want && DEVS[want]) D.after(320, () => openCard(want));
+  }
   if (D.recording) import('./rec-shared.ts').then(() => ((window as unknown as Record<string, unknown>).__ready = true));
   return () => {
     off();

@@ -48,8 +48,8 @@
       app.win.dataset.k = 'win';
       const PUB = [
         { id: 'hk', name: '香港', addr: '103.42.31.155', share: 60, users: 86, devices: 210, rate: '48 MB/s', busy: '有点忙', up: '已经运行 30 天', month: '1.2 TB', top: [['leo', '120 GB'], ['u1', '86 GB'], ['u2', '64 GB'], ['mia', '40 GB'], ['u3', '31 GB']] },
-        { id: 'tokyo', name: '东京', addr: '45.32.12.66', share: 30, users: 30, devices: 92, rate: '21 MB/s', busy: '不忙', up: '已经运行 30 天', month: '460 GB', top: [['jie', '52 GB'], ['u2', '30 GB'], ['lin', '22 GB']] },
-        { id: 'fra', name: '法兰克福', addr: '95.179.140.20', share: 10, users: 12, devices: 40, rate: '6 MB/s', busy: '不忙', up: '已经运行 9 天', month: '120 GB', top: [['u3', '41 GB'], ['mia', '12 GB']] },
+        { id: 'tokyo', name: '东京', addr: '203.0.113.66', share: 30, users: 30, devices: 92, rate: '21 MB/s', busy: '不忙', up: '已经运行 30 天', month: '460 GB', top: [['jie', '52 GB'], ['u2', '30 GB'], ['lin', '22 GB']] },
+        { id: 'fra', name: '法兰克福', addr: '203.0.113.20', share: 10, users: 12, devices: 40, rate: '6 MB/s', busy: '不忙', up: '已经运行 9 天', month: '120 GB', top: [['u3', '41 GB'], ['mia', '12 GB']] },
       ];
       const total = () => ({ people: PUB.reduce((a, r) => a + r.users, 0), devices: PUB.reduce((a, r) => a + r.devices, 0) });
       const headline = () => {
@@ -95,7 +95,7 @@
       window.OPS = {
         installed() {
           const W = api.wells.pub;
-          const r = { id: 'sg', name: '新加坡', addr: '139.180.140.7', share: 0, spareT: 0, users: 0, devices: 0, rate: '0 KB/s', busy: '不忙', up: '刚上线', month: '0 GB', top: [] };
+          const r = { id: 'sg', name: '新加坡', addr: '203.0.113.7', share: 0, spareT: 0, users: 0, devices: 0, rate: '0 KB/s', busy: '不忙', up: '刚上线', month: '0 GB', top: [] };
           api.installed(W, r, { toast: '新加坡上线了，先当备用' });
           api.shares(W, { sg: 0 });
           headline();

@@ -620,8 +620,8 @@
   // the deployment's admin runs them, M4-13).
   WR.PUBLIC = [
     { id: 'pub-hk', name: '香港', addr: '103.42.31.155', speed: '很快' },
-    { id: 'pub-tokyo', name: '东京', addr: '45.32.12.66', speed: '很快' },
-    { id: 'pub-fra', name: '法兰克福', addr: '95.179.140.20', speed: '有点慢' },
+    { id: 'pub-tokyo', name: '东京', addr: '203.0.113.66', speed: '很快' },
+    { id: 'pub-fra', name: '法兰克福', addr: '203.0.113.20', speed: '有点慢' },
   ];
   WR.USER_LANS = { weekend: { name: '周末联机', dots: ['me', 'mia', 'jie'] }, team: { name: '工作室', dots: ['me', 'lin'] } };
   // Who goes first where, the standby ones, and the public one always last.

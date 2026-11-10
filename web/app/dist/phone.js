@@ -5,6 +5,7 @@
 import { App, G, esc, spaced, glyphOf, nameOf, people, serviceName, serviceIcon, ago } from './shell.js';
 import { listedLANs, sharedOnly } from './model.js';
 import { phoneDock } from './download.js';
+import { ApiError } from './api.js';
                                      
                                          
                                                                               
@@ -55,17 +56,63 @@ export function phoneLan(root             , ctx     , route       )             
     }
   }
 
+  // The card, as the desktop's (§14.6 "看和管"): for one of mine, a switch
+  // for each service it opens to the LAN, and who may use it, a click on a
+  // ball turning them away (and back).
   function openCard(v          , id        , lan         )       {
     const d = v.devices.find((x) => x.id === id);
     if (!d) return;
     const mine = d.owner === v.me;
     const svcs = lan.devices.find((ld) => ld.device === id)?.services || [];
-    const rows = svcs.map((s) => (s.on || mine ? `<div class="row">${G.ui(serviceIcon(s.kind), 18)}<span>${esc(serviceName(s))}</span>${mine ? `<em>${s.on ? '开着' : '关着'}</em>` : ''}</div>` : `<div class="row na">${G.ui(serviceIcon(s.kind), 18)}<span>${esc(serviceName(s))}</span><em>没开放</em></div>`));
-    rise(
-      `<div class="top"><div class="tile-s"><div class="tile" style="--c:${P[d.owner].c}">${G.device(glyphOf(d.kind), 20)}</div></div><div><b>${esc(spaced(d.displayName || d.name))}</b><span>${mine ? '我的设备' : esc(spaced(nameOf(v, d.owner) + '的设备'))}</span></div><button class="icon-btn sheet-close" type="button" aria-label="关闭">${G.ui('close', 16)}</button></div>` +
-        `<div class="status"><span class="badge" style="--c:${d.online ? '#22C55E' : '#a1a1aa'}">${G.ui('online', 16)}</span><div>${d.online ? '在线' : esc(ago(d.lastSeen))}<small>在装了 Deneb 的电脑上就能用</small></div></div>` +
-        (rows.length ? `<div class="label">${mine ? '开放给大家的' : '开放给你的'}</div><div class="rows">${rows.join('')}</div>` : ''),
+    const rows = svcs.map((s, i) =>
+      mine
+        ? `<div class="row">${G.ui(serviceIcon(s.kind), 18)}<span>${esc(serviceName(s))}</span><button class="sw ${s.on ? 'on' : ''}" data-i="${i}" role="switch" aria-checked="${s.on}" aria-label="${esc(serviceName(s))}"></button></div>`
+        : s.on
+          ? `<div class="row">${G.ui(serviceIcon(s.kind), 18)}<span>${esc(serviceName(s))}</span></div>`
+          : `<div class="row na">${G.ui(serviceIcon(s.kind), 18)}<span>${esc(serviceName(s))}</span><em>没开放</em></div>`,
     );
+    const refused = new Set(d.refused || []);
+    const others = lan.members.filter((m) => m.state === 'joined' && m.person !== v.me).map((m) => m.person);
+    const who = mine && others.length ? `<div class="label">谁能用</div><div class="people">${others.map((k) => `<button class="chip ${refused.has(k) ? 'blocked' : ''}" type="button" data-k="${esc(k)}" aria-pressed="${refused.has(k)}">${App.ball(k, refused.has(k) ? 'off' : '')}${esc(spaced(nameOf(v, k)))}</button>`).join('')}</div><div class="hint">点一下头像，就不让他用了</div>` : '';
+    const s = rise(
+      `<div class="top"><div class="tile-s"><div class="tile" style="--c:${P[d.owner].c}">${G.device(glyphOf(d.kind), 20)}</div></div><div><b>${esc(spaced(d.displayName || d.name))}</b><span>${mine ? '我的设备' : esc(spaced(nameOf(v, d.owner) + '的设备'))}</span></div><button class="icon-btn sheet-close" type="button" aria-label="关闭">${G.ui('close', 16)}</button></div>` +
+        `<div class="status"><span class="badge" style="--c:${d.online ? '#22C55E' : '#a1a1aa'}">${G.ui('online', 16)}</span><div>${d.online ? '在线' : esc(ago(d.lastSeen))}<small>${mine ? '别人能用你开放的服务' : '在装了 Deneb 的电脑上就能用'}</small></div></div>` +
+        (rows.length ? `<div class="label">${mine ? '开放给大家的' : '开放给你的'}</div><div class="rows">${rows.join('')}</div>` : '') +
+        who,
+    );
+    const said = (e         ) => {
+      // The dock's line says it for a moment: the phone has no toasts
+      // over its list (§14.6).
+      const t = page.querySelector('.m-dock-text')                      ;
+      if (!t) return;
+      const was = t.innerHTML;
+      t.textContent = e instanceof ApiError ? e.message : '没能改，再试一次';
+      setTimeout(() => (t.innerHTML = was), 3000);
+    };
+    for (const sw of s.querySelectorAll('.sw[data-i]')                           )
+      sw.onclick = () => {
+        const svc = svcs[+(sw.dataset.i          )];
+        const on = !sw.classList.contains('on');
+        sw.classList.toggle('on', on);
+        sw.setAttribute('aria-checked', String(on));
+        ctx.op('service.set', { lan: lanID, device: id, service: { kind: svc.kind, name: svc.name, ports: svc.ports }, on }).catch((e) => {
+          sw.classList.toggle('on', !on);
+          said(e);
+        });
+      };
+    for (const ch of s.querySelectorAll('.chip[data-k]')                           )
+      ch.onclick = () => {
+        const k = ch.dataset.k          ;
+        const b = !ch.classList.contains('blocked');
+        ch.classList.toggle('blocked', b);
+        ch.querySelector('.ball')?.classList.toggle('off', b);
+        ch.setAttribute('aria-pressed', String(b));
+        ctx.op('device.refuse', { device: id, person: k, refuse: b }).catch((e) => {
+          ch.classList.toggle('blocked', !b);
+          ch.querySelector('.ball')?.classList.toggle('off', !b);
+          said(e);
+        });
+      };
   }
   // My LANs and my devices' pages, to go to another.
   (page.querySelector('.m-title')               ).addEventListener('click', () => switcher(rise, ctx, 'lan:' + lanID));
