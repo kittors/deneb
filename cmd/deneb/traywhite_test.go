@@ -9,9 +9,9 @@ import (
 	"testing"
 )
 
-// TestTrayIconsWhite: Linux's marks are the template marks in white, the
-// same shapes: each pixel keeps its alpha, and every pixel that shows is
-// white.
+// TestTrayIconsWhite: Linux's marks are the template marks in white, cut
+// to the 16 points the star is drawn in, the same shapes: each pixel keeps
+// its alpha, and every pixel that shows is white.
 func TestTrayIconsWhite(t *testing.T) {
 	for _, st := range []string{"solid", "dot", "hollow"} {
 		tmpl, err := png.Decode(bytes.NewReader(trayIcons[st]))
@@ -22,13 +22,13 @@ func TestTrayIconsWhite(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if tmpl.Bounds() != white.Bounds() {
-			t.Fatalf("%s: %v, want %v", st, white.Bounds(), tmpl.Bounds())
+		if in := tmpl.Bounds().Inset(trayInset); white.Bounds().Dx() != in.Dx() || white.Bounds().Dy() != in.Dy() {
+			t.Fatalf("%s: %v, want %v", st, white.Bounds(), in)
 		}
 		shown := 0
-		for y := tmpl.Bounds().Min.Y; y < tmpl.Bounds().Max.Y; y++ {
-			for x := tmpl.Bounds().Min.X; x < tmpl.Bounds().Max.X; x++ {
-				a := color.NRGBAModel.Convert(tmpl.At(x, y)).(color.NRGBA)
+		for y := white.Bounds().Min.Y; y < white.Bounds().Max.Y; y++ {
+			for x := white.Bounds().Min.X; x < white.Bounds().Max.X; x++ {
+				a := color.NRGBAModel.Convert(tmpl.At(x+trayInset, y+trayInset)).(color.NRGBA)
 				w := color.NRGBAModel.Convert(white.At(x, y)).(color.NRGBA)
 				if w.A != a.A {
 					t.Fatalf("%s (%d,%d): alpha %d, want %d", st, x, y, w.A, a.A)

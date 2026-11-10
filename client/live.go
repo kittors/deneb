@@ -413,6 +413,11 @@ func (l *Live) buildLocked(now time.Time) *model.Snapshot {
 				s.Notices = append(s.Notices, proxyNotice(p.Code, p.Rule, app))
 			}
 		}
+		if p.Code == model.LocalNetwork.Code {
+			// macOS keeps the engine off the devices behind this router
+			// (DESIGN §6.13).
+			s.Notices = append(s.Notices, model.LocalNetwork)
+		}
 	}
 	s.Kernel = st.Mode == apitype.ModeKernel
 	paths, next := l.deb.at(now)

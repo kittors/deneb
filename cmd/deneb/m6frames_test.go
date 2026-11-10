@@ -71,7 +71,7 @@ func TestM6Frames(t *testing.T) {
 			r.tt.SetDark(dark)
 			r.dir = filepath.Join(root, theme+"-"+sc.key)
 			r.still = r.dir
-			resetDir(t, r.dir)
+			reset(t, r.dir)
 			r.run(600 * time.Millisecond)
 			sc.play(r)
 		}
@@ -213,13 +213,4 @@ func playProxies(r *m3rig) {
 	r.run(900 * time.Millisecond)
 	r.park()
 	r.run(500 * time.Millisecond)
-}
-
-// resetDir empties dir for a recording. M5's recordings have the same as
-// reset (m5frames_test.go); with M5 in, one of the two goes.
-func resetDir(t *testing.T, dir string) {
-	os.RemoveAll(dir)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
 }

@@ -255,7 +255,9 @@ type app struct {
 	// where the app runs, as runtime.GOOS says ("windows": the system
 	// rounds and outlines the tray's panel); chrome, set by the
 	// recordings, draws the window buttons as the system does.
-	strip float32
+	strip    float32
+	platform string
+	chrome   func(c *ui.Context, p *palette, bar ui.TitleBar)
 	// onboard is the first time's steps while they show (DESIGN §7.3).
 	onboard *onboarding
 	// diagAt is when the diagnostics package began to be put together, while
@@ -267,9 +269,6 @@ type app struct {
 	diagBusy    bool
 	diagnostics func() (string, error)
 	reveal      func(path string)
-
-	platform string
-	chrome   func(c *ui.Context, p *palette, bar ui.TitleBar)
 	// M4's relays in the tray and their cards (DESIGN §6.12): the "谁在用"
 	// chips as a card opened; the install commands asked for here, by
 	// their join, the one whose card the "+" opened, and when each was

@@ -420,6 +420,10 @@ func (a *app) noticeCard(c *ui.Context, p *palette) {
 					}
 					a.noticesDone[n.Code], a.selected = true, ""
 				}
+				if n.Settings != "" && primaryButton(c, p, "settings", "去系统设置", 34, 14, 13).Clicked() && a.openURL != nil {
+					// Where the system's switch for Deneb is (M6 on).
+					a.openURL(n.Settings)
+				}
 				if n.Rule != "" && primaryButton(c, p, "copy-rule", "复制规则", 34, 14, 13).Clicked() {
 					if a.copyText != nil {
 						a.copyText(n.Rule)

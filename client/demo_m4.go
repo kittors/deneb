@@ -191,6 +191,31 @@ func (d *Demo) m4Event(s *model.Snapshot, event string, now time.Time) *model.Sn
 	switch event {
 	case "m4":
 		return m4Base(s, now)
+	case "m5":
+		// M5's scenes (DESIGN §7.2, §6.13): my server, named 公司机房, is
+		// in 周末联机 and carries Mia's MacBook.
+		srv := s.Relays[demoServer]
+		if srv == nil {
+			return s
+		}
+		n := *s
+		n.Relays = maps(s.Relays)
+		r := *srv
+		r.Name, r.Using = "公司机房", []model.PersonID{"mia", "lin"}
+		n.Relays[demoServer] = &r
+		n.LANs = slices.Clone(s.LANs)
+		for i, l := range n.LANs {
+			nl := *l
+			if l.ID == "weekend" && !nl.Added(demoServer) {
+				nl.AddedRelays = append(nl.AddedRelays, demoServer)
+				nl.Relays = append([]model.RelayID{demoServer}, nl.Relays...)
+			}
+			n.LANs[i] = &nl
+		}
+		n.Paths = maps(s.Paths)
+		n.Paths["mia"] = model.Path{Kind: model.PathRelay, Relay: demoServer, RTT: 38 * time.Millisecond, Since: now}
+		r.Load = m4Load(&n, demoServer)
+		return &n
 	case "m4-in":
 		srv := s.Relays[demoServer]
 		if srv == nil {

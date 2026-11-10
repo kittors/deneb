@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"time"
 
@@ -20,6 +21,15 @@ import (
 
 func main() {
 	useUpdater()
+	if !oneWindow() {
+		return
+	}
+	// The appearance of recordings and screenshots, DENEB_THEME=light or
+	// dark, whatever the system's: the same on every machine, and none of
+	// its settings changed for it.
+	if t := os.Getenv("DENEB_THEME"); t == "light" || t == "dark" {
+		mygo.Theme.SetSource(mygo.ThemeSource(t))
+	}
 	store, at, sims, lc := pickStore()
 	a := newApp(store, at)
 	a.sims = sims
@@ -51,9 +61,16 @@ func main() {
 			Height:    740,
 			MinWidth:  980,
 			MinHeight: 640,
+			// The view's size, as the design's frame is (DESIGN §7): on
+			// Windows the window's own size takes in the edges it is resized
+			// by, which nothing draws in.
+			UseContentSize: true,
 			// The sidebar runs to the top of the window, under the system's
 			// window buttons, as the design's frame does (DESIGN.md §7).
-			TitleBarStyle: mygo.TitleBarHidden,
+			// Where they are at the top right, the strip they take is as
+			// tall as DESIGN §7.2 has it.
+			TitleBarStyle:  mygo.TitleBarHidden,
+			TitleBarHeight: titleBarHeight(runtime.GOOS),
 			// Reopens where the user left it last time. A new key: the old
 			// one kept the starter template's 480×360 window.
 			StateKey: "lan-window",
@@ -61,6 +78,16 @@ func main() {
 			Content: ui.View(bar.view(a.view)),
 		})
 		bar.attach(w)
+		// Deneb opened again (Windows, Linux: oneWindow): the window there
+		// is comes to the front.
+		mygo.App.OnSecondInstance(func([]string, string) {
+			if a.showMain != nil {
+				a.showMain()
+				return
+			}
+			w.Show()
+			w.Focus()
+		})
 		// A new snapshot, or work done off the main thread, asks the window
 		// and the menu bar's panel for a frame built anew, which takes it
 		// in, and the mark for the world they show.
@@ -72,6 +99,33 @@ func main() {
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// titleBarHeight is the height of the strip the window buttons take at the
+// top right (DESIGN §7.2): 32 on Windows, as its own title bars, and 40 on
+// Linux, GTK's round buttons centered in it. On macOS the traffic lights
+// take the window's own title bar's.
+func titleBarHeight(goos string) int {
+	switch goos {
+	case "windows":
+		return 32
+	case "linux":
+		return 40
+	}
+	return 0
+}
+
+// oneWindow makes this the only window of Deneb where opening the app again
+// starts it again (Windows, Linux): the window closes to the mark, and the
+// app opened again, from the Start menu or the app grid, shows the one
+// there is, as the Dock icon does on the Mac; a deneb:// link opened by it
+// goes to that one too. It reports false in a second one, which has
+// handed its links over and quits.
+func oneWindow() bool {
+	if runtime.GOOS == "darwin" || demoMode() {
+		return true
+	}
+	return mygo.App.RequestSingleInstanceLock()
 }
 
 // pickStore chooses where the world comes from, and the outside events
