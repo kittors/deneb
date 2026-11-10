@@ -1199,8 +1199,10 @@ func TestHandshakeBothWaysAfterDeepIdle(t *testing.T) {
 		{"both claim it, the relay as fast", nil, true, 0, 300 * time.Millisecond, 1},
 		// The first answer waits for a resend or a new handshake, two
 		// rounds of 3 round trips: about 0.2 s here, where a round trip is
-		// next to nothing; 0.4-0.9 s on the line to Hong Kong.
-		{"neither (as before)", []string{"mac", "build"}, false, 150 * time.Millisecond, 3 * time.Second, 0},
+		// next to nothing; 0.4-0.9 s on the line to Hong Kong. The floor
+		// is 100 ms, not 0.2 s: the resend timer jitters (146 ms on a CI
+		// runner), and not waiting at all would answer in a few ms.
+		{"neither (as before)", []string{"mac", "build"}, false, 100 * time.Millisecond, 3 * time.Second, 0},
 		{"build from before", []string{"build"}, false, 0, 3 * time.Second, 0},
 	}
 	for _, c := range cases {
