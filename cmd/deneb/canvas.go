@@ -348,7 +348,7 @@ func (a *app) lifted(d *device) bool { return d.dragging || d.flying || d.arrivi
 
 func (a *app) canvas(c *ui.Context, p *palette) {
 	ww, wh := c.Size()
-	w, h := ww-sidebarWidth, wh-headerHeight
+	w, h := ww-sidebarWidth, wh-headerHeight-a.strip
 	a.cw, a.ch = w, h
 	now := c.Now()
 	if a.start.IsZero() {

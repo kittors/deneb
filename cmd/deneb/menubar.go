@@ -141,7 +141,11 @@ func (a *app) panelBody(c *ui.Context, p *palette) ui.Element {
 	a.expireDone(c, now)
 	s := a.snap
 	body := ui.Column(c.Key("panel")).Width(panelWidth).MaxHeight(panelMaxHeight).Radius(20).Background(p.bg).Clip().Padding(16, 12, 12, 12)
-	if p.dark && !a.systemPanel {
+	if a.platform == "windows" {
+		// Windows rounds the flyout as it rounds its menus, and outlines it
+		// (DESIGN §7.2): the panel fills it, square.
+		body.Radius(0)
+	} else if p.dark && !a.systemPanel {
 		// The system outlines its own panel with a hairline.
 		body.Border(1, p.line)
 	}
@@ -242,8 +246,12 @@ func (a *app) panelHead(c *ui.Context, p *palette) {
 
 // panelSummary is how things are here, in a few words, and the color of
 // the dot before them.
-func (a *app) panelSummary(p *palette) (ui.Color, string) {
-	s := a.snap
+func (a *app) panelSummary(p *palette) (ui.Color, string) { return summaryOf(a.snap, p) }
+
+// summaryOf is how things are in s, in a few words, and the color of the
+// dot before them: the panel's head, and the first line of the system's
+// menu on Linux (DESIGN §7.2).
+func summaryOf(s *model.Snapshot, p *palette) (ui.Color, string) {
 	amber := ui.Hex("#F59E0B")
 	var lans []*model.LAN
 	for _, l := range s.LANs {
@@ -379,24 +387,47 @@ func (a *app) doChore(c *ui.Context, ch chore, now time.Time) {
 	case "renew":
 		a.send(c, model.Op{Kind: model.OpDeviceRenew, Device: ch.dev})
 		a.panelSay(ch.key, "已续上", now)
-	case "invitation":
+	case "invitation", "unreachable":
 		a.openMain(c)
+		a.lookAt(c, ch)
+	}
+}
+
+// lookAt shows in the window what ch is about: the invite's card, or the
+// LAN with the device chosen, its card open (the one to let in, the one
+// whose login to renew, the one out of reach), or the LAN of the person
+// to let in, whose dashed ball waits in the header. The panel's "看看"
+// does it, and every chore of the system's menu on Linux (DESIGN §7.2).
+func (a *app) lookAt(c *ui.Context, ch chore) {
+	s := a.snap
+	if ch.kind == "invitation" {
 		for _, inv := range s.Invitations {
 			if inv.ID == ch.invitation {
 				a.showInvitation(inv)
 			}
 		}
-	case "unreachable":
-		a.openMain(c)
-		if a.lan != ch.lan && !a.all() {
-			a.show(c, ch.lan, false)
-		}
-		key := string(ch.dev)
-		if a.all() {
-			key = allKey(ch.lan, ch.dev)
-		}
-		a.selected, a.more = key, false
+		return
 	}
+	if ch.lan == "" && ch.dev != "" {
+		// A login to renew: the device in the first LAN that has it.
+		for _, l := range s.LANs {
+			if !l.Waiting && l.Has(ch.dev) {
+				ch.lan = l.ID
+				break
+			}
+		}
+	}
+	if ch.lan != "" && a.lan != ch.lan && !a.all() {
+		a.show(c, ch.lan, false)
+	}
+	if ch.dev == "" || (ch.lan == "" && a.device(string(ch.dev)) == nil) {
+		return
+	}
+	key := string(ch.dev)
+	if a.all() {
+		key = allKey(ch.lan, ch.dev)
+	}
+	a.selected, a.more = key, false
 }
 
 // panelHold shows op at once and says so in the chore's place, sending it
@@ -496,8 +527,11 @@ func (a *app) panelLAN(c *ui.Context, p *palette, l *model.LAN) {
 }
 
 // lanLine is how a LAN is, under its name in the panel.
-func (a *app) lanLine(l *model.LAN) string {
-	s := a.snap
+func (a *app) lanLine(l *model.LAN) string { return lanLineOf(a.snap, l) }
+
+// lanLineOf is how l is in s, in a few words: under its name in the panel,
+// after it in the system's menu on Linux.
+func lanLineOf(s *model.Snapshot, l *model.LAN) string {
 	switch {
 	case l.Waiting:
 		owner := "拥有者"

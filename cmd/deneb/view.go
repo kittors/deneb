@@ -13,6 +13,10 @@ import (
 const sidebarWidth = 232
 const headerHeight = 76
 
+// macTitleBar is the height of the title bar the traffic lights take in
+// the Mac's window (c.TitleBar there): 32 on macOS 26, 28 before it.
+const macTitleBar = 32
+
 // view builds the window: the sidebar, the LAN's header, and the canvas
 // with its card, tray and toast (design/DESIGN.md §7).
 func (a *app) view(c *ui.Context) {
@@ -30,6 +34,14 @@ func (a *app) view(c *ui.Context) {
 		return
 	}
 	bar := c.TitleBar()
+	// Window buttons at the top right (Windows, Linux): the main column
+	// leaves them a strip of their own, above the header, which moves down
+	// by it (DESIGN §7.2). At the top left (macOS) they sit over the
+	// sidebar, and nothing moves.
+	a.strip = 0
+	if bar.Right > 0 {
+		a.strip = bar.Height
+	}
 	root := ui.Row(c).Fill().AlignItems(ui.Stretch)
 	for k, fn := range a.sims {
 		if root.Shortcut(ui.Cmd|ui.Alt, k) {
@@ -39,6 +51,9 @@ func (a *app) view(c *ui.Context) {
 	root.Children(func() {
 		a.sidebar(c, p, bar)
 		ui.Column(c).Grow(1).Background(p.bg).Children(func() {
+			if a.strip > 0 {
+				ui.Box(c.Key("title-strip")).Height(a.strip).Shrink(0).DragWindow()
+			}
 			if a.all() {
 				a.allHeader(c, p)
 			} else {
@@ -48,6 +63,11 @@ func (a *app) view(c *ui.Context) {
 			a.inviteLayer(c, p)
 		})
 		a.personChip(c, p)
+		if a.chrome != nil {
+			// The window buttons as the system draws them, for the
+			// recordings of Windows and Linux (DESIGN §7.2).
+			a.chrome(c, p, bar)
+		}
 	})
 }
 
@@ -85,7 +105,15 @@ func ballOff(c *ui.Context, who *person, size, k float32) ui.Element {
 }
 
 func (a *app) sidebar(c *ui.Context, p *palette, bar ui.TitleBar) {
-	top := max(bar.Height, 16) + 6
+	// Its top keeps clear of the window buttons over it (macOS). Where they
+	// are at the top right instead (Windows, Linux), it starts where it does
+	// on the Mac, under a title bar of the Mac's height: the same to the
+	// pixel on every system (DESIGN §7.2, §8).
+	h := bar.Height
+	if bar.Right > 0 && bar.Left == 0 {
+		h = macTitleBar
+	}
+	top := max(h, 16) + 6
 	ui.Column(c).Width(sidebarWidth).Background(p.well).Padding(top, 12, 12, 12).Gap(2).DragWindow().Children(func() {
 		ui.Row(c).Gap(8).Padding(6, 8, 18, 8).Children(func() {
 			ui.Icon(c, starGlyph).Size(18, 18).TextColor(p.primary)

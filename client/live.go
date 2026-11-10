@@ -397,6 +397,11 @@ func (l *Live) buildLocked(now time.Time) *model.Snapshot {
 			s.Notices = append(s.Notices, model.Notice{Code: p.Code, Short: "Clash 可能挡住连接",
 				Message: "Clash 一类的软件正在接管网络，局域网里的设备可能连不上", Rule: p.Rule})
 		}
+		if p.Code == model.LocalNetwork.Code {
+			// macOS keeps the engine off the devices behind this router
+			// (DESIGN §6.13).
+			s.Notices = append(s.Notices, model.LocalNetwork)
+		}
 	}
 	paths, next := l.deb.at(now)
 	s.Paths = paths

@@ -395,6 +395,11 @@ func (a *app) noticeCard(c *ui.Context, p *palette) {
 					a.selected = ""
 				}
 			})
+			for _, para := range strings.Split(n.Detail, "\n") {
+				if para != "" {
+					ui.Text(c, para).FontSize(12).TextColor(p.ink2).LineHeight(1.5)
+				}
+			}
 			if n.Rule != "" {
 				ui.Text(c, "在它的规则里加上这一条，局域网里的连接就不经过它：").FontSize(12).TextColor(p.ink2)
 				ui.Text(c, n.Rule).FontSize(12).FontWeight(500).FontFeatures("tnum").Padding(9, 12).Radius(12).Background(p.well).SingleLine()
@@ -406,6 +411,10 @@ func (a *app) noticeCard(c *ui.Context, p *palette) {
 						a.noticesDone = map[string]bool{}
 					}
 					a.noticesDone[n.Code], a.selected = true, ""
+				}
+				if n.Settings != "" && primaryButton(c, p, "settings", "去系统设置", 34, 14, 13).Clicked() && a.openURL != nil {
+					// Where the system's switch for Deneb is (M6 on).
+					a.openURL(n.Settings)
 				}
 				if n.Rule != "" && primaryButton(c, p, "copy-rule", "复制规则", 34, 14, 13).Clicked() {
 					if a.copyText != nil {

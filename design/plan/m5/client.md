@@ -1,18 +1,18 @@
 # M5 · 客户端线（桌面客户端）方案和状态
 
 > 负责目录：`cmd/deneb/`、`client/`。依据：实现计划 §3 M5"通知区托盘和窗口""AppIndicator 托盘和窗口"，DESIGN §7.2、§6.13、§8，MyGo 0.7.4 的文档。
-> 最后更新：2026-11-09。
+> 最后更新：2026-11-11。
 
 ## 进度
 
 | 项 | 状态 |
 | --- | --- |
 | 查清 MyGo 在 Windows、Linux 上能做什么 | ✅ 写进 DESIGN §7.2 的表 |
-| 设计（DESIGN §7.2 窗口和托盘，§6.13 本地网络权限） | ✅ 写好，等用户看 |
+| 设计（DESIGN §7.2 窗口和托盘，§6.13 本地网络权限） | ✅ 用户 11-10 看过，按推荐定 |
 | 演示里做出来、浅色深色录帧、逐帧自查 | ✅ 5 个场景，交付在 `~/Desktop/Deneb组网demo/M5-Windows和Linux/第1批-托盘和窗口/` |
-| 写进客户端、到 Windows 测试机和 Linux 虚拟机上验 | 等用户看过设计 |
+| 写进客户端、到 Windows 测试机和 Linux 虚拟机上验 | ✅ 11-11，见 m5-acceptance.md 的 u1、u2；Linux 双击开窗口做不到（见"真机上查到的"） |
 
-工作在副本 `/tmp/deneb-m5` 里做（M4 的副本再加 M5）；M3、M4 两批的补丁另存了一份在共享笔记的 `client-patches/` 里，免得 `/tmp` 被清掉。
+演示是在副本 `/tmp/deneb-m5` 里做的（M4 的副本再加 M5），补丁在共享笔记的 `client-patches/`；11-11 写进真客户端时以 main（43225f6，M3、M4 已经在里面）为准合上去。
 
 ## 查到的（MyGo 0.7.4）
 
@@ -31,14 +31,38 @@
 
 `DENEB_M5=<目录> go test -run 'TestM5Frames$' ./cmd/deneb` 录 5 个场景（两种颜色，一秒 60 帧，加截图），`DENEB_M5_ONLY=win-tray` 只录一个；`/tmp/deneb-tools/review/deliver_m5.py <目录>` 交到桌面，顺手从托盘的截图里裁一张两倍大的特写。
 
-## 要用户定的
+## 用户 11-10 定的（都按推荐）
 
-见 DESIGN §7.2、§6.13：Linux 用系统菜单不做面板（推荐）；Windows 第一次关窗口出一句提示（推荐）；Windows 右键和单击一样出面板，不放"退出"（和菜单栏一致）；本地网络这一批不放"去系统设置"按钮（推荐，系统设置里还没有能打开的开关）。
+1. Linux 顶栏的星单击出系统菜单（`Tray.SetMenu`），双击开窗口。
+2. Windows 第一次关窗口时提示一句 Deneb 还在通知区里。
+3. Windows 托盘右键和左键一样出面板，面板里不放"退出"。
+4. 本地网络权限的提示这一批不放"去系统设置"按钮。
+
+## 写进客户端（11-11）
+
+- **窗口**（`main.go`、`view.go`）：标题栏高度 Windows 32、Linux 40（`TitleBarHeight`），按钮在右上角时主区顶上留出这一条，标题区和画布往下挪（演示里就有）。按钮在右上角时，侧边栏顶上的空白照 Mac 的标题栏（`macTitleBar`，macOS 26 是 32）算，三个平台的侧边栏一样高（u2 量出来原来 Ubuntu 低 8 点）。窗口大小按内容算（`UseContentSize`）：Windows 原来把看不见的拖边算进 1180×740，内容只有 1167×734。
+- **只开一个**（`main.go` 的 `oneWindow`）：Windows、Linux 上关窗口只是藏到托盘，再从开始菜单或应用列表打开 Deneb 时交给开着的那个，把窗口叫回来；`deneb://` 链接也交过去。演示模式不占。
+- **托盘图标**（`systray.go`）：Windows 照任务栏深浅给近黑（#1b1b1b）或白的星，跟着系统切换；Windows、Linux 的星从菜单栏 18 点的图裁成 16 点（星本身的大小）。Linux 是白星。
+- **Windows 面板**（`systray.go`）：单击、右键都开关面板；贴在星上方，底边离任务栏 12（`taskbarGap` 按工作区算星离任务栏边多远）；淡入时从低 8 的地方浮上来，收起时沉下去（`float`）；圆角、细边交给系统。
+- **Windows 第一次关窗口的提示**（`traytip.go`）：和面板一个样子的小浮层，贴在星上方；星收在"^"里时（读注册表 `NotifyIconSettings` 的 `IsPromoted`）多一句"可以把它拖到任务栏上"，这时系统给的位置就是"^"；6 秒或点一下收起，点星也收起；只出一次，记在配置目录的 `closed-once`。
+- **Linux 系统菜单**（`traymenu.go`）：总状态（灰）、要处理的事（最多 3 件，点了打开窗口、选中那件事，菜单里不直接同意）、这台电脑在的每个局域网一行带勾（点了暂停或恢复）、"打开 Deneb"。菜单跟着世界变，同样的几项原地改字和勾，项变了才整个换。菜单里点的事没有窗口的帧可用，`sendNow` 直接交给引擎、在主线程收结果，窗口藏着也照样生效。
+- **没有托盘的 Linux**（`trayhost_linux.go`）：会话总线上没人提供 `org.kde.StatusNotifierWatcher`（原版 GNOME 没开 AppIndicator 扩展）就不放星，关窗口就退出界面。
+- **本地网络权限**（§6.13）：演示里的胶囊和卡片原样接真数据，没有"去系统设置"。
+- **测试**：`m5_test.go`（菜单的各项、点菜单暂停和打开窗口、任务栏间距、Windows 的星、提示只出一次和它的字、按钮那一条和侧边栏、本地网络提示），`client/live_m5_test.go`（引擎报 local-network 时的提示）。
+- **截图用**：`DENEB_THEME=light|dark` 让窗口用指定的深浅，不改系统设置。
+
+## 真机上查到的（11-11）
+
+- **Linux 双击开窗口做不到**：Ubuntu 26.04 的 libayatana-appindicator3（0.5.94）没有激活信号，图标导出的接口里没有 `Activate`，GNOME 的扩展每次单击都直接出菜单，双击什么也不做。窗口从菜单的"打开 Deneb"打开。要支持得换 libayatana-appindicator-glib，MyGo 0.7.4 不支持。
+- **Ubuntu 的窗口是直角**：MyGo 在 GTK 下没把窗口裁成主题的圆角，设计里写的 12 实际没有；系统阴影有。
+- **字体是各系统自己的**：MyGo 用系统界面字体（苹方和 SF、微软雅黑和 Segoe UI、Noto Sans CJK 和 Ubuntu 字体），不是 DESIGN §8 说的内嵌字体，三个平台字形和行高不同（u2）。
+- **Ubuntu 26.04 的按钮布局**写的是只有关闭（`appmenu:close`），MyGo 的窗口照样有三个圆按钮。
+- **Windows 防火墙**：一个新路径的 denebd.exe 第一次监听时，系统自己建两条入站阻止规则并弹提示；正式安装包装进 Program Files 时也会这样，安装时要不要加规则归 M6。
 
 ## 没做的
 
-- 真客户端里的事等用户看过设计再做：Windows 按任务栏深浅换星的颜色，第一次关窗口的提示，Linux 的系统菜单（`Tray.SetMenu`）和双击开窗口，没有 AppIndicator 时关窗口退出界面。
-- 托盘图标还是三颗星，logo 定了再换。
+- Linux 双击开窗口（见上）。
+- 内嵌字体（DESIGN §8），要用户定。
 
 ## 21:02 重出
 

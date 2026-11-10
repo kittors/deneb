@@ -394,6 +394,17 @@ func m2Event(s *model.Snapshot, event string, now time.Time) *model.Snapshot {
 		l := weekend()
 		l.Devices = append(slices.Clone(l.Devices), "game0")
 		l.Services["game0"] = slices.Clone(old.Catalog)
+	case "local-network":
+		// macOS keeps the engine off the devices behind this router, and
+		// lets it back (DESIGN §6.13): 我的游戏主机, at home, goes the long
+		// way round meanwhile.
+		if i := slices.IndexFunc(s.Notices, func(x model.Notice) bool { return x.Code == model.LocalNetwork.Code }); i >= 0 {
+			n.Notices = slices.Delete(slices.Clone(s.Notices), i, i+1)
+			n.Paths["game"] = model.Path{Kind: model.PathDirect, RTT: 3 * time.Millisecond, Since: now}
+			break
+		}
+		n.Notices = append(slices.Clone(s.Notices), model.LocalNetwork)
+		n.Paths["game"] = model.Path{Kind: model.PathRelay, Relay: "hk", RTT: 61 * time.Millisecond, Since: now}
 	case "notice":
 		if len(s.Notices) > 0 {
 			return s

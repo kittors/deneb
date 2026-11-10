@@ -208,7 +208,19 @@ type Notice struct {
 	Short   string // a few words, for the header's pill: "Clash 可能挡住连接"
 	Message string
 	Rule    string
+	// Detail says more, under the message; Settings is where the system's
+	// settings fix it, for the card's "去系统设置" (M5, DESIGN §6.13): empty
+	// while the system has no switch for Deneb.
+	Detail   string
+	Settings string
 }
+
+// LocalNetwork is the notice of the problem local-network (DESIGN §6.13):
+// macOS keeps Deneb's engine, not yet in the app, off the devices behind
+// this computer's router, which it reaches the long way round.
+var LocalNetwork = Notice{Code: "local-network", Short: "本地网络权限没拿到",
+	Message: "Deneb 还没拿到本地网络权限",
+	Detail:  "和这台电脑连着同一个路由器的设备（比如家里的 NAS），现在要绕到外面再回来，或者经中转。能用，只是慢一些。\n等 Deneb 正式版，装好时点一次\u201c允许\u201d就好。"}
 
 // Login is when a device's login runs out. Only my own devices tell the
 // dates; another's tells only whether it has run out.

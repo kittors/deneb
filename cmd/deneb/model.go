@@ -237,6 +237,14 @@ type app struct {
 	trayOff map[string]*ui.Point
 	slots   map[string]ui.Point // where each tray item's slot is in the canvas, from the last layout
 	relays  []*relayStop
+	// strip is the height of the strip the window buttons take above the
+	// header, where they are at the top right (DESIGN §7.2); platform is
+	// where the app runs, as runtime.GOOS says ("windows": the system
+	// rounds and outlines the tray's panel); chrome, set by the
+	// recordings, draws the window buttons as the system does.
+	strip    float32
+	platform string
+	chrome   func(c *ui.Context, p *palette, bar ui.TitleBar)
 	// M4's relays in the tray and their cards (DESIGN §6.12): the "谁在用"
 	// chips as a card opened; the install commands asked for here, by
 	// their join, the one whose card the "+" opened, and when each was
