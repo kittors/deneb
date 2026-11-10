@@ -164,6 +164,8 @@ func main() {
 		{"share", checkShare, nil},
 		// M4
 		{"own-relay", checkOwnRelay, []string{"mac", "build"}},
+		// 11-10: two servers on public addresses, and UDP lost one way
+		{"servers", checkServers, []string{"build", "nas"}},
 	}
 	for _, c := range m5Checks() { // M5: only with -m5
 		checks = append(checks, check{c.name, c.fn, nil})

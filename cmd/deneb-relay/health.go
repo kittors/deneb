@@ -9,7 +9,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/kittors/deneb/proto"
@@ -48,18 +47,6 @@ func (h *healthMeter) measure(now time.Time, bytes int64, connections int) proto
 	}
 	h.at, h.bytes, h.cpu = now, bytes, cpu
 	return out
-}
-
-// cpuTime is the CPU time the process used, user and system.
-func cpuTime() time.Duration {
-	var ru syscall.Rusage
-	if err := syscall.Getrusage(syscall.RUSAGE_SELF, &ru); err != nil {
-		return 0
-	}
-	tv := func(t syscall.Timeval) time.Duration {
-		return time.Duration(t.Sec)*time.Second + time.Duration(t.Usec)*time.Microsecond
-	}
-	return tv(ru.Utime) + tv(ru.Stime)
 }
 
 // cpuQuota is the CPUs the relay may use: its container's quota (cgroup

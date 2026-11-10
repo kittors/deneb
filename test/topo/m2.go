@@ -27,6 +27,8 @@ type msPath struct {
 	Held       bool   `json:"held"`
 	PingsTx    uint64 `json:"pingsTx"`
 	PingsRelay uint64 `json:"pingsRelay"`
+	PingsRx    uint64 `json:"pingsRx"`
+	PongsRx    uint64 `json:"pongsRx"`
 	HSBoth     bool   `json:"hsBoth"`
 }
 

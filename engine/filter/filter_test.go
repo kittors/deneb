@@ -5,6 +5,8 @@ import (
 	"net/netip"
 	"testing"
 	"time"
+
+	"golang.zx2c4.com/wireguard/tun"
 )
 
 // The filter is what keeps two scopes apart on a device that is in both, so
@@ -131,7 +133,8 @@ func TestInbound(t *testing.T) {
 		{"mid-stream TCP to a service not open to it: silence", tcp(jie, self, 5000, 80, ack), false, "tcp-without-flow"},
 		{"a reset is never answered", tcp(lin, self, 5000, 80, 0x04|ack), false, "tcp-without-flow"},
 		{"truncated", tcp(lin, self, 5000, 80, syn)[:30], false, "malformed"},
-		{"IPv6", append([]byte{0x60}, make([]byte, 39)...), false, "malformed"},
+		{"IPv6", append([]byte{0x60}, make([]byte, 39)...), false, "ipv6"},
+		{"IGMP", pk{proto: 2, src: lin, dst: self}.bytes(), false, "protocol"},
 	}
 	for _, c := range cases {
 		f := newTestFilter()
@@ -292,24 +295,27 @@ func TestFragments(t *testing.T) {
 	first := pk{proto: ProtoUDP, src: lin, dst: self, sport: 5000, dport: 7, id: 77, more: true}.bytes()
 	rest := pk{proto: ProtoUDP, src: lin, dst: self, id: 77, fragOff: 1480}.bytes()
 	stray := pk{proto: ProtoUDP, src: lin, dst: self, id: 78, fragOff: 1480}.bytes()
-	if ok, why := f.In(rest); ok || why != "fragment-without-head" {
-		t.Fatalf("a fragment before its head: (%v, %q)", ok, why)
-	}
-	if ok, _ := f.In(first); !ok {
-		t.Fatal("first fragment refused")
+	if ok, why := f.In(first); !ok {
+		t.Fatalf("first fragment refused: %s", why)
 	}
 	if ok, why := f.In(rest); !ok {
 		t.Fatalf("rest of an accepted datagram refused: %s", why)
 	}
-	if ok, _ := f.In(stray); ok {
-		t.Fatal("fragment of another datagram got in")
+	if ok, why := f.In(stray); ok || why != FragmentHeld {
+		t.Fatalf("fragment of another datagram: (%v, %q), want it held for its first", ok, why)
 	}
-	// A head the filter refuses lets no tail in.
+	// A head the filter refuses lets no tail in: held, never handed back,
+	// dropped once it waited fragHold.
 	closed := pk{proto: ProtoUDP, src: jie, dst: self, sport: 5000, dport: 27020, id: 90, more: true}.bytes()
 	tail := pk{proto: ProtoUDP, src: jie, dst: self, id: 90, fragOff: 1480}.bytes()
-	f.In(closed)
 	if ok, _ := f.In(tail); ok {
-		t.Fatal("tail of a refused datagram got in")
+		t.Fatal("tail of a datagram got in before its head")
+	}
+	if ok, _ := f.In(closed); ok {
+		t.Fatal("refused head got in")
+	}
+	if got := f.TakeEarly(closed); got != nil {
+		t.Fatalf("the tail of a refused datagram handed back: %d", len(got))
 	}
 	tiny := pk{proto: ProtoTCP, src: lin, dst: self, id: 5, fragOff: 8}.bytes()
 	if ok, why := f.In(tiny); ok || why != "tiny-fragment" {
@@ -364,6 +370,112 @@ func TestFragmentedPing(t *testing.T) {
 	if ok, _ := f.In(piece(jie, self, icmpEchoReply, 300, 1256, false)); ok {
 		t.Fatal("a piece of an unasked-for reply got in")
 	}
+}
+
+// TestEarlyFragments: a later piece that comes before its datagram's first
+// is held for fragHold and handed back when the first is let in; past
+// fragHold, or beyond what may be held, it counts as fragment-without-head.
+func TestEarlyFragments(t *testing.T) {
+	f := newTestFilter()
+	now := time.Now()
+	f.now = func() time.Time { return now }
+	head := func(src netip.Addr, id uint16) []byte {
+		return pk{proto: ProtoUDP, src: src, dst: self, sport: 5000, dport: 7, id: id, more: true}.bytes()
+	}
+	piece := func(src netip.Addr, id, off uint16, more bool) []byte {
+		return pk{proto: ProtoUDP, src: src, dst: self, id: id, fragOff: off, more: more}.bytes()
+	}
+	// Two later pieces first, then the head: both handed back, in order.
+	p2, p3 := piece(lin, 40, 1256, true), piece(lin, 40, 2512, false)
+	for _, p := range [][]byte{p3, p2} {
+		if ok, why := f.In(p); ok || why != FragmentHeld {
+			t.Fatalf("early piece: (%v, %q)", ok, why)
+		}
+	}
+	h := head(lin, 40)
+	if ok, why := f.In(h); !ok {
+		t.Fatalf("head refused: %s", why)
+	}
+	got := f.TakeEarly(h)
+	if len(got) != 2 || string(got[0]) != string(p3) || string(got[1]) != string(p2) {
+		t.Fatalf("handed back %d pieces", len(got))
+	}
+	for _, p := range got {
+		if ok, why := f.In(p); !ok {
+			t.Errorf("a handed-back piece refused: %s", why)
+		}
+	}
+	if f.TakeEarly(h) != nil || f.held.Load() != 0 {
+		t.Error("pieces handed back twice")
+	}
+
+	// One whose head never comes: dropped after fragHold.
+	f.In(piece(lin, 41, 1256, false))
+	now = now.Add(fragHold + time.Second)
+	f.GC()
+	if d := f.Drops()["in:fragment-without-head"]; d != 1 || f.held.Load() != 0 {
+		t.Errorf("after fragHold: %d dropped, %d held", d, f.held.Load())
+	}
+	// A head that comes too late hands back nothing.
+	f.In(piece(lin, 42, 1256, false))
+	now = now.Add(fragHold + time.Second)
+	f.In(head(lin, 42))
+	if got := f.TakeEarly(head(lin, 42)); got != nil {
+		t.Error("a piece handed back after fragHold")
+	}
+
+	// One peer holds at most maxPeerEarly; the others are not affected.
+	for i := range maxPeerEarly + 5 {
+		f.In(piece(lin, uint16(100+i), 1256, false))
+	}
+	if n := f.held.Load(); n != maxPeerEarly {
+		t.Errorf("one peer holds %d, want %d", n, maxPeerEarly)
+	}
+	if ok, why := f.In(piece(jie, 7, 1256, false)); why != FragmentHeld {
+		t.Errorf("another peer's early piece: (%v, %q)", ok, why)
+	}
+	// Large pieces are not held.
+	big := append(piece(jie, 8, 1256, false), make([]byte, maxEarlySize)...)
+	binaryFix(big)
+	if ok, why := f.In(big); ok || why != "fragment-without-head" {
+		t.Errorf("a large early piece: (%v, %q)", ok, why)
+	}
+}
+
+// TestTUNHandsBackEarlyPieces: through the TUN, a later piece that came in
+// a batch before its first reaches the stack right behind it.
+func TestTUNHandsBackEarlyPieces(t *testing.T) {
+	inner := &captureDev{}
+	tn := NewTUN(inner, newTestFilter())
+	const off = Headroom
+	wrap := func(p []byte) []byte { return append(make([]byte, off), p...) }
+	head := pk{proto: ProtoUDP, src: lin, dst: self, sport: 5000, dport: 7, id: 9, more: true}.bytes()
+	rest := pk{proto: ProtoUDP, src: lin, dst: self, id: 9, fragOff: 1256}.bytes()
+	if _, err := tn.Write([][]byte{wrap(rest)}, off); err != nil {
+		t.Fatal(err)
+	}
+	if len(inner.got) != 0 {
+		t.Fatalf("an early piece reached the stack alone")
+	}
+	if _, err := tn.Write([][]byte{wrap(head)}, off); err != nil {
+		t.Fatal(err)
+	}
+	if len(inner.got) != 2 || string(inner.got[0]) != string(head) || string(inner.got[1]) != string(rest) {
+		t.Fatalf("the stack got %d packets, want the head and then the rest", len(inner.got))
+	}
+}
+
+// captureDev is a tun.Device that keeps what is written to it.
+type captureDev struct {
+	tun.Device
+	got [][]byte
+}
+
+func (d *captureDev) Write(bufs [][]byte, offset int) (int, error) {
+	for _, b := range bufs {
+		d.got = append(d.got, append([]byte(nil), b[offset:]...))
+	}
+	return len(bufs), nil
 }
 
 // binaryFix sets the total length after a test truncates a packet.
@@ -680,7 +792,7 @@ func TestPeerCannotFillTheFragmentTable(t *testing.T) {
 		}
 	}
 	f.In(head(lin, maxPeerFrags)) // the flow passes; its head is not noted
-	if ok, why := f.In(tail(lin, maxPeerFrags)); ok || why != "fragment-without-head" {
+	if ok, why := f.In(tail(lin, maxPeerFrags)); ok {
 		t.Fatalf("the rest of a datagram past the peer's share: (%v, %q)", ok, why)
 	}
 	if ok, why := f.In(tail(lin, 3)); !ok {

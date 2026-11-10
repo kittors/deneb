@@ -1,0 +1,34 @@
+name: Go with caches
+description: >-
+  Sets up the Go of go.mod and restores the module cache and this job's build
+  cache. Each job keys its own build cache, as what one job compiles (the
+  tests, or another system's binaries) is of no use to the others. It is
+  saved again once a day, which keeps it current.
+inputs:
+  cache:
+    description: The job's name for its cache, as test or build-windows.
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v7
+      with:
+        go-version-file: go.mod
+        cache: false
+    - id: dirs
+      shell: bash
+      run: |
+        {
+          echo "build=$(go env GOCACHE)"
+          echo "modules=$(go env GOMODCACHE)"
+          echo "day=$(date -u +%Y-%m-%d)"
+        } >> "$GITHUB_OUTPUT"
+    - uses: actions/cache@v6
+      with:
+        path: |
+          ${{ steps.dirs.outputs.build }}
+          ${{ steps.dirs.outputs.modules }}
+        key: go-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ steps.dirs.outputs.day }}
+        restore-keys: |
+          go-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache }}-${{ hashFiles('go.mod', 'go.sum') }}-
+          go-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache }}-

@@ -566,7 +566,7 @@ func (e *Engine) testPaths(w http.ResponseWriter, r *http.Request) {
 			out[p.FQDN] = map[string]any{
 				"kind": st.Kind, "endpoint": st.Endpoint.String(), "relay": st.Relay, "rttMs": st.RTT.Milliseconds(),
 				"loss": st.Loss, "since": st.Since, "candidates": cands, "blocked": st.Blocked,
-				"idle": st.Idle, "held": st.Held, "dup": st.Dup, "txDup": st.TxDup, "txWake": st.TxWake, "hsBoth": st.HSBoth, "txHSBoth": st.TxHSBoth, "rxHSDupes": st.RxHSDupes, "localRefused": st.LocalRefused, "backedOff": st.BackedOff, "reason": st.Reason, "prev": st.Prev, "pingsTx": st.PingsTx, "pingsRelay": st.PingsRelay,
+				"idle": st.Idle, "held": st.Held, "dup": st.Dup, "txDup": st.TxDup, "txWake": st.TxWake, "hsBoth": st.HSBoth, "txHSBoth": st.TxHSBoth, "rxHSDupes": st.RxHSDupes, "localRefused": st.LocalRefused, "backedOff": st.BackedOff, "reason": st.Reason, "prev": st.Prev, "pingsTx": st.PingsTx, "pingsRelay": st.PingsRelay, "pingsRx": st.PingsRx, "pongsRx": st.PongsRx,
 				"txDirect": st.TxDirect, "txRelay": st.TxRelay, "rxDirect": st.RxDirect, "rxRelay": st.RxRelay,
 			}
 		}

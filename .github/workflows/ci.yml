@@ -1,0 +1,119 @@
+# Deneb's checks, on every push to main and every pull request: tests on
+# Linux and macOS; go vet and a build for each system, of releases and of
+# test builds; and what a release must hold (no test build, every license).
+#
+# It needs no secrets and reaches no server of ours, nor any test machine.
+# The tests that do (DENEB_ACCEPT, DENEB_REAL, DENEB_REMOTE, DENEB_PROD_COPY,
+# ...) skip unless their variable is set, and none is set here.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # A newer push to a pull request cancels its older run; every push to main
+  # runs to the end (a group of its own).
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  # Releases are pure Go (deploy/linux/build-deb.sh, deploy/package.sh), and
+  # so is everything here: the window reaches the system through purego.
+  CGO_ENABLED: "0"
+  # The engine's tests take about six minutes on a runner.
+  GOTESTFLAGS: -timeout=15m
+
+jobs:
+  test-linux:
+    name: Test (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false # nothing here pushes
+      - uses: ./.github/actions/go
+        with:
+          cache: test
+      - name: go test
+        # All but the window (cmd/deneb): its tests click where its text was
+        # laid out with a Mac's fonts, so they run on macOS only.
+        run: |
+          pkgs=$(go list ./... | grep -v '/cmd/deneb$')
+          bash .github/scripts/go-test.sh $pkgs
+
+  test-macos:
+    name: Test (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false # nothing here pushes
+      - uses: ./.github/actions/go
+        with:
+          cache: test
+      - name: go test
+        run: bash .github/scripts/go-test.sh ./...
+
+  build:
+    name: Vet and build (${{ matrix.goos }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [linux, darwin, windows]
+    env:
+      GOOS: ${{ matrix.goos }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false # nothing here pushes
+      - id: go
+        uses: ./.github/actions/go
+        with:
+          cache: build-${{ matrix.goos }}
+      - name: gofmt
+        if: matrix.goos == 'linux'
+        run: |
+          unformatted=$(gofmt -l $(git ls-files '*.go'))
+          if [ -n "$unformatted" ]; then
+            echo "::error::not gofmt'ed: $unformatted"
+            exit 1
+          fi
+      - name: go vet, release build
+        if: ${{ !cancelled() && steps.go.outcome == 'success' }}
+        run: go vet ./...
+      - name: go vet, test build (denebtest)
+        if: ${{ !cancelled() && steps.go.outcome == 'success' }}
+        run: go vet -tags denebtest ./...
+      - name: Build for amd64 and arm64
+        if: ${{ !cancelled() && steps.go.outcome == 'success' }}
+        # The engine, the control server, the relay, the web server, and the
+        # window.
+        run: |
+          for arch in amd64 arm64; do
+            GOARCH=$arch go build -o "bin/$arch/" ./cmd/denebd ./cmd/deneb-control ./cmd/deneb-relay ./cmd/deneb-web ./cmd/deneb
+          done
+          ls -l bin/*
+      - name: No test build in a release (deploy/check-release.sh)
+        if: ${{ !cancelled() && steps.go.outcome == 'success' }}
+        run: |
+          sh deploy/check-release.sh bin
+          # And it does catch one.
+          go build -tags denebtest -o testbuild/ ./cmd/denebd
+          if sh deploy/check-release.sh testbuild; then
+            echo "::error::deploy/check-release.sh let a test build through"
+            exit 1
+          fi
+          echo "check-release.sh refused the test build above, as it should"
+      - name: Every dependency has a license (deploy/notices.sh)
+        if: ${{ !cancelled() && steps.go.outcome == 'success' }}
+        run: sh deploy/notices.sh ./cmd/deneb ./cmd/denebd ./cmd/deneb-control ./cmd/deneb-relay ./cmd/deneb-web > /dev/null

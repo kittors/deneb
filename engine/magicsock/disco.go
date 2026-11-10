@@ -168,6 +168,11 @@ type peerState struct {
 	srtt       time.Duration // smoothed direct round trip
 	pingsTx    uint64        // disco pings sent, direct and relay (tests count them)
 	pingsRelay uint64        // of which through the relay
+	// pingsRx, pongsRx: the peer's pings that came here direct, and its
+	// answers to ours that did. Our pings reaching the peer while its
+	// packets never reach us (its pingsRx grows, our pongsRx does not) is a
+	// network that lets UDP through one way only (11-10: hk-spare to hk-155).
+	pingsRx, pongsRx uint64
 
 	lossTx, lossRx float64 // test knob: drop this share of UDP to / from the peer
 	// relayLate, relayLateBy: test knob: this share of the relay's pongs
@@ -405,6 +410,9 @@ func (c *Conn) handleDisco(b []byte, src netip.AddrPort, relay proto.RelayID, re
 			c.sendRelayDisco(p, discoMsg{T: "pong", Tx: m.Tx, Relay: true})
 			return
 		}
+		c.mu.Lock()
+		p.pingsRx++
+		c.mu.Unlock()
 		c.learn(p, src)
 		c.sendUDPDisco(p, src, discoMsg{T: "pong", Tx: m.Tx, Src: src.String()})
 		if c.punchBack(p, src) {
@@ -474,6 +482,7 @@ func (c *Conn) handlePong(p *peerState, m discoMsg, src netip.AddrPort) {
 		return
 	}
 	delete(p.pending, m.Tx)
+	p.pongsRx++
 	rtt := now.Sub(pp.at)
 	c.ack(p, m.Tx, rtt)
 	p.cands[src] = now
@@ -1563,6 +1572,8 @@ type PathStatus struct {
 	TxDirect, TxRelay, RxDirect, RxRelay uint64
 	PingsTx                              uint64
 	PingsRelay                           uint64 // of PingsTx, through the relay
+	PingsRx                              uint64 // the peer's pings that came direct
+	PongsRx                              uint64 // answers to our pings that came direct
 }
 
 // Status reports the path to the peer with node key k.
@@ -1579,7 +1590,7 @@ func (c *Conn) Status(k proto.NodePublic) (PathStatus, bool) {
 		kind, ep, relay = p.kind, p.kindEndpoint, p.kindRelay
 	}
 	st := PathStatus{Kind: kind.String(), Endpoint: ep, Relay: relay, Since: p.since, Blocked: p.blocked,
-		Idle: p.idle, Prev: p.prevKind.String(), TxDirect: p.txDirect, TxRelay: p.txRelay, RxDirect: p.rxDirect, RxRelay: p.rxRelay, PingsTx: p.pingsTx, PingsRelay: p.pingsRelay}
+		Idle: p.idle, Prev: p.prevKind.String(), TxDirect: p.txDirect, TxRelay: p.txRelay, RxDirect: p.rxDirect, RxRelay: p.rxRelay, PingsTx: p.pingsTx, PingsRelay: p.pingsRelay, PingsRx: p.pingsRx, PongsRx: p.pongsRx}
 	st.Held = !p.idle && !c.directTrustedLocked(p, now) && c.directHeldLocked(p, now)
 	st.Dup, st.TxDup, st.TxWake = p.dup, p.txDup, p.txWake
 	st.HSBoth, st.TxHSBoth, st.RxHSDupes = p.cfg.DualHandshake && !c.noHSDedupe.Load(), p.txHSBoth, p.rxHSDupes

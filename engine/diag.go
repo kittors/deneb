@@ -172,7 +172,7 @@ func (e *Engine) diagPaths() map[string]any {
 			"blocked": st.Blocked, "idle": st.Idle, "held": st.Held, "reason": st.Reason, "prev": st.Prev,
 			"dup": st.Dup, "localRefused": st.LocalRefused, "backedOff": st.BackedOff,
 			"txDirect": st.TxDirect, "txRelay": st.TxRelay, "rxDirect": st.RxDirect, "rxRelay": st.RxRelay,
-			"pingsTx": st.PingsTx, "pingsRelay": st.PingsRelay,
+			"pingsTx": st.PingsTx, "pingsRelay": st.PingsRelay, "pingsRx": st.PingsRx, "pongsRx": st.PongsRx,
 		}
 	}
 	return out

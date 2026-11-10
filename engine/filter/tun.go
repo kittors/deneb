@@ -249,6 +249,9 @@ func (t *TUN) Write(bufs [][]byte, offset int) (int, error) {
 	for _, b := range bufs {
 		pkt := b[offset:]
 		if ok, why := t.F.In(pkt); !ok {
+			if why == FragmentHeld {
+				continue // the filter keeps it for its first piece
+			}
 			t.traced("drop-in:"+why, pkt)
 			if why == StaleTCP || why == CutTCP {
 				if rst := ResetFor(pkt); rst != nil {
@@ -265,6 +268,14 @@ func (t *TUN) Write(bufs [][]byte, offset int) (int, error) {
 			continue
 		}
 		keep = append(keep, b)
+		// Pieces of this datagram that came before it: right behind it.
+		for _, piece := range t.F.TakeEarly(pkt) {
+			if ok, _ := t.F.In(piece); ok {
+				buf := make([]byte, offset+len(piece))
+				copy(buf[offset:], piece)
+				keep = append(keep, buf)
+			}
+		}
 	}
 	if len(keep) > 0 {
 		if _, err := t.inner.Write(keep, offset); err != nil {

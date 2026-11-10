@@ -107,7 +107,29 @@ const (
 	// is a new flow): what a peer starts is capped well below the total.
 	maxPeerFlows = maxFlows / 16
 	maxPeerFrags = maxFrags / 4
+
+	// fragHold: a later piece of a datagram that comes in before the first
+	// piece waits this long for it. The engine sends a small piece through
+	// the relay as well as direct just after waking (magicsock's
+	// wakeRelay), while the large first piece goes direct only, and the
+	// relay can be the faster way: the small piece comes first, and the
+	// peer's WireGuard then drops its direct copy as a replay, so the one
+	// held here is the only one there is (Windows, 11-10: the first large
+	// ping of each round lost).
+	fragHold = 2 * time.Second
+	// What is held at once: pieces, of them from one peer, and the size of
+	// one (a piece of a datagram split for our MTU; larger ones are not
+	// held, so a peer cannot pin much memory here).
+	maxEarly     = 256
+	maxPeerEarly = 64
+	maxEarlySize = 1500
 )
+
+// FragmentHeld is In's answer for a later piece of a datagram whose first
+// piece has not come in yet: not dropped, but kept (TUN.Write leaves it to
+// the filter) until the first piece is let in, when TakeEarly hands it
+// back, or for fragHold, after which it counts as fragment-without-head.
+const FragmentHeld = "fragment-held"
 
 // flowKey is written from this device's point of view, so both directions
 // of a flow map to the same key.
@@ -179,6 +201,13 @@ type Filter struct {
 	// what maxPeerFlows and maxPeerFrags count.
 	peerFlows map[netip.Addr]int
 	peerFrags map[netip.Addr]int
+	// early holds later pieces that came before their first (FragmentHeld),
+	// by datagram; nEarly counts them all, peerEarly by peer, and held is
+	// nEarly for In's callers to read without the lock.
+	early     map[fragKey][]earlyPiece
+	nEarly    int
+	peerEarly map[netip.Addr]int
+	held      atomic.Int32
 	cut       map[flowKey]int64 // TCP connections a policy change cut, until when they are remembered
 	// cutUntil is the latest expiry ever put in cut: past it, nothing in
 	// cut is live, and wasCut answers without the lock (every TCP segment
@@ -206,6 +235,8 @@ func New(logf func(format string, args ...any)) *Filter {
 
 		peerFlows: map[netip.Addr]int{},
 		peerFrags: map[netip.Addr]int{},
+		early:     map[fragKey][]earlyPiece{},
+		peerEarly: map[netip.Addr]int{},
 		cut:       map[flowKey]int64{},
 		drops:     map[string]uint64{},
 		seen:      map[string]time.Time{},
@@ -405,7 +436,7 @@ func (f *Filter) In(b []byte) (bool, string) {
 	pol := f.pol.Load()
 	h, ok := Parse(b)
 	if !ok {
-		return f.drop("in", "malformed", h)
+		return f.drop("in", unparsed(b), h)
 	}
 	if pol.Off {
 		return true, ""
@@ -428,7 +459,7 @@ func (f *Filter) In(b []byte) (bool, string) {
 		return f.drop("in", "not-a-visible-peer", h)
 	}
 	if h.Fragment {
-		return f.fragment("in", h)
+		return f.fragment("in", h, b)
 	}
 	key := flowKey{h.Proto, netip.AddrPortFrom(h.Dst, h.DPort), netip.AddrPortFrom(h.Src, h.SPort)}
 	if h.Proto == ProtoICMP {
@@ -492,7 +523,7 @@ func (f *Filter) Out(b []byte) (bool, string) {
 	pol := f.pol.Load()
 	h, ok := Parse(b)
 	if !ok {
-		return f.drop("out", "malformed", h)
+		return f.drop("out", unparsed(b), h)
 	}
 	if pol.Off {
 		return true, ""
@@ -504,7 +535,7 @@ func (f *Filter) Out(b []byte) (bool, string) {
 		return f.drop("out", "transit-out", h)
 	}
 	if h.Fragment {
-		return f.fragment("out", h)
+		return f.fragment("out", h, nil)
 	}
 	now := f.now()
 	peer := pol.Peers[h.Dst]
@@ -655,20 +686,123 @@ func (f *Filter) noteFrag(h Packet, now time.Time) {
 	f.peerFrags[h.Src]++
 }
 
-func (f *Filter) fragment(dir string, h Packet) (bool, string) {
+func (f *Filter) fragment(dir string, h Packet, b []byte) (bool, string) {
 	// A TCP fragment that starts inside the TCP header could rewrite the
 	// flags or ports the first fragment was judged by (RFC 1858).
 	if h.Proto == ProtoTCP && h.FragOffset < 24 {
 		return f.drop(dir, "tiny-fragment", h)
 	}
 	now := f.now()
+	k := fragKey{h.Src, h.Dst, h.Proto, h.ID}
 	f.mu.Lock()
-	exp, ok := f.frags[fragKey{h.Src, h.Dst, h.Proto, h.ID}]
-	f.mu.Unlock()
+	exp, ok := f.frags[k]
 	if ok && exp >= now.UnixNano() {
+		f.mu.Unlock()
 		return true, ""
 	}
+	// Inbound, it may have overtaken its first piece (fragHold): kept.
+	if b != nil && f.holdLocked(k, b, now) {
+		f.mu.Unlock()
+		return false, FragmentHeld
+	}
+	f.mu.Unlock()
 	return f.drop(dir, "fragment-without-head", h)
+}
+
+type earlyPiece struct {
+	b  []byte
+	at int64 // unix nanoseconds
+}
+
+// holdLocked keeps a copy of b, a later piece of datagram k, for its first
+// piece, within maxEarly, maxPeerEarly and maxEarlySize.
+func (f *Filter) holdLocked(k fragKey, b []byte, now time.Time) bool {
+	if len(b) > maxEarlySize {
+		return false
+	}
+	full := func() bool { return f.nEarly >= maxEarly || f.peerEarly[k.src] >= maxPeerEarly }
+	if full() {
+		f.expireEarlyLocked(now)
+		if full() {
+			return false
+		}
+	}
+	f.early[k] = append(f.early[k], earlyPiece{append([]byte(nil), b...), now.UnixNano()})
+	f.nEarly++
+	f.peerEarly[k.src]++
+	f.held.Store(int32(f.nEarly))
+	return true
+}
+
+// TakeEarly hands back the pieces held for b's datagram, if b is a first
+// piece In let in: they go to the stack right after it, and In lets them
+// in now. Nothing when nothing is held, which it tells without the lock.
+func (f *Filter) TakeEarly(b []byte) [][]byte {
+	if f.held.Load() == 0 {
+		return nil
+	}
+	h, ok := Parse(b)
+	if !ok || !h.FirstFragment {
+		return nil
+	}
+	k := fragKey{h.Src, h.Dst, h.Proto, h.ID}
+	now := f.now().UnixNano()
+	var out [][]byte
+	f.mu.Lock()
+	// Unless the first piece went in unnoted (maxPeerFrags): then In would
+	// refuse them, and they are dropped here.
+	noted := f.frags[k] >= now
+	for _, p := range f.early[k] {
+		if noted && now-p.at <= int64(fragHold) {
+			out = append(out, p.b)
+		} else {
+			f.drops["in:fragment-without-head"]++
+		}
+	}
+	f.dropEarlyLocked(k)
+	f.mu.Unlock()
+	return out
+}
+
+func (f *Filter) dropEarlyLocked(k fragKey) {
+	n := len(f.early[k])
+	if n == 0 {
+		return
+	}
+	delete(f.early, k)
+	f.nEarly -= n
+	if f.peerEarly[k.src] <= n {
+		delete(f.peerEarly, k.src)
+	} else {
+		f.peerEarly[k.src] -= n
+	}
+	f.held.Store(int32(f.nEarly))
+}
+
+// expireEarlyLocked drops the pieces that waited fragHold for their first:
+// it was lost on the way, or let through before they came without being
+// noted (maxPeerFrags).
+func (f *Filter) expireEarlyLocked(now time.Time) {
+	for k, ps := range f.early {
+		if now.UnixNano()-ps[0].at > int64(fragHold) {
+			f.drops["in:fragment-without-head"] += uint64(len(ps))
+			f.dropEarlyLocked(k)
+		}
+	}
+}
+
+// unparsed says why Parse refused b: IPv6, which the systems send on the
+// interface (router solicitations and the like; there is only IPv4 inside
+// the tunnel), an IPv4 protocol the filter does not know (IGMP's
+// membership reports), or a malformed packet.
+func unparsed(b []byte) string {
+	switch {
+	case len(b) > 0 && b[0]>>4 == 6:
+		return "ipv6"
+	case len(b) >= 20 && b[0]>>4 == 4 && b[9] != ProtoTCP && b[9] != ProtoUDP && b[9] != ProtoICMP:
+		return "protocol"
+	}
+	return "malformed"
 }
 
 // GC forgets expired flows and fragments. The engine calls it periodically.
@@ -695,6 +829,7 @@ func (f *Filter) gcLocked(now time.Time) {
 			f.dropFragLocked(k)
 		}
 	}
+	f.expireEarlyLocked(now)
 }
 
 // dropFlowLocked forgets a flow, and its count against the peer that

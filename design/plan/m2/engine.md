@@ -769,3 +769,49 @@ M1 节点慢一些，是因为 QEMU 在模拟 amd64。
 - **偶尔失败的测试**：
   - `TestSmallPacketsTwiceOnLossyLine` 比较 15 秒随机丢包里发一份和发两份各停了多久，碰上一次长停顿就判输。带日志重跑都过，也没有触发握手重来。
   - `TestLossyDirectGivesWayToRelay` 偶尔切换超过 10 秒，原因同上一条「切到中转要 4–10 秒」。
+
+### 11-11 凌晨：构建服务器和 NAS 换版以后直连回不来（m7-11102317-win 那一轮）
+
+现象：11-10 23:12 四台换成 m2-11102311 以后，构建服务器（hk-155）和 NAS（hk-spare）之间一直走中转。两边都在发 ping（构建服务器 pingsTx 254→258，NAS 431→435），一个回答都没收到，日志里换版以后一次 direct path found 都没有。15:14:40（UTC）两边同时醒着探测了 48 秒，也没通，所以不是两边错开时间探测。两台到家里的三台都是直连。
+
+**原因不在引擎：从 hk-spare 发往 hk-155 的 UDP 在路上被丢了，反方向是通的。** 在两台主机上只读地查了连接跟踪（`/proc/net/nf_conntrack`），每秒一次，看了 5 分半：
+
+- 15:50:40 构建服务器发出的 ping，在 hk-155 上是 `[UNREPLIED]`。
+- 同一时刻 hk-spare 上，构建服务器的包到了 2 个，NAS 发回 6 个；这 6 个一个都没到 hk-155。
+- 不只是引擎的包：
+  - NAS 发给 hk-155 中转站 STUN 端口（47478）的请求，计数从 4794 涨到 4822，回复一直停在 2808。hk-155 上根本没有这条 UDP 流的记录。NAS 换版后的日志里也一直没有 "[stun] public address" 那一行；
+  - 从 hk-spare 用 bash 换一个端口发一个 UDP 包到 hk-155:47478，hk-155 也没看到。
+- 别的都通：
+  - 两台互相 ping（ICMP），2 ms；
+  - hk-spare 到 hk-155 的 TCP（控制服务器 47443、中转站 47445）都连着；
+  - hk-155 到 hk-spare 的 UDP 能到。
+- 两台主机自己没有挡 UDP 的规则（INPUT 默认 ACCEPT，没有相关的 DROP），到对方都从 ens17 走默认路由，引擎的套接字也都绑在 ens17 上。
+
+所以是两台主机以外（服务商一侧）拦了 hk-spare 发往 hk-155 的 UDP，多半是 hk-155 那边的防攻击或黑名单，也可能是 hk-spare 那边的出站策略。引擎照设计退到了中转。旧容器的日志随容器删了，看不出拦截是不是正好在换版时开始的。
+
+要用户去看：
+
+- hk-155 服务商控制台里，有没有对 hk-spare 公网地址的 UDP 封禁或防攻击记录；
+- hk-spare 服务商对出站 UDP 的策略。
+
+引擎这边改不了网络。拦截一撤，引擎自己就会回到直连：
+
+- 闲着时最多 5 分钟一次重探；
+- 有流量时 1 秒内。
+
+假拓扑里验过，见下面的 servers 检查。
+
+**引擎这边加的诊断**：magicsock 每个对端多两个计数，`pingsRx`（对方直连发来、到了这里的 ping）和 `pongsRx`（我们的 ping 直连收到的回答）。`debug paths` 和诊断包里都有。
+
+- 这次的情形在两边各看一眼就明白：NAS 的 pingsRx 在涨（构建服务器的包到得了），构建服务器的 pingsRx、pongsRx 都不动（NAS 的包到不了）。不用再去主机上查连接跟踪。
+
+**测试**：
+
+- 引擎测试 `TestOneWayUDPShowsInTheCounters`：
+  - build 发往 mac 的 UDP 全丢，两边都停在中转；
+  - build 的 pingsRx 涨，mac 的 pingsRx、pongsRx 和 build 的 pongsRx 都不动；
+  - 放开以后两边 10 s 内回到直连。
+- 假拓扑新加 `servers` 检查：
+  - build 加进周末联机，和 nas 成了两台公网服务器之间的对端，1.3 s 直连；
+  - 在 nas 容器里用 iptables 丢掉发往 build 的 UDP：两边退到中转，nas 听到 build 的 18 个 ping，build 一个也没听到；
+  - 删掉规则，1.2 s 回到直连。
