@@ -49,6 +49,7 @@ test/topo/gui/shoot.sh --mac <Deneb.app> --win <放 Deneb.exe 的目录> \
   - 关掉窗口，删掉计划任务和这次的目录；
   - 用户态引擎没在跑就照 `start.ps1` 起回来。
 - 不改网络、防火墙、Tailscale、UAC。
+- 不传引擎（`denebd.exe`、`wintun.dll`）和安装包，除非 `--world real`。在一个新目录里运行、要监听端口的引擎，第一次运行时 Windows 防火墙会自动给那个路径建入站阻止规则；这个工具每次换目录，就会每次多两条（11-11 M5 托盘会话在 `deneb\m5ui` 上遇到过）。
 - 别的线同时在测试机上开着 Deneb 窗口时，它们的窗口和任务栏按钮也会出现在整屏截图里。窗口截图只截这次起的那个进程的窗口，收尾也只关这次起的进程。
 
 **Ubuntu 虚拟机**（VMware Fusion）：

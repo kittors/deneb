@@ -149,8 +149,20 @@ shoot_windows() {
 	demo) env_args="-Demo" ;;
 	esac
 	win "mkdir $R\\app" >/dev/null
-	say "windows: copying $(du -sh "$dir" | cut -f1) to $WIN_SSH"
-	win_cp "$dir"/* "$WIN_SSH:deneb/gui/$stamp/app/"
+	# The window and what it reads beside it. Not the engine (denebd.exe,
+	# wintun.dll) unless the window is to use one (--world real): an engine
+	# that listens from a new folder each run draws a firewall rule for
+	# that folder from Windows, each time. Nor an installer.
+	local files=()
+	for f in "$dir"/*; do
+		case $(basename "$f") in
+		denebd.exe | wintun.dll) [ "$world" = real ] && files+=("$f") ;;
+		*setup*.exe) ;;
+		*) files+=("$f") ;;
+		esac
+	done
+	say "windows: copying $(du -ch "${files[@]}" | tail -1 | cut -f1) to $WIN_SSH"
+	win_cp "${files[@]}" "$WIN_SSH:deneb/gui/$stamp/app/"
 	win_cp "$here"/win-*.ps1 "$WIN_SSH:deneb/gui/$stamp/"
 	trap 'win "powershell -NoProfile -ExecutionPolicy Bypass -File $R\\win-cleanup.ps1 -Run $R" >"$out/windows-cleanup.txt" 2>&1 || true; rm -rf "$tmp"' EXIT
 	win_task DenebGUIShot0 win-shot.ps1 "-Run $R\\before" "$R\\before\\shot.done"
