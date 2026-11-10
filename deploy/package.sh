@@ -34,6 +34,12 @@
 # installer out and says so. The Debian packages of the engine are made
 # with dpkg-deb in Docker.
 set -eu
+# makensis aborts at once (std::bad_alloc) without a UTF-8 locale, as in a
+# shell that never set LANG; give it one.
+case "${LC_ALL:-${LANG:-}}" in
+*UTF-8* | *utf8* | *UTF8*) ;;
+*) export LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 ;;
+esac
 root=$(cd "$(dirname "$0")/.." && pwd)
 app=$root/cmd/deneb
 res=$app/resources
