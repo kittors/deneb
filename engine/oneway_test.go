@@ -37,12 +37,19 @@ func TestOneWayUDPShowsInTheCounters(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 	}
 	m0, b0 := status()
-	until := time.Now().Add(3 * time.Second)
-	for time.Now().Before(until) {
+	// Over the relay, mac keeps trying the direct path now and then: give
+	// build 3 s at least, and until it hears one of those pings, 15 s at
+	// most (a busy machine, as CI's, may let 3 s pass with none).
+	var m1, b1 magicsock.PathStatus
+	least, most := time.Now().Add(3*time.Second), time.Now().Add(15*time.Second)
+	for {
 		pingOK(t, mac, "build", 5*time.Second)
 		time.Sleep(200 * time.Millisecond)
+		m1, b1 = status()
+		if now := time.Now(); now.After(most) || now.After(least) && b1.PingsRx > b0.PingsRx {
+			break
+		}
 	}
-	m1, b1 := status()
 	if b1.PingsRx <= b0.PingsRx {
 		t.Errorf("build heard none of mac's pings (%d, then %d)", b0.PingsRx, b1.PingsRx)
 	}
