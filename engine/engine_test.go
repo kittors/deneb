@@ -286,6 +286,11 @@ func pingFails(t *testing.T, from *tnode, to string) error {
 
 func waitPath(t *testing.T, n *tnode, peer *tnode, kind string, within time.Duration) {
 	t.Helper()
+	if os.Getenv("CI") != "" {
+		// A loaded CI runner (GitHub's macOS ones) runs the timers late:
+		// wait twice as long there before calling it a failure.
+		within *= 2
+	}
 	k := peer.node().NodeKey
 	deadline := time.Now().Add(within)
 	for {
