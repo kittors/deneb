@@ -4,6 +4,7 @@ import (
 	"os"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/kittors/deneb/proto"
 )
@@ -36,9 +37,17 @@ func TestProdCopy(t *testing.T) {
 	w := st.w
 	t.Logf("schema %d, version %d, network %s, %d people, %d LANs, %d devices", ver, st.v, w.Network.IPv4, len(w.people), len(w.lans), len(w.devices))
 	t.Logf("default relays %v, fallback %v", w.defaults, w.fallback)
+	// No LAN asked for approval before M3 went live (11-09), and a
+	// migration must not turn it on for them; those made since may, by
+	// their owner's choice.
+	m3 := time.Date(2026, 11, 9, 13, 0, 0, 0, time.UTC)
 	for _, l := range w.lans {
 		if l.ApproveDevices || len(l.pending) > 0 {
-			t.Errorf("LAN %s (%s) wants devices approved or has some waiting", l.ID, l.Name)
+			if l.CreatedAt.Before(m3) {
+				t.Errorf("LAN %s (%s) wants devices approved or has some waiting", l.ID, l.Name)
+			} else {
+				t.Logf("LAN %s (%s), made %s, asks for approval: %d waiting", l.ID, l.Name, l.CreatedAt.Format(time.RFC3339), len(l.pending))
+			}
 		}
 		for _, m := range l.members {
 			if m.State != proto.MemberJoined {
