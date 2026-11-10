@@ -313,6 +313,14 @@ func TestLiveRefuse(t *testing.T) {
 	refused := func() bool { return r.store().Devices[model.DeviceID(r.a.self)].Refused[model.PersonID(fakeworld.Jie)] }
 	r.click("阿杰")
 	r.until("阿杰 refused", refused)
+	// The store shows the refusal as soon as the world has it, before the
+	// op's answer: the fake engine then hands the watch a State of its own,
+	// from the op's goroutine. Click again before that, and under load it
+	// can come after the next op's State and stay (11-08: "timed out
+	// waiting for 阿杰 back"; the engines are to hand States over in order,
+	// see design/plan/m3/client.md). So the second click waits for the
+	// answer.
+	r.until("the answer to the refusal", func() bool { return len(r.a.pend) == 0 })
 	r.settle(700 * time.Millisecond)
 	r.shot("refused")
 	for _, id := range []string{jiePC, jieNAS} {

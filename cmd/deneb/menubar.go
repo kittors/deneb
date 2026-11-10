@@ -162,6 +162,13 @@ func (a *app) panelBody(c *ui.Context, p *palette) ui.Element {
 					a.panelLAN(c, p, l)
 				}
 			})
+			a.fold(c, "shared-section", s.Engine && s.Can(model.FeatureShare) && len(s.Shared) > 0, func() {
+				// The devices given to me, a row each (DESIGN §6.11).
+				ui.Text(c, "共享给我").FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(14, 8, 6, 8)
+				for _, sh := range s.Shared {
+					a.panelShared(c, p, sh)
+				}
+			})
 		})
 		a.panelOpen(c, p)
 	})
@@ -579,4 +586,69 @@ func say(parts ...string) string {
 		b.WriteString(part)
 	}
 	return b.String()
+}
+
+// panelShared is a device given to me, in the panel: its tile and name,
+// and where it comes from and how it is ("设计部 · 直接连上"). A click opens
+// the window on it.
+func (a *app) panelShared(c *ui.Context, p *palette, sh model.SharedDevice) {
+	m := a.snap.Device(sh.Device)
+	if m == nil {
+		return
+	}
+	row := ui.ButtonBase(c.Key("panel-shared-"+string(sh.Device))).Height(48).Padding(0, 8).Gap(10).Radius(12).FocusRing(false)
+	if row.Hovered() {
+		row.Background(p.well)
+	}
+	from := short(sh.FromLAN)
+	if from == "" {
+		if who := a.snap.Person(sh.From); who != nil {
+			from = who.Name
+		}
+	}
+	col := ui.Hex("#a1a1aa")
+	if who := a.snap.Person(m.Owner); who != nil {
+		col = ownerColors[who.Color%model.NumColors]
+	}
+	row.Children(func() {
+		deviceTile(c, p, glyphFor(m.Kind), col, 24, false)
+		ui.Column(c).Gap(1).Grow(1).Shrink(1).Children(func() {
+			ui.Text(c, m.Name).FontSize(13).FontWeight(500).SingleLine()
+			line := from + " · " + a.pathWords(sh.Device)
+			ui.Text(c.Key("line-"+line), line).FontSize(12).TextColor(p.ink3).SingleLine().
+				Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{}})
+		})
+	})
+	if row.Clicked() {
+		a.openMain(c)
+		a.show(c, model.SharedLANID, false)
+		a.selected = string(sh.Device)
+	}
+}
+
+// pathWords is how this computer reaches dev, in the words of its second
+// line on the canvas.
+func (a *app) pathWords(dev model.DeviceID) string {
+	s := a.snap
+	if s.NoNetwork {
+		return "等这台电脑联网"
+	}
+	pt := s.Path(dev)
+	switch pt.Kind {
+	case model.PathRelay:
+		name := "中转站"
+		if r := s.Relays[pt.Relay]; r != nil {
+			name = r.Name
+		}
+		return "经" + name + "中转"
+	case model.PathConnecting:
+		return "正在连接…"
+	case model.PathUnreachable:
+		return "连不上"
+	case model.PathOffline:
+		return "不在线"
+	case model.PathRefused:
+		return "主人不让你用"
+	}
+	return "直接连上"
 }

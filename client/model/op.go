@@ -40,6 +40,36 @@ const (
 	// OpLANPause pauses the LAN on this computer (On), or resumes it (off).
 	// The engine does it, not the server.
 	OpLANPause OpKind = "lan.pause" // LAN, On
+	// OpMemberRemove takes a person out of a LAN of mine, their devices
+	// with them: what freeing a seat does (DESIGN §6.11).
+	OpMemberRemove OpKind = "member.remove" // LAN, Person
+
+	// M3 (DESIGN §6.11).
+	//
+	// share.create gives one of my devices to one person, opening the
+	// services named (keys); giving a device back that was taken back is
+	// undo, and with no services named it comes back as it was.
+	// share.revoke takes it back: by Share, or by Device and Person when the
+	// view has not heard its id yet. share.release tells the server the
+	// toast that offered undo went: the seat it kept comes free.
+	// share.leave gives back, to whoever gave it, a device given to me.
+	OpShareCreate  OpKind = "share.create"  // Device, Person, Services
+	OpShareRevoke  OpKind = "share.revoke"  // Share, or Device and Person
+	OpShareRelease OpKind = "share.release" // Share, or Device and Person
+	OpShareLeave   OpKind = "share.leave"   // Share
+	OpLANSetMode   OpKind = "lan.setMode"   // LAN, Mode
+
+	// M4 (DESIGN §6.12). relay.add and relay.remove drag one of my relays
+	// into a LAN and out; relay.kick and relay.unkick keep a person off a
+	// relay of mine, or let them back; relay.join asks for an install
+	// command, relay.revokeJoin takes one back that was not run.
+	OpRelayAdd        OpKind = "relay.add"        // LAN, Relay
+	OpRelayRemove     OpKind = "relay.remove"     // LAN, Relay
+	OpRelayRename     OpKind = "relay.rename"     // Relay, Name
+	OpRelayKick       OpKind = "relay.kick"       // Relay, Person
+	OpRelayUnkick     OpKind = "relay.unkick"     // Relay, Person
+	OpRelayJoin       OpKind = "relay.join"       // → Command, Join
+	OpRelayRevokeJoin OpKind = "relay.revokeJoin" // Join
 )
 
 // Op is one thing the person asks for: what a drag or a click turns into.
@@ -61,6 +91,16 @@ type Op struct {
 
 	DevKind    string // device.setKind
 	Invitation string // invite.accept, invite.decline: an Invitation's ID
+
+	// M3. service.set takes Share (or Person, for a share the view has not
+	// heard the id of) instead of LAN, to switch a service in a share.
+	Share    string
+	Services []string // share.create: the keys of the services it opens
+	Mode     LANMode  // lan.setMode
+
+	// M4.
+	Relay RelayID
+	Join  string // relay.revokeJoin: a RelayJoin's ID
 }
 
 // Result is what an op that went through answers.
@@ -70,6 +110,10 @@ type Result struct {
 	Version uint64
 	LAN     LANID  // lan.create, invite.accept: the LAN made or joined
 	Link    string // lan.invite: the link to send
+	Share   string // share.create: the share made, or given back (M3)
+	// relay.join: the install command, and the join it is (M4).
+	Command string
+	Join    string
 }
 
 // With returns the snapshot as it will be once op takes effect, for the view
@@ -119,6 +163,9 @@ func (s *Snapshot) With(op Op) *Snapshot {
 		nl.Devices = slices.DeleteFunc(slices.Clone(l.Devices), func(d DeviceID) bool { return d == op.Device })
 		return n
 	case OpServiceSet:
+		if op.LAN == "" && (op.Share != "" || op.Person != "") {
+			return s.withShareService(op)
+		}
 		l := s.LAN(op.LAN)
 		if l == nil {
 			return s
@@ -253,6 +300,10 @@ func (s *Snapshot) With(op Op) *Snapshot {
 		n := s.clone()
 		n.Invitations = slices.Delete(slices.Clone(s.Invitations), i, i+1)
 		return n
+	case OpShareCreate, OpShareRevoke, OpShareLeave, OpLANSetMode, OpMemberRemove:
+		return s.withM3(op)
+	case OpRelayAdd, OpRelayRemove, OpRelayRename, OpRelayKick, OpRelayUnkick, OpRelayJoin, OpRelayRevokeJoin:
+		return s.withM4(op)
 	case OpDeviceRenew, OpDeviceRename, OpDeviceSetKind:
 		d := s.Devices[op.Device]
 		if d == nil {

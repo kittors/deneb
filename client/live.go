@@ -41,12 +41,21 @@ type Live struct {
 	nextSub int
 	timer   *time.Timer
 	cancel  context.CancelFunc
+	// taken are the shares this store took back, by device and person:
+	// share.release names one the view no longer lists (M3).
+	taken map[string]proto.ShareID
+	// usage is my relays' usage as the server last said it; joins the
+	// install commands this store asked for, by join ID, which the server
+	// shows only once; usageNow asks for the usage again (M4).
+	usage    *proto.RelayUsage
+	joins    map[string]string
+	usageNow chan struct{}
 }
 
 // NewLive returns the store of the engine lc talks to. It watches nothing
 // until Start.
 func NewLive(lc *localclient.Client) *Live {
-	l := &Live{lc: lc, now: time.Now, subs: map[int]func(*model.Snapshot){}}
+	l := &Live{lc: lc, now: time.Now, subs: map[int]func(*model.Snapshot){}, usageNow: make(chan struct{}, 1)}
 	l.snap = l.buildLocked(l.now())
 	return l
 }
@@ -59,6 +68,7 @@ func (l *Live) Start() {
 	l.mu.Unlock()
 	go l.watch(ctx)
 	go l.listen(ctx)
+	go l.relayUsage(ctx)
 }
 
 // listen asks the engine which common services this computer listens on,
@@ -97,12 +107,31 @@ func (l *Live) Close() {
 	}
 }
 
+// liveFeatures are the server's features this store takes the data and
+// the ops of: a control shows only where both the server and this store
+// take it.
+var liveFeatures = map[string]bool{
+	proto.FeatureApprove: true, proto.FeatureInvitePerson: true, proto.FeatureRename: true,
+	proto.FeatureRenew: true, proto.FeatureDNSName: true,
+	// M3's (DESIGN §6.11).
+	proto.FeatureShare: true, proto.FeatureSeats: true, proto.FeatureShareMode: true, proto.FeaturePublicDevice: true,
+	// M4's (DESIGN §6.12).
+	proto.FeatureRelays: true,
+}
+
 func (l *Live) watch(ctx context.Context) {
 	for {
+		// The engine's version only goes up while it runs, but two of its
+		// goroutines can each take a State and hand them over in the other
+		// order: an older State after a newer one would undo, here, an op
+		// that went through, until the engine's next change. A new watch,
+		// as after the engine restarted, starts afresh.
+		var newest uint64
 		err := l.lc.Watch(ctx, func(ev apitype.Event) error {
 			switch ev.Type {
 			case apitype.EventState:
-				if ev.State != nil {
+				if ev.State != nil && ev.State.Version >= newest {
+					newest = ev.State.Version
 					l.takeState(ev.State)
 				}
 			case apitype.EventPaths:
@@ -263,10 +292,14 @@ func (l *Live) buildLocked(now time.Time) *model.Snapshot {
 	if v := l.view; v != nil && st.LoggedIn {
 		s.Loaded = true
 		if len(v.Features) > 0 {
-			// What the server does beyond M1 (M2 on).
+			// What the server does beyond M1 (M2 on), as far as this store
+			// takes it: a control shows only where its data and ops are
+			// wired here too.
 			s.Features = make(map[string]bool, len(v.Features))
 			for _, f := range v.Features {
-				s.Features[f] = true
+				if liveFeatures[f] {
+					s.Features[f] = true
+				}
 			}
 		}
 		if v.Me != "" {
@@ -276,41 +309,18 @@ func (l *Live) buildLocked(now time.Time) *model.Snapshot {
 			s.People[model.PersonID(p.ID)] = person(p, s.Me)
 		}
 		for _, d := range v.Devices {
-			md := &model.Device{
-				ID: model.DeviceID(d.ID), Owner: model.PersonID(d.Owner), Name: d.DisplayName,
-				Kind: string(d.Kind), OS: string(d.OS), FQDN: d.FQDN, Online: d.Online,
-				RefusesMe: d.RefusesMe, Refused: map[model.PersonID]bool{},
-			}
-			if md.Name == "" {
-				md.Name = d.Name
-			}
-			for _, a := range d.Addrs {
-				if a.Addr().Is4() && md.Addr == "" {
-					md.Addr = a.Addr().String()
-				} else if a.Addr().Is6() && md.Addr6 == "" {
-					md.Addr6 = a.Addr().String()
-				}
-			}
-			for _, p := range d.Refused {
-				md.Refused[model.PersonID(p)] = true
-			}
-			// M2: when it was last online, and how long its login lasts.
-			md.LastSeen = d.LastSeen
-			md.Login = model.Login{Expires: d.Login.ExpiresAt, RenewFrom: d.Login.RenewFrom, Expired: d.Login.Expired}
-			for _, svc := range d.Services {
-				md.Catalog = append(md.Catalog, service(svc, false))
-			}
+			md := deviceFrom(d)
 			s.Devices[md.ID] = md
 			if md.Owner == s.Me {
 				s.Mine = append(s.Mine, md.ID)
 			}
 		}
-		for _, r := range v.Relays {
-			s.Relays[model.RelayID(r.ID)] = &model.Relay{ID: model.RelayID(r.ID), Name: r.Name}
-		}
+		// M3 (DESIGN §6.11): the devices given to me, and my seats.
+		takeShared(s, v)
+		s.Seats = seatsOf(v.Seats)
 		for _, lv := range v.LANs {
 			ml := &model.LAN{ID: model.LANID(lv.ID), Name: lv.Name, Owner: model.PersonID(lv.Owner),
-				Services: map[model.DeviceID][]model.Service{},
+				Services: map[model.DeviceID][]model.Service{}, Mode: lanMode(lv.Mode),
 				// M2: its two switches, and whether I wait to be let in.
 				ApproveDevices: lv.ApproveDevices, ApproveMembers: lv.ApproveMembers, Waiting: lv.Pending,
 				Paused: paused[apitype.ScopeID(proto.LANScope(lv.ID))]}
@@ -345,15 +355,24 @@ func (l *Live) buildLocked(now time.Time) *model.Snapshot {
 			for _, r := range lv.Relays {
 				ml.Relays = append(ml.Relays, model.RelayID(r))
 			}
+			if ml.Mode == model.ModeShare && ml.Owner != s.Me {
+				// A member of a LAN that only hands out devices has of it
+				// what it gives them, under "共享给我" (DESIGN §6.11).
+				s.ShareLANs = append(s.ShareLANs, ml)
+				continue
+			}
 			s.LANs = append(s.LANs, ml)
 		}
+		// M4 (DESIGN §6.12): the relays, after the LANs, which say which
+		// of theirs someone dragged in.
+		takeRelays(s, v, l.usage, l.joins)
 		for _, iv := range v.Invitations {
 			// Invites made out to me that wait for my answer (M2).
 			if iv.State != "" && iv.State != proto.InvitePending {
 				continue
 			}
 			s.Invitations = append(s.Invitations, model.Invitation{ID: string(iv.Invite), LAN: model.LANID(iv.LAN),
-				LANName: iv.LANName, Inviter: *person(iv.Inviter, s.Me), Expires: iv.ExpiresAt})
+				LANName: iv.LANName, Inviter: *person(iv.Inviter, s.Me), Expires: iv.ExpiresAt, SeatsFull: iv.SeatsFull})
 		}
 	}
 	for _, ls := range l.local {
@@ -381,6 +400,14 @@ func (l *Live) buildLocked(now time.Time) *model.Snapshot {
 	}
 	paths, next := l.deb.at(now)
 	s.Paths = paths
+	// M4: how long a round trip through each relay takes, as the devices
+	// that go through it now say, for its card: "离你很快" or not, and
+	// its "延迟". One no device goes through says nothing of it.
+	for _, p := range s.Paths {
+		if r := s.Relays[p.Relay]; p.Kind == model.PathRelay && r != nil && p.RTT > 0 && (r.RTT == 0 || p.RTT < r.RTT) {
+			r.RTT = p.RTT
+		}
+	}
 	s.NoNetwork = noNetwork(st, s)
 	// The uses just cut, each service named as the card names it.
 	for _, c := range l.cuts {
@@ -539,6 +566,13 @@ func (l *Live) Do(ctx context.Context, op model.Op) (model.Result, error) {
 		LAN: proto.LANID(op.LAN), Device: proto.DeviceID(op.Device), Person: proto.PersonID(op.Person),
 		Name: op.Name, Invite: op.Invite, On: op.On, Refuse: op.Refuse,
 		Kind: proto.DeviceKind(op.DevKind), Invitation: proto.InviteID(op.Invitation),
+		Share: proto.ShareID(op.Share), Mode: proto.LANMode(op.Mode),
+	}
+	if err := l.shareArgs(op, &args); err != nil {
+		return model.Result{}, err
+	}
+	if err := l.relayArgs(op, &args); err != nil {
+		return model.Result{}, err
 	}
 	if op.Kind == model.OpServiceSet {
 		svc := l.service(op.Device, op.LAN, op.Service)
@@ -584,8 +618,11 @@ func (l *Live) Do(ctx context.Context, op model.Op) (model.Result, error) {
 			if r.Link == "" {
 				r.Link = out.Link
 			}
+			r.Share = string(out.Share)
+			l.relaysDone(op, out.OpOutput, &r)
 		}
 	}
+	l.sharesDone(op, args, r)
 	return r, nil
 }
 
@@ -706,7 +743,7 @@ func (l *Live) Preview(ctx context.Context, link string) (*model.Invite, error) 
 	me := l.Snapshot().Me
 	return &model.Invite{
 		Link: link, LAN: model.LANID(p.LAN), LANName: p.LANName, Inviter: *person(p.Inviter, me),
-		AlreadyIn: p.AlreadyIn, Gone: p.State != "" && p.State != proto.InvitePending,
+		AlreadyIn: p.AlreadyIn, Gone: p.State != "" && p.State != proto.InvitePending, SeatsFull: p.SeatsFull,
 	}, nil
 }
 

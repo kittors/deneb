@@ -246,7 +246,13 @@ func (a *app) inviteLayer(c *ui.Context, p *palette) {
 				ui.Column(c).Gap(2).Grow(1).Children(func() {
 					ui.Text(c, strings.TrimLeft(spaced(short(inv.Inviter.Name)), " ")+"邀请你加入「"+short(inv.LANName)+"」").
 						FontSize(15).FontWeight(600).MaxLines(2)
-					ui.Text(c, "这台电脑会跟着加进去").FontSize(12).TextColor(p.ink2)
+					sub := "这台电脑会跟着加进去"
+					if inv.SeatsFull {
+						// The inviter's seats are full: joining waits for one
+						// (pricing-and-relays §1.5 item 5).
+						sub = say(short(inv.Inviter.Name), "的位置满了，腾出来就能加入")
+					}
+					ui.Text(c, sub).FontSize(12).TextColor(p.ink2).MaxLines(2)
 				})
 			})
 			ui.Row(c).Gap(8).Margin(16, 0, 0, 0).Children(func() {
@@ -301,7 +307,7 @@ func message(err error) string {
 
 // showInvitation shows the card of an invite sent to me by name.
 func (a *app) showInvitation(inv model.Invitation) {
-	a.invite = &inviteCard{inv: &model.Invite{LAN: inv.LAN, LANName: inv.LANName, Inviter: inv.Inviter}, invitation: inv.ID}
+	a.invite = &inviteCard{inv: &model.Invite{LAN: inv.LAN, LANName: inv.LANName, Inviter: inv.Inviter, SeatsFull: inv.SeatsFull}, invitation: inv.ID}
 	a.selected, a.more = "", false
 }
 

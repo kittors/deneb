@@ -157,10 +157,11 @@ type linkGeo struct {
 // geo returns the shape of the link to d, made anew only when its ends,
 // or the relay it goes through, moved.
 func (a *app) geo(d *device, me, o ui.Point) *linkGeo {
-	relay := d.path == "relay" && !a.all()
+	stop := a.stopFor(d)
+	relay := d.path == "relay" && !a.all() && stop != nil
 	var via ui.Point
 	if relay {
-		via = a.relay.live
+		via = stop.live
 	}
 	g := a.geos[d.id]
 	if g != nil && g.me == me && g.d == d.live && g.via == via && g.o == o && g.relay == relay {
@@ -228,6 +229,9 @@ func (a *app) paintLinks(pt *ui.Painter, r ui.Rect, p *palette, grow map[string]
 		// Dimmed with its region while another LAN has the focus: its light
 		// goes on flowing, faintly (scene 3).
 		fk := 1 - 0.65*d.faded
+		// This computer held up in the header: every link of its all but
+		// goes, rather than run up there (DESIGN §6.11).
+		fk *= 1 - 0.92*me.up
 		if old := d.oldGeo; old != nil {
 			if k := float32(now.Sub(d.pathAt)) / float32(trackIn); k < 1 && linked(d.path) {
 				pt.StrokePath(&old.track, 3, p.track.Alpha(fk*(1-ui.EaseInOut(max(0, k)))))
@@ -283,7 +287,7 @@ func (a *app) paintLinks(pt *ui.Painter, r ui.Rect, p *palette, grow map[string]
 		}
 		// Held over the tray, it fades, to say that letting go cuts it;
 		// cut, it is a dotted line.
-		if live := fk * (1 - 0.6*d.dim) * (1 - d.cut); live > 0 {
+		if live := fk * (1 - 0.6*d.dim) * (1 - 0.92*d.up) * (1 - d.cut); live > 0 {
 			pt.StrokePath(&geo.track, 3, p.track.Alpha(live))
 		}
 		if d.cut > 0 {
@@ -294,7 +298,7 @@ func (a *app) paintLinks(pt *ui.Painter, r ui.Rect, p *palette, grow map[string]
 			run = newRun(d.id, L, geo.relay, !d.joined.IsZero())
 			a.beams[d.id] = run
 		}
-		light := fk * (1 - 0.75*d.dim) * (1 - d.cut)
+		light := fk * (1 - 0.75*d.dim) * (1 - d.up) * (1 - d.cut)
 		ca, cb := a.people[me.owner].color, a.people[d.owner].color
 		for i := range run {
 			run[i] = math.Mod(run[i]+dt*beamSpeed, cycle(d.id, i, L, geo.relay))

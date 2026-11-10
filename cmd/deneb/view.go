@@ -162,10 +162,15 @@ func (a *app) sidebar(c *ui.Context, p *palette, bar ui.TitleBar) {
 		group(c, p, "设备")
 		navRow(c, p, "我的设备", "我的设备", false, func() { ui.Icon(c, uiGlyphs["home"]).Size(18, 18).TextColor(p.ink3) }, fmt.Sprint(len(a.snap.Mine)), 0)
 		shared := ""
-		if n := a.snap.SharedWithMe; n > 0 {
+		if n := len(a.snap.Shared); n > 0 {
 			shared = fmt.Sprint(n)
 		}
-		navRow(c, p, "共享给我", "共享给我", false, func() { ui.Icon(c, uiGlyphs["inbox"]).Size(18, 18).TextColor(p.ink3) }, shared, 0)
+		// The devices given to me, on a canvas of their own (DESIGN §6.11).
+		inbox := func() { ui.Icon(c, uiGlyphs["inbox"]).Size(18, 18).TextColor(p.ink3) }
+		if navRowWith(c, p, "共享给我", "共享给我", a.shared(), inbox, rowOpts{count: shared, flash: a.flash(c, model.SharedLANID)}) &&
+			a.snap.Can(model.FeatureShare) {
+			a.show(c, model.SharedLANID, false)
+		}
 		ui.Spacer(c)
 		ui.Row(c).Gap(10).Padding(8, 6, 4, 8).Children(func() {
 			ball(c, a.people[a.me], 32, false)
@@ -296,7 +301,7 @@ func (a *app) header(c *ui.Context, p *palette) {
 			title.Children(func() {
 				ui.Text(c, name).FontSize(20).FontWeight(600).SingleLine().MaxWidth(lanNameWidth)
 			})
-			if title.Clicked() {
+			if title.Clicked() && !a.shared() {
 				if a.selected == lanCard {
 					a.selected, a.renaming = "", nil
 				} else {
@@ -311,13 +316,18 @@ func (a *app) header(c *ui.Context, p *palette) {
 		})
 		ui.Spacer(c)
 		a.noticePill(c, p)
+		a.ballRects = map[string]ui.Rect{}
 		ui.Row(c).Gap(14).Children(func() {
 			ui.Row(c).Children(func() {
 				// Everyone in the stack keeps one ball: a member's solid, one
 				// who waits for me, or for my invite's answer, dashed (DESIGN
-				// §6.7). Letting someone in fills theirs where it is.
+				// §6.7). Letting someone in fills theirs where it is. On the
+				// canvas of the devices given to me, they are who gave them.
 				i := 0
 				for _, id := range a.members {
+					if a.shared() && id == a.me {
+						continue
+					}
 					a.stackBall(c, p, l, id, member, i > 0, model.Invited{})
 					i++
 				}
@@ -330,24 +340,84 @@ func (a *app) header(c *ui.Context, p *palette) {
 					i++
 				}
 			})
-			if l.Waiting {
-				// Not in yet: there is no one to invite into it.
+			if l.Waiting || a.shared() {
+				// Not in yet: there is no one to invite into it. Nor into
+				// the devices given to me.
 				return
 			}
-			btn := ui.ButtonBase(c.Key("invite")).Height(34).Padding(0, 14).Gap(6).Radius(999).Background(p.primary).FocusRing(false).
-				Shadow(0, 1, 2, 0, p.primary.Alpha(0.3)).InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.18))
-			if btn.Hovered() {
-				btn.Background(p.primary2)
-			}
-			btn.AnimatePose(pressPose(btn, 0.96), ui.Snappy)
-			btn.Children(func() {
-				ui.Icon(c, uiGlyphs["plus"]).Size(16, 16).TextColor(white)
-				ui.Text(c, "邀请朋友").FontSize(13).FontWeight(500).TextColor(white)
-			})
-			if btn.Clicked() {
-				a.inviteFriends(c)
-			}
+			a.inviteButton(c, p)
 		})
+		a.headerLine(c, p)
+	})
+}
+
+// inviteButton is "邀请朋友". My seats full, it is a dashed outline, grey,
+// and a click shows the seats instead (pricing-and-relays §1.5 item 2).
+func (a *app) inviteButton(c *ui.Context, p *palette) {
+	full := a.seatsFull()
+	btn := ui.ButtonBase(c.Key("invite")).Height(34).Padding(0, 14).Gap(6).Radius(999).FocusRing(false)
+	k := btn.AnimateTo("full", map[bool]float32{false: 0, true: 1}[full], ui.Animation{Duration: 200 * time.Millisecond})
+	fill := p.primary
+	if btn.Hovered() {
+		fill = p.primary2
+	}
+	if k < 1 {
+		btn.Background(fill.Alpha(1-k)).Shadow(0, 1, 2, 0, p.primary.Alpha(0.3*(1-k))).InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.18*(1-k)))
+	}
+	if k > 0 {
+		hover := btn.Hovered()
+		btn.Draw(func(pt *ui.Painter, r ui.Rect) {
+			var path ui.Path
+			roundRect(&path, r.X+0.75, r.Y+0.75, r.W-1.5, r.H-1.5, (r.H-1.5)/2)
+			if hover {
+				pt.FillPath(&path, p.well.Alpha(k))
+			}
+			path.Dash(0, 4, 3)
+			pt.StrokePath(&path, 1.5, p.ink3.Alpha(k))
+		})
+	}
+	pose := pressPose(btn, 0.96)
+	if full && btn.Hovered() && !btn.Pressed() {
+		pose = ui.Pose{Y: -1}
+	}
+	btn.AnimatePose(pose, ui.Snappy)
+	ink := white.Mix(p.ink2, k)
+	btn.Children(func() {
+		ui.Icon(c, uiGlyphs["plus"]).Size(16, 16).TextColor(ink)
+		ui.Text(c, "邀请朋友").FontSize(13).FontWeight(500).TextColor(ink)
+	})
+	if btn.Clicked() {
+		if full {
+			a.selected, a.seatFreeing, a.seatFor, a.more = seatCard, false, "", false
+			return
+		}
+		a.inviteFriends(c)
+	}
+}
+
+// headerLine is the small line at the header's right, under the balls and
+// "邀请朋友": while one of my devices is in the hand, what letting it go on
+// a ball does (DESIGN §6.11); else, my seats nearly full, how many more
+// people can come. One fades into the other.
+func (a *app) headerLine(c *ui.Context, p *palette) {
+	text := a.aimLine()
+	if l := a.snap.LAN(a.lan); text == "" && l != nil && !l.Waiting && !a.shared() {
+		// Under "邀请朋友", where it shows.
+		text = a.seatLine()
+	}
+	holder := ui.Row(c.Key("header-line")).Absolute().Right(24).Top(60).PassThrough()
+	holder.Children(func() {
+		if text == "" {
+			return
+		}
+		ink := p.ink3
+		if a.aim.ok {
+			ink = p.primary
+		}
+		// New words take the old ones' place at once and fade in: two
+		// lines fading across each other in one place read as a muddle.
+		t := ui.Text(c.Key("header-line-"+text), text).FontSize(12).TextColor(ink).SingleLine()
+		t.Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{Y: -3}})
 	})
 }
 
@@ -386,6 +456,9 @@ func (a *app) summary(p *palette) (ui.Color, string) {
 	}
 	if a.all() {
 		return a.allSummary(p)
+	}
+	if a.shared() {
+		return a.sharedSummary(p)
 	}
 	n, up, waiting := 0, 0, 0
 	for _, d := range a.devices {
@@ -467,10 +540,16 @@ func (a *app) personHandle(c *ui.Context, b ui.Element, id string) {
 		home, d := a.ballHome[id], b.DragOffset()
 		at := ui.Point{X: home.X + d.X, Y: home.Y + d.Y}
 		a.person = &personDrag{id: id, at: at}
-		a.personOver = ""
+		a.personOver, a.personFull = "", ""
 		for lan, row := range a.rows {
 			if at.X >= row.X && at.X <= row.X+row.W && at.Y >= row.Y && at.Y <= row.Y+row.H {
-				a.personOver = lan
+				if a.fullFor(lan, model.PersonID(id)) {
+					// No seat for them in it: it does not light, and the
+					// chip says why (DESIGN §6.11).
+					a.personFull = lan
+				} else {
+					a.personOver = lan
+				}
 			}
 		}
 		return
@@ -480,7 +559,7 @@ func (a *app) personHandle(c *ui.Context, b ui.Element, id string) {
 			a.inviteTo(c, lan, model.PersonID(id))
 		}
 		*off = ui.Point{}
-		a.person, a.personOver = nil, ""
+		a.person, a.personOver, a.personFull = nil, "", ""
 	}
 }
 
@@ -514,6 +593,17 @@ func (a *app) personChip(c *ui.Context, p *palette) {
 				ui.Text(c, who.name).FontSize(13).FontWeight(500).Opacity(k)
 			}
 		})
+		if a.personFull != "" {
+			// Over a LAN of mine with no seat for them: said beside the
+			// chip, clear of its name.
+			right := d.at.X - 17 + 4 + 26 + 8 + textWidth(who.name, 13) + 12
+			note := ui.Row(c.Key("person-full")).Absolute().Left(right+8).Top(d.at.Y-12).Height(24).Padding(0, 10).
+				AlignItems(ui.Center).Radius(999).Background(p.bg).Border(1, p.line).Shadow(0, 4, 12, 0, ui.RGBA(9, 9, 11, 0.1)).PassThrough()
+			note.Transition(ui.ElementTransition{Duration: 140 * time.Millisecond, Enter: &ui.Motion{X: -4}, Exit: &ui.Motion{}})
+			note.Children(func() {
+				ui.Text(c, fmt.Sprintf("%d 个位置都用上了", a.seats().Limit)).FontSize(12).TextColor(p.ink2).SingleLine()
+			})
+		}
 	})
 }
 

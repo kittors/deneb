@@ -78,6 +78,7 @@ type device struct {
 	arrive          ui.Pose   // how it looked in the tray, or in the hand
 	aimed           bool      // on its way into the tray, and the tray's slot is known
 	dim             float32   // how far its link has faded, as it is held over the tray (0 to 1)
+	up              float32   // how far its link has faded away, as it is held up in the header (0 to 1)
 	cut             float32   // how far its link is cut, its owner refused on this computer (0 to 1)
 	faded           float32   // how far it dims with its region while another LAN has the focus (0 to 1)
 	way             ui.Point  // the way it steps aside for a dragged one
@@ -97,7 +98,10 @@ type device struct {
 	// and pathAt when it changed to the one it has.
 	lastPath string
 	fromPath string
-	pathAt   time.Time
+	// lastRelay and fromRelay are the relays of those paths: a link that
+	// goes from one relay to another is drawn anew too (M4).
+	lastRelay, fromRelay model.RelayID
+	pathAt               time.Time
 	// oldGeo is the shape of the link it had before it went from direct to
 	// the relay, or back: it fades as the new one grows out.
 	oldGeo *linkGeo
@@ -146,9 +150,15 @@ var offlineGrey = ui.Hex("#a1a1aa")
 // mine, and not the computer I am using.
 func (d *device) removable() bool { return d.mine && d.path != "self" }
 
-// relayStop is the relay a link goes through when it cannot go direct.
+// relayStop is a relay on the canvas: one a link goes through when it
+// cannot go direct, or, from M4, one dragged into the LAN (DESIGN §6.12).
 type relayStop struct {
+	id model.RelayID
+	// legacy: a relay of M1–M3, which keeps its place under the key it
+	// always had. down: it stopped (M4): grey, "连不上".
+	legacy, down    bool
 	name, sub       string
+	nameW           float32 // about how wide the wider of the two lines is
 	base, off, live ui.Point
 	dragging        bool
 	way, push       ui.Point
@@ -166,6 +176,8 @@ type relayStop struct {
 	popFirst bool
 	poppedAt time.Time
 	leftAt   time.Time
+	// flight: on its way between the tray and the canvas (M4).
+	flight *relayFlight
 }
 
 // notice is the toast: what just happened, to which device, and its undo.
@@ -179,6 +191,8 @@ type notice struct {
 	// commit sends what the toast holds back, once it goes without undo
 	// (hold).
 	commit func(c *ui.Context)
+	// orb: it is about a relay, whose ball leads it (M4).
+	orb bool
 }
 
 // pending is an op the view sent that the store has not confirmed yet. It
@@ -216,20 +230,39 @@ type app struct {
 	copyText func(string)
 	openURL  func(string) error
 
-	people   map[string]*person
-	members  []string  // the people of the LAN, in the order they joined
-	devices  []*device // what the canvas shows
-	tray     []*device // my devices not in the LAN
-	trayOff  map[string]*ui.Point
-	slots    map[string]ui.Point // where each tray item's slot is in the canvas, from the last layout
-	relay    *relayStop
-	selected string
-	more     bool // the card's "更多" is open
-	toast    *notice
-	toasts   int       // toasts so far, to key each one
-	start    time.Time // when the window opened
-	origin   ui.Point  // the canvas's top left in the window, from the last layout
-	cw, ch   float32   // the canvas's size in the frame being built
+	people  map[string]*person
+	members []string  // the people of the LAN, in the order they joined
+	devices []*device // what the canvas shows
+	tray    []*device // my devices not in the LAN
+	trayOff map[string]*ui.Point
+	slots   map[string]ui.Point // where each tray item's slot is in the canvas, from the last layout
+	relays  []*relayStop
+	// M4's relays in the tray and their cards (DESIGN §6.12): the "谁在用"
+	// chips as a card opened; the install commands asked for here, by
+	// their join, the one whose card the "+" opened, and when each was
+	// copied; what the tray says of the relay slot the pointer is on (from
+	// the frame before, and this one's); when each of my relays came up
+	// while the window was open; the relay of the tray in the hand, out
+	// over the canvas.
+	relayChips   *relayChips
+	commands     map[string]string
+	joinAsked    string
+	copiedAt     map[string]time.Time
+	trayHint     string
+	trayHintNext string
+	newRelays    map[model.RelayID]time.Time
+	knownRelays  map[model.RelayID]bool
+	heldRelay    model.RelayID
+	heldRelayAt  ui.Point
+	cameHint     string
+	cameUntil    time.Time
+	selected     string
+	more         bool // the card's "更多" is open
+	toast        *notice
+	toasts       int       // toasts so far, to key each one
+	start        time.Time // when the window opened
+	origin       ui.Point  // the canvas's top left in the window, from the last layout
+	cw, ch       float32   // the canvas's size in the frame being built
 
 	drag    dragNow // what the pointer drags, from the frame before
 	landing *device // one of mine on its way into the tray
@@ -269,13 +302,34 @@ type app struct {
 	// A person's ball dragged from the header onto a LAN's row in the
 	// sidebar invites them there (DESIGN §6.7).
 	person     *personDrag
-	personOver model.LANID              // the row it would be let go on
-	ballOffs   map[string]*ui.Point     // each ball's drag offset
-	ballHome   map[string]ui.Point      // where each ball rests, in the window
-	stackWas   map[string]int           // how each person was in the stack, last frame
-	stackIn    map[string]time.Time     // when each was let in, to spring up full
-	remedyWas  map[string]string        // the card's last remedy for each device, kept while it folds shut
-	rows       map[model.LANID]*ui.Rect // where the sidebar's LAN rows are
+	personOver model.LANID // the row it would be let go on
+	// personFull is the row of a LAN of mine the ball is over, mine full
+	// and they new to it: it does not light, and says so (DESIGN §6.11).
+	personFull model.LANID
+
+	// M3 (DESIGN §6.11): one of my devices held up to a ball in the header
+	// gives it to that person.
+	ballRects     map[string]ui.Rect   // where each ball one can be given to was, in the window
+	aim           shareAim             // what the hand aims at this frame
+	trayDrag      *device              // the tray's device in the hand, last frame
+	trayDragAt    ui.Point             // where its tile was, in the canvas
+	unclipUntil   time.Time            // until when the canvas lets a tile show over the header, on its way back
+	popAt         map[string]time.Time // when a ball took a device: it springs
+	shareOpen     string               // the share chip open in a card: device/person
+	sharePick     string               // the device whose "+" shows whom it can go to
+	pickNote      string               // the person "+" says "位置满了" of
+	pickNoteUntil time.Time
+	seatFreeing   bool                     // the seats' card shows × on each ball
+	seatFor       string                   // the person waiting whom the seats' card opened for
+	freeing       map[string]bool          // people whose seat a toast frees
+	leaving       map[model.DeviceID]bool  // devices given to me I gave back here
+	knownShared   map[model.DeviceID]bool  // the devices given to me, last snapshot
+	ballOffs      map[string]*ui.Point     // each ball's drag offset
+	ballHome      map[string]ui.Point      // where each ball rests, in the window
+	stackWas      map[string]int           // how each person was in the stack, last frame
+	stackIn       map[string]time.Time     // when each was let in, to spring up full
+	remedyWas     map[string]string        // the card's last remedy for each device, kept while it folds shut
+	rows          map[model.LANID]*ui.Rect // where the sidebar's LAN rows are
 
 	// The "全部" view (DESIGN §9 scene 3): each LAN's region as it shows
 	// (regionRects) and as its devices rest (regionRest), how far the hand
@@ -347,9 +401,12 @@ func newApp(s client.Store, pl *places) *app {
 		people:  map[string]*person{},
 		trayOff: map[string]*ui.Point{},
 		slots:   map[string]ui.Point{},
-		relay:   &relayStop{sub: "中转站"},
-		beams:   map[string]*beamRun{},
-		geos:    map[string]*linkGeo{},
+		// M4 (DESIGN §6.12).
+		commands:  map[string]string{},
+		copiedAt:  map[string]time.Time{},
+		newRelays: map[model.RelayID]time.Time{},
+		beams:     map[string]*beamRun{},
+		geos:      map[string]*linkGeo{},
 	}
 	a.sync(nil)
 	if len(a.snap.LANs) > 0 {
@@ -374,6 +431,16 @@ func (a *app) device(id string) *device {
 
 // status is a device's second line: how it is connected, in a few words.
 func (a *app) status(d *device) string {
+	if from := a.sharedFrom(d); from != "" {
+		// On the canvas of the devices given to me: where it comes from,
+		// then how it is (DESIGN §6.11: "设计部 · 直接连上").
+		return from + " · " + a.statusOf(d)
+	}
+	return a.statusOf(d)
+}
+
+// statusOf is what d's second line says of it, wherever it comes from.
+func (a *app) statusOf(d *device) string {
 	switch {
 	case a.all() && d.id == a.self:
 		// In no region of the "全部" view: how many it is in (scene 3).
@@ -404,7 +471,7 @@ func (a *app) status(d *device) string {
 	case "self":
 		return "你正在用"
 	case "relay":
-		return "经" + a.relay.name + "中转"
+		return a.viaWords(d)
 	case "connecting":
 		return "正在连接…"
 	case "unreachable":

@@ -60,7 +60,20 @@ type Snapshot struct {
 	// step 7). A device missing here is reached as Path tells.
 	Paths map[DeviceID]Path
 
-	SharedWithMe int // devices others share with me alone (M3)
+	// Shared are the devices others gave me, one by one: the canvas
+	// "共享给我" (M3, DESIGN §6.11). Each device is in Devices too.
+	Shared []SharedDevice
+	// ShareLANs are the LANs I am a member of that only hand out devices
+	// (ModeShare): they are not in LANs, since all I have of them is what
+	// they give me, in Shared (M3).
+	ShareLANs []*LAN
+	// Seats are how many people my seats hold (M3, pricing-and-relays
+	// §1.4): the view says a word of them only when the server holds to
+	// the limit, and only when few are left.
+	Seats Seats
+	// RelayJoins are the install commands for my own relays that wait to be
+	// run on a server: "等待安装" in the tray (M4, DESIGN §6.12).
+	RelayJoins []RelayJoin
 	// Local are the common services this computer listens on, off: what
 	// its card offers to open besides those it has opened before.
 	Local []Service
@@ -99,6 +112,13 @@ const (
 	FeatureInvitePerson = "invitePerson" // an invite made out to a person: their ball dropped on a LAN
 	FeatureRenew        = "renew"        // a device's login renewed from another of its owner's
 	FeatureAddRelay     = "addRelay"     // a relay added to a LAN in a click: M4's, no server lists it yet
+	FeatureRelays       = "relays"       // M4: the relays' cards, the tray's relays, one's own server (DESIGN §6.12)
+
+	// M3's (DESIGN §6.11).
+	FeatureShare        = "share"        // a device given to one person; the devices given to me
+	FeatureSeats        = "seats"        // the seats are held to: "还能加 2 人", the dashed "+"
+	FeatureShareMode    = "shareMode"    // a LAN that only hands out devices; giving back a device given to me
+	FeaturePublicDevice = "publicDevice" // a LAN's own devices, the printer, the server
 )
 
 // Can reports whether the control server does what feature names.
@@ -127,6 +147,9 @@ type LAN struct {
 	Services map[DeviceID][]Service
 	// Relays are the relays the LAN uses, the one it prefers first.
 	Relays []RelayID
+	// AddedRelays are the ones people dragged in, in the order they did
+	// (M4): the others are the fallback, the public ones.
+	AddedRelays []RelayID
 
 	// ApproveDevices and ApproveMembers are the owner's two switches: new
 	// devices, new members wait until the owner lets them in (DESIGN §6.7).
@@ -146,6 +169,9 @@ type LAN struct {
 	// Paused is set while the LAN is paused on this computer: its links are
 	// down here, and only here (DESIGN §9 scene 3).
 	Paused bool
+	// Mode is how it works (M3): as a LAN, or handing out its owner's
+	// devices to its members one by one (ModeShare, scene 4).
+	Mode LANMode
 }
 
 // Invited is someone asked into a LAN by name, who has not answered yet.
@@ -163,6 +189,8 @@ type Invitation struct {
 	LANName string
 	Inviter Person
 	Expires time.Time
+	// SeatsFull: the inviter's seats are full (M3), as Invite's.
+	SeatsFull bool
 }
 
 // Cut is a use of one of this computer's services cut off: who used it,
@@ -227,6 +255,10 @@ type Device struct {
 	Login Login
 	// LastSeen is when the control server last heard from it, while offline.
 	LastSeen time.Time
+	// Shares are the people one of my devices is given to (M3).
+	Shares []Share
+	// PublicLAN is set on a LAN's own device: "设计部的设备" (M3).
+	PublicLAN LANID
 }
 
 // Service is something a device opens to others, in everyday words.
@@ -248,7 +280,33 @@ type Service struct {
 // each other directly.
 type Relay struct {
 	ID   RelayID
-	Name string // where it is: "香港"
+	Name string // where it is: "香港"; or what its owner calls it (M4)
+
+	// M4 (DESIGN §6.12): whose it is, and what its card says. A relay of
+	// M1–M3 has none of it, and shows as it did.
+	Source RelaySource
+	Owner  PersonID
+	// Addr is where devices reach it: its name, while it has none.
+	Addr string
+	// RateLimit is the most each connection may send through it, in bytes
+	// a second; zero is none. Only public relays have one, and say so.
+	RateLimit int64
+	// RTT is how long a round trip to it takes from this computer.
+	RTT time.Duration
+	// Down: it stopped (switched off, cut off); the devices that went
+	// through it go through the public one meanwhile. LastSeen is when it
+	// was last heard from.
+	Down     bool
+	LastSeen time.Time
+	// Since is when it first came up: "刚上线" for a while after.
+	Since time.Time
+	// Load, Month, Using and Kicks are for my own relays' cards: how busy
+	// it is, what it carried this month for each LAN, who is on it now, and
+	// who may not use it (the last 30 days).
+	Load  RelayLoad
+	Month []RelayMonth
+	Using []PersonID
+	Kicks []RelayKick
 }
 
 // PathKind is how this computer reaches a device.
@@ -281,8 +339,12 @@ type Path struct {
 	Since time.Time // when this kind began
 }
 
-// LAN returns the LAN of id, or nil.
+// LAN returns the LAN of id, or nil. SharedLANID is the canvas of the
+// devices given to me, shown as a LAN is.
 func (s *Snapshot) LAN(id LANID) *LAN {
+	if id == SharedLANID {
+		return s.sharedLAN()
+	}
 	for _, l := range s.LANs {
 		if l.ID == id {
 			return l
@@ -327,11 +389,16 @@ func (s *Snapshot) together(dev DeviceID) bool {
 			return true
 		}
 	}
-	return false
+	// Given to me: this computer reaches it, as every one of mine does.
+	return s.SharedOf(dev) != nil
 }
 
 // Tray returns my devices that are not in the LAN of id, in Mine's order.
+// The canvas of the devices given to me has no tray.
 func (s *Snapshot) Tray(id LANID) []DeviceID {
+	if id == SharedLANID {
+		return nil
+	}
 	l := s.LAN(id)
 	var out []DeviceID
 	for _, d := range s.Mine {
@@ -366,6 +433,9 @@ type Invite struct {
 	Inviter   Person
 	AlreadyIn bool // I am in the LAN already
 	Gone      bool // the link was used, taken back or expired
+	// SeatsFull: the inviter's seats are full. Joining, I wait until they
+	// free one (M3, pricing-and-relays §1.5 item 5).
+	SeatsFull bool
 }
 
 // Error is a store's no: its kind, for the view to tell what to do, and one
@@ -387,6 +457,7 @@ const (
 	ErrNotLoggedIn ErrorCode = "not_logged_in" // no one logged in on this computer
 	ErrNotRunning  ErrorCode = "not_running"   // the engine is not running
 	ErrConflict    ErrorCode = "conflict"
+	ErrSeatsFull   ErrorCode = "seats_full" // M3: "6 个位置都用上了"
 	ErrInvalid     ErrorCode = "invalid"
 	ErrTimeout     ErrorCode = "timeout"
 	ErrInternal    ErrorCode = "internal"

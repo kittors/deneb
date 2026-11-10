@@ -26,6 +26,8 @@ type Demo struct {
 	subs     map[int]func(*model.Snapshot)
 	next     int
 	manual   bool // events play only as Simulate is called: for recordings
+	m3       demoM3
+	m4       demoM4
 }
 
 // Manual makes the demo's events play only as Simulate is called, never on
@@ -96,8 +98,18 @@ func (d *Demo) update(fn func(*model.Snapshot) *model.Snapshot) *model.Snapshot 
 
 func (d *Demo) Do(_ context.Context, op model.Op) (model.Result, error) {
 	var res model.Result
+	var opErr error
 	n := d.update(func(s *model.Snapshot) *model.Snapshot {
 		switch op.Kind {
+		case model.OpShareCreate, model.OpShareRevoke, model.OpShareRelease, model.OpShareLeave, model.OpMemberRemove:
+			// M3's (DESIGN §6.11), decided as its server does.
+			n, err := d.m3Op(s, op)
+			opErr = err
+			return n
+		case model.OpRelayAdd, model.OpRelayRemove, model.OpRelayRename, model.OpRelayKick, model.OpRelayUnkick,
+			model.OpRelayJoin, model.OpRelayRevokeJoin:
+			// M4's (DESIGN §6.12).
+			return d.m4Op(s, op, &res)
 		case model.OpLANInvite:
 			if op.Person != "" {
 				return s.With(op)
@@ -172,6 +184,9 @@ func (d *Demo) Do(_ context.Context, op model.Op) (model.Result, error) {
 		}
 		return s.With(op)
 	})
+	if opErr != nil {
+		return model.Result{}, opErr
+	}
 	res.Version = n.Version
 	return res, nil
 }
@@ -291,7 +306,13 @@ func (d *Demo) Simulate(event string) {
 				n.Paths["jdesk"] = model.Path{Kind: model.PathOffline, Since: now}
 			}
 		default:
-			return m2Event(s, event, now)
+			if n := m2Event(s, event, now); n != s {
+				return n
+			}
+			if n := d.m3Event(s, event, now); n != s {
+				return n
+			}
+			return d.m4Event(s, event, now)
 		}
 		return &n
 	})
@@ -503,7 +524,6 @@ func demoSnapshot() *model.Snapshot {
 			"studio": direct(14), "mynas": direct(4), "lindb": direct(16), "linci": direct(18),
 			"leopc": direct(21),
 		},
-		SharedWithMe: 2,
 		// The demo's server does all that M2 adds, and M4's relay in a
 		// click, to show what they look like.
 		Features: map[string]bool{model.FeatureApprove: true, model.FeatureInvitePerson: true,

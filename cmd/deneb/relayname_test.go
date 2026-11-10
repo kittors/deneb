@@ -28,6 +28,14 @@ func relayAround(relay ui.Point, byHand bool) *places {
 	return &places{at: map[model.LANID]map[string]ui.Point{"weekend": at}}
 }
 
+// oneRelay is the canvas's relay, in a world of one.
+func (a *app) oneRelay() *relayStop {
+	if len(a.relays) == 0 {
+		return nil
+	}
+	return a.relays[0]
+}
+
 // The relay keeps its tracks off the names, and off every tile but those
 // at their ends: placed by itself, or taken from where it last rested by
 // itself; where the person put it by hand, it stays.
@@ -46,24 +54,25 @@ func TestRelayKeepsTracksOffNames(t *testing.T) {
 	}
 	a := show(relayAround(ui.Point{}, false))
 	mac, nas := a.device("mac").at(), a.device("jnas").at()
-	naive := a.freeSpot(ui.Point{X: (mac.X + nas.X) / 2, Y: (mac.Y+nas.Y)/2 + 30}, a.relay, a.relayFootprint, a.cw, a.ch)
-	if a.relayClear(naive) {
+	r := a.oneRelay()
+	naive := a.freeSpot(ui.Point{X: (mac.X + nas.X) / 2, Y: (mac.Y+nas.Y)/2 + 30}, r, r.footprint, a.cw, a.ch)
+	if a.relayClear(r, naive) {
 		t.Fatalf("the spot between them, %v, crosses no name: the layout tests nothing", naive)
 	}
-	if !a.relayClear(a.relay.base) {
-		t.Errorf("the relay at %v: a track through it crosses a name or a tile", a.relay.base)
+	if !a.relayClear(a.oneRelay(), a.oneRelay().base) {
+		t.Errorf("the relay at %v: a track through it crosses a name or a tile", a.oneRelay().base)
 	}
-	if d := dist(a.relay.base, naive); d > 200 {
+	if d := dist(a.oneRelay().base, naive); d > 200 {
 		t.Errorf("the relay went %v from between them", d)
 	}
-	t.Logf("between them %v; the relay at %v", naive, a.relay.base)
+	t.Logf("between them %v; the relay at %v", naive, a.oneRelay().base)
 
 	// Where it last rested by itself, crossing the name: it moves off.
-	if a := show(relayAround(naive, false)); a.relay.base == naive || !a.relayClear(a.relay.base) {
-		t.Errorf("the relay rested at %v by itself, and shows at %v", naive, a.relay.base)
+	if a := show(relayAround(naive, false)); a.oneRelay().base == naive || !a.relayClear(a.oneRelay(), a.oneRelay().base) {
+		t.Errorf("the relay rested at %v by itself, and shows at %v", naive, a.oneRelay().base)
 	}
 	// Put there by hand: it stays.
-	if a := show(relayAround(naive, true)); a.relay.base != naive {
-		t.Errorf("the relay put at %v by hand shows at %v", naive, a.relay.base)
+	if a := show(relayAround(naive, true)); a.oneRelay().base != naive {
+		t.Errorf("the relay put at %v by hand shows at %v", naive, a.oneRelay().base)
 	}
 }

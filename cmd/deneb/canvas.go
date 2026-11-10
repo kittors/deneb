@@ -50,18 +50,21 @@ func footprint(at ui.Point) ui.Rect {
 	return ui.Rect{X: at.X - 64, Y: at.Y - 34, W: 128, H: 110}
 }
 
-// relayFootprint is the room the relay takes with its name, on whichever
-// side its name is.
-func (a *app) relayFootprint(at ui.Point) ui.Rect {
-	switch a.relay.side {
+// footprint is the room the relay takes with its name, on whichever side
+// its name is.
+func (r *relayStop) footprint(at ui.Point) ui.Rect {
+	// Room for its name: as M1's short ones, or as long as M4's are.
+	side := max(104, 32+r.nameW+6)
+	across := max(80, r.nameW+12)
+	switch r.side {
 	case "right":
-		return ui.Rect{X: at.X - 26, Y: at.Y - 26, W: 130, H: 52}
+		return ui.Rect{X: at.X - 26, Y: at.Y - 26, W: 26 + side, H: 52}
 	case "above":
-		return ui.Rect{X: at.X - 40, Y: at.Y - 64, W: 80, H: 88}
+		return ui.Rect{X: at.X - across/2, Y: at.Y - 64, W: across, H: 88}
 	case "below":
-		return ui.Rect{X: at.X - 40, Y: at.Y - 24, W: 80, H: 88}
+		return ui.Rect{X: at.X - across/2, Y: at.Y - 24, W: across, H: 88}
 	}
-	return ui.Rect{X: at.X - 104, Y: at.Y - 26, W: 130, H: 52}
+	return ui.Rect{X: at.X - side, Y: at.Y - 26, W: 26 + side, H: 52}
 }
 
 func overlaps(a, b ui.Rect) bool {
@@ -78,19 +81,6 @@ func apart(a, b ui.Rect) bool {
 func dist(a, b ui.Point) float32 { return float32(math.Hypot(float64(a.X-b.X), float64(a.Y-b.Y))) }
 
 func (r *relayStop) at() ui.Point { return ui.Point{X: r.base.X + r.off.X, Y: r.base.Y + r.off.Y} }
-
-func (a *app) hasRelayLink() bool {
-	if a.all() {
-		// The "全部" view shows no relay: a link through one goes straight.
-		return false
-	}
-	for _, d := range a.devices {
-		if d.path == "relay" {
-			return true
-		}
-	}
-	return false
-}
 
 // restArea is where things can come to rest: inside the canvas, above
 // the tray's band (§6.3). The card is kept clear of where it shows
@@ -112,7 +102,12 @@ func (a *app) restArea(w, h float32) ui.Rect {
 // it. Every resting device is inside its bounds, which would move it
 // otherwise.
 func (a *app) dragBounds(base ui.Point, intoTray bool, w, h float32) *ui.Rect {
-	left, right, top := float32(70), w-70, float32(44)
+	return a.dragBoundsFrom(base, intoTray, 44, w, h)
+}
+
+// dragBoundsFrom is dragBounds with the tile's middle let up to top.
+func (a *app) dragBoundsFrom(base ui.Point, intoTray bool, top, w, h float32) *ui.Rect {
+	left, right := float32(70), w-70
 	bottom := h - trayBand - 70
 	if intoTray {
 		bottom = h - 36
@@ -152,9 +147,12 @@ func (a *app) freeSpot(want ui.Point, self any, fp func(ui.Point) ui.Rect, w, h 
 				}
 			}
 		}
-		if rl := a.relay; any(rl) != self && rl != nil && a.hasRelayLink() {
+		for _, rl := range a.relays {
+			if any(rl) == self || !a.counts(rl) {
+				continue
+			}
 			at := rl.at()
-			if !apart(r, a.relayFootprint(at)) || !apart(r, a.relayFootprint(ui.Point{X: at.X + rl.push.X, Y: at.Y + rl.push.Y})) {
+			if !apart(r, rl.footprint(at)) || !apart(r, rl.footprint(ui.Point{X: at.X + rl.push.X, Y: at.Y + rl.push.Y})) {
 				return false
 			}
 		}
@@ -247,8 +245,10 @@ func (a *app) roomAt(self any, at ui.Point, fp func(ui.Point) ui.Rect, w, h floa
 				return false
 			}
 		}
-		if rl := a.relay; any(rl) != self && !rl.dragging && a.hasRelayLink() && overlaps(r, a.relayFootprint(rl.at())) {
-			return false
+		for _, rl := range a.relays {
+			if any(rl) != self && !rl.dragging && a.counts(rl) && overlaps(r, rl.footprint(rl.at())) {
+				return false
+			}
 		}
 		return true
 	}
@@ -265,6 +265,7 @@ func stepAnim(push ui.Point) ui.Animation {
 // before, as the tray sees it.
 type dragNow struct {
 	d         *device
+	relay     *relayStop // or a relay (M4)
 	removable bool
 	near      bool // close to the tray's band
 	over      bool // in it
@@ -274,6 +275,12 @@ func (a *app) dragState(w, h float32) dragNow {
 	for _, d := range a.devices {
 		if d.dragging {
 			return dragNow{d: d, removable: d.removable(), near: a.nearTray(d.live, w, h), over: d.removable() && a.overTray(d.live, w, h)}
+		}
+	}
+	for _, r := range a.relays {
+		if r.dragging && a.snap.Can(model.FeatureRelays) {
+			out := a.relayRemovable(r)
+			return dragNow{relay: r, removable: out, near: a.nearTray(r.live, w, h), over: out && a.overTray(r.live, w, h)}
 		}
 	}
 	return dragNow{}
@@ -319,12 +326,18 @@ func (a *app) dragged() (ui.Rect, any, bool) {
 			return a.foot(d, d.live), d, true
 		}
 	}
-	if a.relay != nil && a.relay.dragging {
-		return a.relayFootprint(a.relay.live), a.relay, true
+	for _, rl := range a.relays {
+		if rl.dragging {
+			return rl.footprint(rl.live), rl, true
+		}
 	}
 	if a.held != nil {
 		// A device of the tray in the hand, out over the canvas.
 		return footprint(a.heldAt), a.held, true
+	}
+	if a.heldRelay != "" {
+		// A relay of the tray, likewise (M4).
+		return (&relayStop{side: "below"}).footprint(a.heldRelayAt), a.heldRelay, true
 	}
 	return ui.Rect{}, nil, false
 }
@@ -351,11 +364,21 @@ func (a *app) canvas(c *ui.Context, p *palette) {
 	}
 	a.place()
 	a.sweep(c, now)
-	box := ui.Box(c).Grow(1).Clip()
+	box := ui.Box(c).Grow(1)
+	back := now.Before(a.unclipUntil)
+	if a.aim.d == nil && !back {
+		// Clipped, but while one of my devices is held up to the header's
+		// balls, or on its way back from there (DESIGN §6.11).
+		box.Clip()
+	} else if back {
+		c.After(a.unclipUntil.Sub(now))
+	}
 	if b := box.Bounds(); b.W > 0 {
 		a.origin = ui.Point{X: b.X, Y: b.Y}
 	}
 	a.drag = a.dragState(w, h)
+	px, py, _ := box.PointerPosition()
+	a.takeAim(px, py)
 	grow := a.trackGrowth(c, now)
 	box.Draw(func(pt *ui.Painter, r ui.Rect) {
 		a.paintRegions(pt, r, p)
@@ -370,10 +393,15 @@ func (a *app) canvas(c *ui.Context, p *palette) {
 		if a.all() {
 			a.regions(c, p)
 		}
-		relayUp := a.relay.dragging
-		relayShows := a.relayShows(c)
-		if relayShows && !relayUp {
-			a.relayView(c, p, w, h)
+		// The relays under the devices, but the one in the hand, as the frame
+		// began: one the hand picks up in this frame floats from the next.
+		shows, up := map[*relayStop]bool{}, map[*relayStop]bool{}
+		for _, rl := range slices.Clone(a.relays) {
+			// One in flight floats over everything too, as a device does.
+			up[rl] = rl.dragging || rl.flight != nil
+			if shows[rl] = a.relayShows(c, rl); shows[rl] && !up[rl] {
+				a.relayView(c, p, rl, w, h)
+			}
 		}
 		// Which devices float is settled before any is built: one the hand
 		// picks up in this frame floats from the next.
@@ -396,8 +424,10 @@ func (a *app) canvas(c *ui.Context, p *palette) {
 				a.deviceView(c, p, d, w, h)
 			}
 		}
-		if relayShows && relayUp {
-			a.relayView(c, p, w, h)
+		for _, rl := range slices.Clone(a.relays) {
+			if shows[rl] && up[rl] {
+				a.relayView(c, p, rl, w, h)
+			}
 		}
 	})
 	// What the devices said for the regions, which show it in the next frame.
@@ -474,7 +504,7 @@ func (a *app) deviceView(c *ui.Context, p *palette, d *device, w, h float32) {
 	col := ui.Column(c.Key(d.key())).Absolute().Left(d.base.X - 70).Top(d.base.Y - tileSize/2).Width(140).AlignItems(ui.Center).Gap(10)
 	// No Snap and no throw: a device lands where the hand lets go, as a
 	// thing set down on a table; what happens next depends on that point.
-	bounds := a.dragBounds(d.base, d.removable(), w, h)
+	bounds := a.dragBoundsFrom(d.base, d.removable(), a.shareTop(d), w, h)
 	if a.all() {
 		// In the "全部" view: anywhere in the canvas, or, for another's,
 		// inside its region (scene 3).
@@ -506,7 +536,13 @@ func (a *app) deviceView(c *ui.Context, p *palette, d *device, w, h float32) {
 	if _, _, ok := col.DragEnded(); ok && !landing && a.all() {
 		a.droppedInAll(c, d, w, h)
 	} else if ok && !landing {
-		if at := d.at(); d.removable() && a.overTray(at, w, h) {
+		if a.dropOnBall(c, d) {
+			// Held up to the header's balls: given to someone, or not, it
+			// flies back to where it rested (DESIGN §6.11).
+			d.off = ui.Point{X: d.rest.X - d.base.X, Y: d.rest.Y - d.base.Y}
+			d.flying = true
+			a.unclipUntil = c.Now().Add(800 * time.Millisecond)
+		} else if at := d.at(); d.removable() && a.overTray(at, w, h) {
 			// Mine, let go over the tray: it flies into the slot the tray
 			// opened for it, and leaves the LAN as it lands there.
 			a.takeOut(c, d, true, true)
@@ -559,7 +595,15 @@ func (a *app) deviceView(c *ui.Context, p *palette, d *device, w, h float32) {
 	if a.all() && d.lan != "" {
 		ro = a.regionOff[d.lan]
 	}
-	col.Translate(px+ro.X, py+ro.Y)
+	// Up over a ball, the tile goes into the ball, wherever in the tile the
+	// hand holds it, and back to the hand off it (DESIGN §6.11).
+	snap := ui.Point{}
+	if d.dragging && a.upHigh(d) {
+		snap = a.snapTo(ui.Point{X: a.origin.X + d.base.X + live.X, Y: a.origin.Y + d.base.Y + live.Y})
+	}
+	sx := col.AnimateTo("snap-x", snap.X, ui.Snappy)
+	sy := col.AnimateTo("snap-y", snap.Y, ui.Snappy)
+	col.Translate(px+ro.X+sx, py+ro.Y+sy)
 	d.live = ui.Point{X: d.base.X + live.X + px + ro.X, Y: d.base.Y + live.Y + py + ro.Y}
 	// Dimmed with its region while another LAN has the focus.
 	faded := float32(0)
@@ -594,6 +638,10 @@ func (a *app) deviceView(c *ui.Context, p *palette, d *device, w, h float32) {
 	// Its link fades as it is held over the tray: let go, and it is cut
 	// (§9, scene 5).
 	dim := float32(0)
+	up := d.dragging && a.upHigh(d)
+	// Up in the header, out of the canvas, its link all but goes: letting
+	// go there cuts nothing, and a link to the header would cross it all.
+	d.up = col.AnimateTo("up", map[bool]float32{false: 0, true: 1}[up], ui.Animation{Duration: 160 * time.Millisecond})
 	if armed || landing || a.all() && d.dragging && d.removable() && a.regionAt(d.live) == "" {
 		// In the "全部" view, out of every region: letting go takes it out
 		// of its LAN.
@@ -611,6 +659,10 @@ func (a *app) deviceView(c *ui.Context, p *palette, d *device, w, h float32) {
 		pose = d.arrive
 	case landing, armed:
 		pose = ui.Pose{Scale: float32(slotTile) / tileSize}
+	case up:
+		// Up in the header: small, and smaller still over a ball, which
+		// shows round it, lit (DESIGN §6.1, §6.11).
+		pose = ui.Pose{Scale: a.upScale(), Rotate: liftPose.Rotate}
 	case d.dragging:
 		pose = liftPose
 	case col.Pressed():
@@ -659,7 +711,7 @@ func (a *app) deviceView(c *ui.Context, p *palette, d *device, w, h float32) {
 			// down to the regions under it (scene 3).
 			name.Absolute().Left(0).Right(0).Bottom(tileSize + 10)
 		}
-		if first || landing || armed || pop || going || a.selfOverRegion(d) {
+		if first || landing || armed || up || pop || going || a.selfOverRegion(d) {
 			// (This computer held over a region in the "全部" view: its name
 			// goes, rather than sit on the region's names.)
 			name.AnimatePose(ui.Pose{Fade: 1}, ui.Animation{Duration: 120 * time.Millisecond})
@@ -736,23 +788,32 @@ func deviceTileOff(c *ui.Context, p *palette, kind string, col ui.Color, size fl
 	return t
 }
 
-func (a *app) relayView(c *ui.Context, p *palette, w, h float32) {
-	r := a.relay
-	r.side = a.relayLabelSide()
-	el := ui.Box(c.Key("relay")).Absolute().Left(r.base.X-20).Top(r.base.Y-20).Size(40, 40)
-	el.Draggable(&r.off, ui.DraggableOptions{Bounds: a.dragBounds(r.base, false, w, h), Rigid: true, Animation: ui.Snappy})
-	if _, _, ok := el.DragEnded(); ok {
-		spot := a.freeSpot(r.at(), r, a.relayFootprint, w, h)
+func (a *app) relayView(c *ui.Context, p *palette, r *relayStop, w, h float32) {
+	r.side = a.relayLabelSide(r)
+	if r.flight != nil && a.relayFlying(c, p, r) {
+		return
+	}
+	// Mine, dragged in: the hand can take it into the tray (M4).
+	out := a.relayRemovable(r)
+	el := ui.Box(c.Key("relay\x00"+string(r.id))).Absolute().Left(r.base.X-20).Top(r.base.Y-20).Size(40, 40)
+	el.Draggable(&r.off, ui.DraggableOptions{Bounds: a.dragBounds(r.base, out, w, h), Rigid: true, Animation: ui.Snappy})
+	if _, _, ok := el.DragEnded(); ok && out && a.overTray(r.at(), w, h) {
+		// Let go over the tray: this LAN no longer uses it (DESIGN §6.12).
+		r.live = r.at()
+		a.relayOut(c, r.id)
+		return
+	} else if ok {
+		spot := a.freeSpot(r.at(), r, r.footprint, w, h)
 		r.off = ui.Point{X: spot.X - r.base.X, Y: spot.Y - r.base.Y}
 		// Put there by hand: it comes back there, whatever its tracks cross.
 		r.byHand = true
-		a.places.set(a.lan, relayHandKey, ui.Point{X: 1, Y: 1})
+		a.places.set(a.lan, r.handKey(), ui.Point{X: 1, Y: 1})
 	}
 	live := el.DragOffset()
 	r.dragging = el.Dragging()
 	push := ui.Point{}
 	if fp, who, ok := a.dragged(); ok && who != any(r) && !el.Dragging() {
-		push, r.way = makeRoom(a.relayFootprint(r.at()), fp, r.way, a.roomAt(r, r.at(), a.relayFootprint, w, h))
+		push, r.way = makeRoom(r.footprint(r.at()), fp, r.way, a.roomAt(r, r.at(), r.footprint, w, h))
 	} else {
 		r.way = ui.Point{}
 	}
@@ -762,6 +823,12 @@ func (a *app) relayView(c *ui.Context, p *palette, w, h float32) {
 	el.Translate(px, py)
 	r.live = ui.Point{X: r.base.X + live.X + px, Y: r.base.Y + live.Y + py}
 	el.Cursor(ui.CursorGrab)
+	if el.Clicked() && a.snap.Can(model.FeatureRelays) {
+		// Its card (M4).
+		a.openRelay(r.id)
+	}
+	// Down, it greys over 300 ms, as an offline device does (M4).
+	off := el.AnimateTo("down", map[bool]float32{false: 0, true: 1}[r.down], ui.Animation{Duration: 300 * time.Millisecond})
 	// It pops in as a link comes to go through it, and shrinks away as the
 	// last one goes (DESIGN scene 1); the hand cannot take one going.
 	pop, going := r.popFirst, !r.leftAt.IsZero()
@@ -791,32 +858,84 @@ func (a *app) relayView(c *ui.Context, p *palette, w, h float32) {
 			InsetShadow(0, -1.5, 3, 0, ui.RGBA(0, 0, 0, 0.08)).
 			Shadow(0, 6, 14, 0, ui.RGBA(9, 9, 11, 0.12)).Shadow(0, 1, 2, 0, ui.RGBA(9, 9, 11, 0.1))
 		orb.AnimatePose(pose, anim)
-		orb.Children(func() { ui.Icon(c, deviceGlyphs["relay"]).Size(18, 18).TextColor(p.ink2) })
-		// The name goes on the side no track leaves from (§4); moving to
-		// another side, it fades out there and in here.
-		name := ui.Column(c.Key("name-" + r.side)).Absolute().
-			Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{}, Exit: &ui.Motion{}})
+		if off > 0 {
+			orb.Opacity(1 - 0.4*off)
+		}
+		orb.Children(func() { ui.Icon(c, deviceGlyphs["relay"]).Size(18, 18).TextColor(p.ink2.Alpha(1 - 0.5*off)) })
+		name := a.relayName(c, p, r, off)
 		switch {
 		case pop, going:
 			name.AnimatePose(ui.Pose{Fade: 1}, ui.Animation{Duration: 120 * time.Millisecond})
 		case popping:
 			name.AnimatePose(ui.Pose{}, ui.Animation{Duration: 220 * time.Millisecond, Delay: 60 * time.Millisecond})
 		}
-		switch r.side {
-		case "left":
-			name.Right(52).Top(3).AlignItems(ui.End)
-		case "right":
-			name.Left(52).Top(3).AlignItems(ui.Start)
-		case "above":
-			name.Attach(ui.AnchorTop, ui.AnchorBottom).Top(-8).AlignItems(ui.Center)
-		default:
-			name.Attach(ui.AnchorBottom, ui.AnchorTop).Top(8).AlignItems(ui.Center)
-		}
-		name.Children(func() {
-			ui.Text(c, r.name).FontSize(12).FontWeight(500).SingleLine()
-			ui.Text(c, r.sub).FontSize(12).TextColor(p.ink2).SingleLine()
-		})
 	})
+}
+
+// relayName is a relay's two lines beside its ball: on the side no track
+// leaves from (§4); moving to another side, they fade out there and in
+// here. off greys them, the relay down.
+func (a *app) relayName(c *ui.Context, p *palette, r *relayStop, off float32) ui.Element {
+	name := ui.Column(c.Key("name-" + r.side)).Absolute().
+		Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{}, Exit: &ui.Motion{}})
+	if r.nameW > 44 {
+		// A name longer than M1's "香港" (M4's): as wide as it is.
+		name.Width(r.nameW + 6)
+	}
+	switch r.side {
+	case "left":
+		name.Right(52).Top(3).AlignItems(ui.End)
+	case "right":
+		name.Left(52).Top(3).AlignItems(ui.Start)
+	case "above":
+		name.Attach(ui.AnchorTop, ui.AnchorBottom).Top(-8).AlignItems(ui.Center)
+	default:
+		name.Attach(ui.AnchorBottom, ui.AnchorTop).Top(8).AlignItems(ui.Center)
+	}
+	name.Children(func() {
+		ui.Text(c, r.name).FontSize(12).FontWeight(500).SingleLine().TextColor(p.ink.Mix(p.ink3, off))
+		ui.Text(c, r.sub).FontSize(12).TextColor(p.ink2).SingleLine()
+	})
+	return name
+}
+
+// relayFlying shows r on its way between the tray and the canvas, and
+// reports whether it is: it grows to a canvas ball as it comes out, or
+// shrinks and fades as it goes in, its name out of sight meanwhile.
+func (a *app) relayFlying(c *ui.Context, p *palette, r *relayStop) bool {
+	if f := r.flight; f.into && !f.held {
+		// Going into the tray: it waits for the line that went through it
+		// to fade, so that the line never bends at nothing (scene 1).
+		f.held = true
+		if hold := a.relayFading(r).Add(-relayFade / 2); hold.After(f.at) {
+			f.at = hold
+		}
+	}
+	at, scale, fade, done := r.flight.look(c.Now())
+	if done {
+		into := r.flight.into
+		r.flight = nil
+		if into {
+			r.shown, r.leftAt = false, time.Time{}
+		}
+		return into
+	}
+	c.AnimationFrame()
+	r.live = at
+	el := ui.Box(c.Key("relay\x00"+string(r.id))).Absolute().Left(r.base.X-20).Top(r.base.Y-20).Size(40, 40).PassThrough()
+	el.Translate(at.X-r.base.X, at.Y-r.base.Y)
+	el.Children(func() {
+		relayOrb(c, p, 40, r.down, 0).Scale(scale, scale).Opacity(1 - fade)
+		// Its name fades out as it sets off, and in as it lands.
+		k := min(1, float32(c.Now().Sub(r.flight.made))/float32(150*time.Millisecond))
+		if !r.flight.into {
+			k = 1 - min(1, max(0, float32(c.Now().Sub(r.flight.at)-relayFly+150*time.Millisecond)/float32(150*time.Millisecond)))
+		}
+		if k < 1 {
+			a.relayName(c, p, r, map[bool]float32{false: 0, true: 1}[r.down]).Opacity(1 - k)
+		}
+	})
+	return true
 }
 
 // relayFade is how long the relay takes to shrink away once the last link
@@ -827,12 +946,17 @@ const relayFade = 280 * time.Millisecond
 // through it, and as it shrinks away once the last one has gone, or is
 // going (DESIGN scene 1: 中转站缩小淡出). One that a link comes back to
 // pops in.
-func (a *app) relayShows(c *ui.Context) bool {
+func (a *app) relayShows(c *ui.Context, r *relayStop) bool {
 	if a.all() {
 		return false
 	}
-	r, now := a.relay, c.Now()
-	if a.relayLinked() {
+	now := c.Now()
+	if r.flight != nil {
+		// On its way between the tray and the canvas (M4).
+		r.shown, r.leftAt = true, time.Time{}
+		return true
+	}
+	if a.relayLinked(r) || a.kept(r) {
 		if !r.shown {
 			r.popFirst, r.poppedAt = true, now
 		}
@@ -847,7 +971,7 @@ func (a *app) relayShows(c *ui.Context) bool {
 	// last of that line, so that the line never bends at nothing. Its
 	// shrink is quick to show, the line's fade slow to end: it sets off
 	// when the line is about a fifth there.
-	if hold := a.relayFading().Add(-relayFade / 2); now.Before(hold) {
+	if hold := a.relayFading(r).Add(-relayFade / 2); now.Before(hold) {
 		r.leftAt = time.Time{}
 		c.After(hold.Sub(now))
 		return true
@@ -865,10 +989,10 @@ func (a *app) relayShows(c *ui.Context) bool {
 
 // relayFading is when the last old line through the relay, of a link that
 // went direct, has faded out (links.go), or zero if none is fading.
-func (a *app) relayFading() time.Time {
+func (a *app) relayFading(r *relayStop) time.Time {
 	var end time.Time
 	for _, d := range a.devices {
-		if d.oldGeo != nil && d.fromPath == "relay" && d.gone.IsZero() {
+		if d.oldGeo != nil && d.fromPath == "relay" && d.gone.IsZero() && a.stopOf(d.fromRelay) == r {
 			if e := d.pathAt.Add(trackIn); e.After(end) {
 				end = e
 			}
@@ -879,9 +1003,9 @@ func (a *app) relayFading() time.Time {
 
 // relayLinked reports whether a link goes through the relay, and stays: one
 // on its way off the canvas, or into the tray, takes the relay along.
-func (a *app) relayLinked() bool {
+func (a *app) relayLinked(r *relayStop) bool {
 	for _, d := range a.devices {
-		if d.path == "relay" && d.gone.IsZero() && a.landing != d && !d.unplaced && !d.pending {
+		if a.via(d, r) && d.gone.IsZero() && a.landing != d && !d.unplaced && !d.pending {
 			return true
 		}
 	}
@@ -892,10 +1016,10 @@ func (a *app) relayLinked() bool {
 // that leaves it: the one whose direction is least like any track's. It
 // keeps the side it has unless another is clearly better, so that the name
 // does not flick from side to side while the relay is dragged.
-func (a *app) relayLabelSide() string {
-	r := a.relay.live
-	if a.relay.live == (ui.Point{}) {
-		r = a.relay.at()
+func (a *app) relayLabelSide(stop *relayStop) string {
+	r := stop.live
+	if stop.live == (ui.Point{}) {
+		r = stop.at()
 	}
 	var ways []ui.Point
 	add := func(q ui.Point) {
@@ -913,7 +1037,7 @@ func (a *app) relayLabelSide() string {
 	}
 	if me := a.device(a.self); me != nil {
 		for _, d := range a.devices {
-			if d.path == "relay" {
+			if a.via(d, stop) {
 				add(pos(me))
 				add(pos(d))
 			}
@@ -952,7 +1076,7 @@ func (a *app) relayLabelSide() string {
 			best, bestScore = s.name, worst
 		}
 	}
-	if cur := a.relay.side; cur != "" && score[cur] <= bestScore+0.25 {
+	if cur := stop.side; cur != "" && score[cur] <= bestScore+0.25 {
 		return cur
 	}
 	return best

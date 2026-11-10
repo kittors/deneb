@@ -152,7 +152,7 @@ func TestRelayStaysWhileItsOldLineFades(t *testing.T) {
 	tt := ui.NewTester(a.view, 1180, 740)
 	tt.Frame()
 	tt.Advance(time.Second)
-	if a.relay == nil || !a.relay.shown {
+	if r := a.oneRelay(); r == nil || !r.shown {
 		t.Fatal("the relay does not show while Mia's link goes through it")
 	}
 	n := s
@@ -169,11 +169,11 @@ func TestRelayStaysWhileItsOldLineFades(t *testing.T) {
 		}
 	}
 	step(trackIn - relayFade/2 - 40*time.Millisecond)
-	if !a.relay.shown || !a.relay.leftAt.IsZero() {
-		t.Errorf("the relay goes while Mia's old line still fades through it (shown %v, leaving since %v)", a.relay.shown, a.relay.leftAt)
+	if r := a.oneRelay(); !r.shown || !r.leftAt.IsZero() {
+		t.Errorf("the relay goes while Mia's old line still fades through it (shown %v, leaving since %v)", r.shown, r.leftAt)
 	}
 	step(relayFade/2 + relayFade + 140*time.Millisecond)
-	if a.relay.shown {
+	if a.oneRelay().shown {
 		t.Error("the relay stays after the old line has gone")
 	}
 }

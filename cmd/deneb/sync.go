@@ -107,7 +107,8 @@ func (a *app) refresh() {
 	for _, d := range a.tray {
 		a.somebody(d.owner)
 	}
-	a.relay.name = a.relayName(l)
+	a.syncStops()
+	a.relaysCame()
 	// A LAN new to the sidebar lights up as it comes in: one made or joined
 	// here, or elsewhere. Those there as the window opens do not.
 	first := a.knownLANs == nil
@@ -235,28 +236,6 @@ func serviceIcon(kind string) string {
 	return "globe"
 }
 
-// relayName names the relay the LAN's links go through: the one the first of
-// them uses, or else the one the LAN prefers.
-func (a *app) relayName(l *model.LAN) string {
-	var id model.RelayID
-	for _, d := range a.devices {
-		if d.path == "relay" && d.relayID != "" {
-			id = d.relayID
-			break
-		}
-	}
-	if id == "" && l != nil && len(l.Relays) > 0 {
-		id = l.Relays[0]
-	}
-	if r := a.snap.Relays[id]; r != nil {
-		return r.Name
-	}
-	if a.relay.name != "" {
-		return a.relay.name
-	}
-	return "中转站"
-}
-
 // load lays the LAN out on the canvas as it is, without motion: as the
 // window opens, and as the sidebar switches to another LAN.
 func (a *app) load() {
@@ -271,13 +250,7 @@ func (a *app) load() {
 	a.landing, a.held, a.toast = nil, nil, nil
 	a.regionRects, a.regionPaints, a.regionsLaid, a.regionHeld = nil, nil, false, ""
 	a.focus, a.dropOver, a.dropNext, a.edgeNote, a.edgeNext = "", "", "", nil, nil
-	a.relay = &relayStop{sub: "中转站"}
-	if at, ok := a.places.get(a.lan, relayKey); ok {
-		a.relay.base = at
-		_, a.relay.byHand = a.places.get(a.lan, relayHandKey)
-	} else {
-		a.relay.unplaced = true
-	}
+	a.relays = nil
 	if l != nil || a.all() {
 		for _, sp := range a.spots() {
 			d := &device{facts: facts{id: sp.key, dev: sp.dev, lan: sp.lan}}
@@ -298,10 +271,13 @@ func (a *app) load() {
 	}
 	a.refresh()
 	for _, d := range a.devices {
-		d.lastPath, d.waited = d.path, d.pending
+		d.lastPath, d.lastRelay, d.waited = d.path, d.relayID, d.pending
 	}
 	// A relay there as the LAN shows is there: it does not pop in.
-	a.relay.shown = a.relayLinked()
+	a.syncStops()
+	for _, r := range a.relays {
+		r.shown = a.relayLinked(r) || a.kept(r)
+	}
 }
 
 // show puts the LAN of id on the canvas. It changes what the window shows,
@@ -346,6 +322,10 @@ func (a *app) show(c *ui.Context, id model.LANID, pop bool) {
 // whose move the store turned down, flies across. A link whose path changed
 // is drawn anew.
 func (a *app) reconcile(c *ui.Context) {
+	// What came and went of the devices given to me, and the seats freed
+	// that the store counts free now (DESIGN §6.11).
+	a.watchShares(c)
+	a.freed()
 	if a.snap.LoggedIn {
 		a.loggingIn, a.loginErr = false, ""
 		if link := a.laterLink; link != "" && a.snap.Loaded {
@@ -489,8 +469,10 @@ func (a *app) reconcile(c *ui.Context) {
 			a.notify(c, d, short(d.name)+"上线了", nil)
 		}
 		if d.lastPath == "" {
-			d.lastPath = d.path
-		} else if d.path != d.lastPath {
+			d.lastPath, d.lastRelay = d.path, d.relayID
+		} else if d.path != d.lastPath || d.path == "relay" && d.relayID != d.lastRelay {
+			// From one relay to another too (M4): the light goes on through
+			// the new one as the old way fades.
 			a.repath(c, d)
 		}
 	} // Those that came onto the canvas just now are numbered too.
@@ -566,6 +548,7 @@ func (a *app) vanish(c *ui.Context, d *device) {
 func (a *app) repath(c *ui.Context, d *device) {
 	was := d.lastPath
 	d.lastPath, d.fromPath, d.pathAt = d.path, was, c.Now()
+	d.fromRelay, d.lastRelay = d.lastRelay, d.relayID
 	if d.path == "self" || was == "self" {
 		return
 	}
@@ -632,17 +615,18 @@ func (a *app) place() {
 			d.base, d.rest, d.off, d.unplaced = spot, spot, ui.Point{}, false
 		}
 	}
-	r := a.relay
-	if !a.hasRelayLink() {
-		return
+	for _, r := range a.relays {
+		if !a.counts(r) {
+			continue
+		}
+		// As it comes to show, or as the LAN does with it there: a place it
+		// took by itself is looked at again, the devices perhaps moved since.
+		if r.unplaced || !r.dragging && (!r.shown || !r.checked) && !r.byHand && !a.relayClear(r, r.base) {
+			r.base = a.relaySpot(r)
+			r.off, r.unplaced = ui.Point{}, false
+		}
+		r.checked = true
 	}
-	// As it comes to show, or as the LAN does with it there: a place it took
-	// by itself is looked at again, the devices perhaps moved since.
-	if r.unplaced || !r.dragging && (!r.shown || !r.checked) && !r.byHand && !a.relayClear(r.base) {
-		r.base = a.relaySpot()
-		r.off, r.unplaced = ui.Point{}, false
-	}
-	r.checked = true
 }
 
 // relaySpot is where the relay goes by itself: between this computer and
@@ -650,29 +634,33 @@ func (a *app) place() {
 // it; or, if a track through it would cross a name or a tile there, the
 // nearest spot around that where none does (DESIGN: lines and pills never
 // cover names). With no such spot, the first.
-func (a *app) relaySpot() ui.Point {
-	r := a.relay
+func (a *app) relaySpot(r *relayStop) ui.Point {
 	me := a.device(a.self)
 	var far *device
 	for _, d := range a.devices {
-		if d.path == "relay" {
+		if a.via(d, r) {
 			far = d
 			break
 		}
 	}
 	want := ui.Point{X: a.cw / 2, Y: a.ch / 2}
-	if me != nil && far != nil {
+	switch {
+	case me != nil && far != nil:
 		p, q := me.at(), far.at()
 		want = ui.Point{X: (p.X + q.X) / 2, Y: (p.Y+q.Y)/2 + 30}
+	case me != nil:
+		// No link through it yet (one dragged into the LAN, M4): under
+		// this computer, out of the way.
+		want = ui.Point{X: me.at().X, Y: me.at().Y + 150}
 	}
-	first := a.freeSpot(want, r, a.relayFootprint, a.cw, a.ch)
-	if a.relayClear(first) {
+	first := a.freeSpot(want, r, r.footprint, a.cw, a.ch)
+	if a.relayClear(r, first) {
 		return first
 	}
 	for _, rad := range []float64{40, 80, 120, 160, 200} {
 		for deg := 90.0; deg < 450; deg += 30 {
 			at := ui.Point{X: want.X + float32(rad*math.Cos(deg*math.Pi/180)), Y: want.Y + float32(rad*math.Sin(deg*math.Pi/180))}
-			if spot := a.freeSpot(at, r, a.relayFootprint, a.cw, a.ch); dist(spot, at) < 24 && a.relayClear(spot) {
+			if spot := a.freeSpot(at, r, r.footprint, a.cw, a.ch); dist(spot, at) < 24 && a.relayClear(r, spot) {
 				return spot
 			}
 		}
@@ -683,13 +671,13 @@ func (a *app) relaySpot() ui.Point {
 // relayClear reports whether the tracks through a relay at at, as they are
 // drawn, keep off every device's name, and off every tile but those at
 // their ends.
-func (a *app) relayClear(at ui.Point) bool {
+func (a *app) relayClear(r *relayStop, at ui.Point) bool {
 	me := a.device(a.self)
 	if me == nil || me.unplaced {
 		return true
 	}
 	for _, d := range a.devices {
-		if d.path != "relay" || d.unplaced || !d.gone.IsZero() {
+		if !a.via(d, r) || d.unplaced || !d.gone.IsZero() {
 			continue
 		}
 		cv := newCurve(me.at(), d.at(), &at, bendFor(d.id))
@@ -757,8 +745,10 @@ func (a *app) keepPlaces() {
 			a.places.set(a.lan, d.id, d.rest)
 		}
 	}
-	if !a.relay.unplaced && !a.relay.dragging {
-		a.places.set(a.lan, relayKey, a.relay.at())
+	for _, r := range a.relays {
+		if !r.unplaced && !r.dragging && a.counts(r) {
+			a.places.set(a.lan, r.key(), r.at())
+		}
 	}
 }
 

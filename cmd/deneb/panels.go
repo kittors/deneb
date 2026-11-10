@@ -184,6 +184,21 @@ const (
 
 func (a *app) trayMode() (trayMode, string) {
 	dr := a.drag
+	if r := dr.relay; r != nil && dr.near {
+		// A relay in the hand (DESIGN §6.12): mine goes back in; the public
+		// one and a friend's stay.
+		if !a.relayRemovable(r) {
+			return trayRefuse, a.relayRefusal(r)
+		}
+		lan := ""
+		if l := a.snap.LAN(a.lan); l != nil {
+			lan = short(l.Name)
+		}
+		if dr.over {
+			return trayArmed, say("松手，", lan, "就不用它了")
+		}
+		return trayOffer, say("拖到这里，", lan, "就不用它了")
+	}
 	switch {
 	case a.landing != nil && a.landingByHand, dr.d != nil && dr.removable && dr.over:
 		return trayArmed, "松手，移出局域网"
@@ -195,6 +210,13 @@ func (a *app) trayMode() (trayMode, string) {
 		who := spaced(a.people[dr.d.owner].name)
 		return trayRefuse, "这是" + who + "的设备，只有" + who + "能移出"
 	}
+	if a.trayHint != "" && dr.d == nil {
+		return trayIdle, a.trayHint
+	}
+	if a.cameHint != "" && dr.d == nil && a.now().Before(a.cameUntil) {
+		// A relay of mine came up (M4).
+		return trayIdle, a.cameHint
+	}
 	return trayIdle, "拖出来，加进局域网"
 }
 
@@ -202,7 +224,7 @@ func (a *app) trayMode() (trayMode, string) {
 // its way into it, or the hand brings one near.
 func (a *app) trayShows() bool {
 	mode, _ := a.trayMode()
-	return len(a.tray) > 0 || a.landing != nil || mode != trayIdle
+	return len(a.tray) > 0 || a.landing != nil || mode != trayIdle || a.relayTray()
 }
 
 // trayView is the pill at the bottom of the canvas: my devices that are
@@ -228,7 +250,10 @@ func (a *app) trayView(c *ui.Context, p *palette, w, h float32, now time.Time) {
 		c.AnimationFrame()
 	}
 	a.slotOK = false
-	a.held = nil
+	a.held, a.trayDrag, a.heldRelay = nil, nil, ""
+	if a.now().Before(a.cameUntil) {
+		c.After(a.cameUntil.Sub(a.now()))
+	}
 	right := a.bottomRight(h)
 	holder := ui.Row(c.Key("tray-holder")).Absolute().Left(0).Right(right).Bottom(22).Justify(ui.Center).PassThrough()
 	holder.Children(func() {
@@ -283,6 +308,8 @@ func (a *app) trayView(c *ui.Context, p *palette, w, h float32, now time.Time) {
 					ui.Box(c).Size(slotTile, slotTile).Radius(slotTile*0.3).Background(p.primary.Alpha(0.08)).Border(1.5, p.primary.Alpha(0.3))
 				})
 			}
+			// My relays, the install commands waiting, and the "+" (M4).
+			a.trayRelayItems(c, p, w, h)
 		})
 	})
 }
@@ -318,10 +345,18 @@ func (a *app) trayTile(c *ui.Context, p *palette, d *device, off *ui.Point, home
 	// it is wherever the tray is, rising or sinking.
 	var bounds *ui.Rect
 	if known && item.Pressed() {
-		bounds = &ui.Rect{X: 70 - home.X, Y: 44 - home.Y, W: max(0, w-140), H: max(0, h-36-44)}
+		// Up into the header too, to the balls there (DESIGN §6.11).
+		top := a.shareTop(d)
+		bounds = &ui.Rect{X: 70 - home.X, Y: top - home.Y, W: max(0, w-140), H: max(0, h-36-top)}
 	}
 	item.Draggable(off, ui.DraggableOptions{Bounds: bounds, Rigid: true, Animation: ui.Snappy})
 	if _, _, ok := item.DragEnded(); ok && known {
+		if a.dropOnBall(c, d) {
+			// Given to someone, or not, it goes back to its place.
+			*off = ui.Point{}
+			a.unclipUntil = c.Now().Add(800 * time.Millisecond)
+			return
+		}
 		at := ui.Point{X: home.X + off.X, Y: home.Y + off.Y}
 		if at.Y > h-trayBand {
 			*off = ui.Point{} // let go over the tray: it goes back to its place
@@ -342,7 +377,8 @@ func (a *app) trayTile(c *ui.Context, p *palette, d *device, off *ui.Point, home
 	item.Cursor(ui.CursorGrab)
 	if item.Dragging() {
 		item.Cursor(ui.CursorGrabbing)
-		if home.Y+off.Y <= h-trayBand {
+		a.trayDrag, a.trayDragAt = d, ui.Point{X: home.X + off.X, Y: home.Y + off.Y}
+		if home.Y+off.Y <= h-trayBand && !a.upHigh(d) {
 			// Out over the canvas: the devices there make room for it.
 			a.held, a.heldAt = d, ui.Point{X: home.X + off.X, Y: home.Y + off.Y}
 		}
@@ -351,6 +387,12 @@ func (a *app) trayTile(c *ui.Context, p *palette, d *device, off *ui.Point, home
 	// as turned as one, so that it lands as one.
 	pose := ui.Pose{}
 	switch {
+	case item.Dragging() && a.upHigh(d):
+		// Up in the header: as a tile of the canvas would be there, in the
+		// ball the hand is over.
+		pose = ui.Pose{Scale: a.upScale() * float32(tileSize) / slotTile, Rotate: liftPose.Rotate}
+		snap := a.snapTo(ui.Point{X: a.origin.X + home.X + off.X, Y: a.origin.Y + home.Y + off.Y})
+		pose.X, pose.Y = snap.X, snap.Y
 	case item.Dragging() && home.Y+off.Y <= h-trayBand:
 		pose = ui.Pose{Scale: float32(tileSize) / slotTile * liftPose.Scale, Rotate: liftPose.Rotate, Y: liftPose.Y}
 	case item.Dragging():
@@ -433,6 +475,9 @@ func (a *app) toastView(c *ui.Context, p *palette, w, h float32, now time.Time) 
 					if tn.dev != nil {
 						deviceTile(c, p, tn.dev.kind, a.tileColor(tn.dev), 28, false)
 					}
+					if tn.orb {
+						relayOrb(c, p, 28, false, 0)
+					}
 					ui.Text(c, tn.text).FontSize(13).FontWeight(500).SingleLine()
 					if tn.undo != nil {
 						u := ui.ButtonBase(c.Key("undo")).Height(32).Padding(0, 12).Radius(999).FocusRing(false)
@@ -489,7 +534,8 @@ func (a *app) cardLayer(c *ui.Context, p *palette) {
 // busy reports whether the hand holds something, or something moves
 // where the hand did not take it.
 func (a *app) busy() bool {
-	if a.held != nil || a.relay.dragging || a.landing != nil {
+	// (A tile let go up in the header flies back until unclipUntil.)
+	if a.held != nil || a.trayDrag != nil && a.upHigh(a.trayDrag) || a.relayDragging() || a.landing != nil || a.clock.Before(a.unclipUntil) {
 		return true
 	}
 	for _, d := range a.devices {
@@ -511,6 +557,22 @@ func (a *app) card(c *ui.Context, p *palette) {
 	}
 	if a.selected == noticeCard {
 		a.noticeCard(c, p)
+		return
+	}
+	if a.selected == seatCard {
+		a.seatCardView(c, p)
+		return
+	}
+	if id, ok := strings.CutPrefix(a.selected, personCard); ok {
+		a.personCardView(c, p, id)
+		return
+	}
+	if id, ok := strings.CutPrefix(a.selected, relayCard); ok {
+		a.relayCardView(c, p, model.RelayID(id))
+		return
+	}
+	if id, ok := strings.CutPrefix(a.selected, joinCard); ok {
+		a.joinCardView(c, p, id)
 		return
 	}
 	d := a.device(a.selected)
@@ -573,6 +635,10 @@ func (a *app) card(c *ui.Context, p *palette) {
 					if !mine {
 						who = strings.TrimLeft(spaced(owner.name), " ") + "的设备"
 					}
+					if given := a.givenWho(d); given != "" {
+						// Given to me, or a LAN's own (DESIGN §6.11).
+						who = given
+					}
 					ui.Text(c, who).FontSize(12).TextColor(p.ink2)
 					if a.sameName(d) {
 						// Two of one name on the canvas: a word on which, and a
@@ -597,8 +663,16 @@ func (a *app) card(c *ui.Context, p *palette) {
 			if mine {
 				a.kinds(c, p, d)
 			}
-			// How it is connected, in one sentence.
-			ui.Row(c).Gap(10).Padding(12).Radius(14).Background(p.well).Margin(14, 0, 0, 0).Children(func() {
+			// How it is connected, in one sentence. Through a relay of M4, a
+			// click shows the relay's card (DESIGN §6.12).
+			how := ui.Row(c.Key("how-row")).Gap(10).Padding(12).Radius(14).Background(p.well).Margin(14, 0, 0, 0)
+			if d.path == "relay" && a.snap.Can(model.FeatureRelays) && a.snap.Relays[a.relayOf(d)] != nil {
+				how.Cursor(ui.CursorPointer).Label("看看这个中转站")
+				if how.Clicked() {
+					a.openRelay(a.relayOf(d))
+				}
+			}
+			how.Children(func() {
 				icon, title, sub, col := a.howConnected(d, owner, p)
 				badge := ui.Box(c).Size(30, 30).Radius(999).Center().
 					RadialGradient(ui.RadialGradient{Center: ui.Point{X: 0.34, Y: 0.28}, Stops: []ui.GradientStop{
@@ -652,7 +726,7 @@ func (a *app) card(c *ui.Context, p *palette) {
 			})
 			// This computer in the "全部" view is in no one LAN: what it opens,
 			// and to whom, is each LAN's, on its own canvas.
-			perLAN := !(a.all() && d.id == a.self)
+			perLAN := !((a.all() || a.shared()) && d.id == a.self)
 			label := "你可以用"
 			if mine {
 				label = "开放给大家的"
@@ -727,6 +801,14 @@ func (a *app) card(c *ui.Context, p *palette) {
 				})
 				ui.Text(c, "点一下头像，就不让他用了").FontSize(12).TextColor(p.ink3).Padding(8, 4, 0, 4)
 			}
+			if mine {
+				// Given to people one by one, and which way (DESIGN §6.11).
+				a.shareSection(c, p, d)
+			}
+			given := a.snap.SharedOf(d.dev) != nil
+			if given {
+				ui.Text(c, "只有你能连它，反过来不行").FontSize(12).TextColor(p.ink3).Padding(8, 4, 0, 4)
+			}
 			ui.Row(c).Margin(12, 0, 0, 0).AlignItems(ui.Center).Children(func() {
 				more := ui.ButtonBase(c.Key("more")).Height(28).Padding(0, 4).Gap(2).Radius(8).FocusRing(false)
 				if more.Clicked() {
@@ -751,6 +833,18 @@ func (a *app) card(c *ui.Context, p *palette) {
 					out.Children(func() { ui.Text(c, "移出这个局域网").FontSize(12).TextColor(p.ink2) })
 					if out.Clicked() {
 						a.takeOut(c, d, true, false)
+					}
+				}
+				if given && a.shared() && a.snap.Can(model.FeatureShareMode) {
+					// Given to me: I can give it back (DESIGN §6.11).
+					out := ui.ButtonBase(c.Key("give-back")).Height(28).Padding(0, 10).Radius(999).FocusRing(false)
+					if out.Hovered() {
+						out.Background(p.well)
+					}
+					out.AnimatePose(pressPose(out, 0.96), ui.Snappy)
+					out.Children(func() { ui.Text(c, "不要了").FontSize(12).TextColor(p.ink2) })
+					if out.Clicked() {
+						a.leaveShare(c, d)
 					}
 				}
 			})
@@ -802,7 +896,7 @@ func (a *app) howConnected(d *device, owner *person, p *palette) (icon, title, s
 		}
 		return "home", "这就是你正在用的电脑", "别人能用你开放的服务", owner.color
 	case "relay":
-		return "", "经" + a.relay.name + "中转", "慢一点，但能正常用", grey
+		return "", a.viaWords(d), a.viaSub(d), grey
 	case "connecting":
 		return "bolt", "正在连接…", "一般几秒就好", grey
 	case "unreachable":
@@ -1135,6 +1229,31 @@ func (a *app) lanCard(c *ui.Context, p *palette) {
 				}
 			})
 			ui.Text(c, "打开后，新来的要你点一下才进来").FontSize(12).TextColor(p.ink3).Padding(8, 4, 0, 4)
+			if !a.snap.Can(model.FeatureShareMode) {
+				return
+			}
+			// Members use only what the owner gives each of them (DESIGN
+			// §6.11, scene 4). Their devices go at once; the server hears
+			// of it as the toast goes, so undo is nothing done.
+			ui.Text(c, "设备共享").FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(18, 4, 8, 4)
+			ui.Column(c).Radius(14).Background(p.well).Padding(0, 12).Children(func() {
+				ui.Row(c.Key("share-mode")).Height(44).Gap(10).Children(func() {
+					ui.Text(c, "成员只用分到的设备").FontSize(13).FontWeight(500).Grow(1)
+					on := l.Mode == model.ModeShare
+					if toggle(c, p, on) {
+						mode, text := model.ModeShare, say("「"+short(l.Name)+"」", "改成成员只用分到的设备")
+						if on {
+							mode, text = model.ModeLAN, say("「"+short(l.Name)+"」", "改回大家的设备互相看得见")
+						}
+						a.holdFor(c, model.Op{Kind: model.OpLANSetMode, LAN: l.ID, Mode: mode}, text)
+					}
+				})
+			})
+			line := "打开后，成员的设备移出去，你把设备拖到成员身上分给他"
+			if l.Mode == model.ModeShare {
+				line = "关掉后，成员要自己把设备拖进来"
+			}
+			ui.Text(c, line).FontSize(12).TextColor(p.ink3).Padding(8, 4, 0, 4)
 		})
 	})
 }
@@ -1173,9 +1292,23 @@ const (
 func (a *app) stackBall(c *ui.Context, p *palette, l *model.LAN, id string, how int, overlap bool, invited model.Invited) {
 	who := a.people[id]
 	el := ui.Box(c.Key("stack-"+id)).Size(30, 30)
+	// One of my devices in the hand, the stack spreads out, so that each
+	// ball it can be given to shows whole; the others fade (DESIGN §6.11).
+	spread := a.aim.d != nil
+	target := how == member && id != a.me && a.snap.Can(model.FeatureShare)
+	gap := el.AnimateTo("spread", map[bool]float32{false: -6, true: 8}[spread], ui.Snappy)
 	if overlap {
-		el.Margin(0, 0, 0, -6)
+		el.Margin(0, 0, 0, gap)
 	}
+	if fade := el.AnimateTo("fade", map[bool]float32{false: 0, true: 1}[spread && !target], ui.Animation{Duration: 160 * time.Millisecond}); fade > 0 {
+		el.Opacity(1 - 0.6*fade)
+	}
+	if target {
+		if b := el.Bounds(); b.W > 0 && a.ballRects != nil {
+			a.ballRects[id] = b
+		}
+	}
+	aimed := spread && a.aim.who == id && a.aim.ok
 	el.Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: &ui.Motion{Scale: 0.5}, Exit: &ui.Motion{Scale: 0.5}})
 	waits := float32(0)
 	if how != member {
@@ -1190,7 +1323,16 @@ func (a *app) stackBall(c *ui.Context, p *palette, l *model.LAN, id string, how 
 	}
 	a.stackWas[id] = how
 	pose, anim := ui.Pose{}, ui.Snappy
+	popped := c.Now().Sub(a.popAt[id])
 	switch since := c.Now().Sub(a.stackIn[id]); {
+	case popped < 110*time.Millisecond:
+		// A device given to them just now: the ball takes it, and springs.
+		pose, anim = ui.Pose{Scale: 1.22}, ui.Animation{Duration: 110 * time.Millisecond}
+		c.After(110*time.Millisecond - popped)
+	case popped < 800*time.Millisecond:
+		anim = ui.Bouncy
+	case aimed:
+		pose = ui.Pose{Scale: 1.15}
 	case since < 90*time.Millisecond:
 		// Let in: it dips, and springs up full.
 		pose, anim = ui.Pose{Scale: 0.88}, ui.Animation{Duration: 90 * time.Millisecond}
@@ -1204,8 +1346,12 @@ func (a *app) stackBall(c *ui.Context, p *palette, l *model.LAN, id string, how 
 	}
 	el.AnimatePose(pose, anim)
 	hovered := el.Hovered()
+	ring := el.AnimateTo("ring", map[bool]float32{false: 0, true: 1}[aimed], ui.Animation{Duration: 120 * time.Millisecond})
 	el.Children(func() {
 		solid := ball(c, who, 30, false).Shadow(0, 0, 0, 2, p.bg)
+		if ring > 0 {
+			solid.Shadow(0, 0, 0, 2+1.5*ring, p.primary.Alpha(ring))
+		}
 		if k > 0 {
 			solid.Opacity(1 - k)
 			dashedBall(c, p, who, 30).Absolute().Left(0).Top(0).Opacity(k).PassThrough()
@@ -1232,10 +1378,28 @@ func (a *app) stackBall(c *ui.Context, p *palette, l *model.LAN, id string, how 
 			if a.snap.Can(model.FeatureInvitePerson) {
 				a.personHandle(c, el, id)
 			}
+			if a.snap.Can(model.FeatureShare) {
+				// A click shows what I gave them, and they me.
+				if !a.snap.Can(model.FeatureInvitePerson) {
+					el.Cursor(ui.CursorPointer)
+				}
+				if el.Clicked() {
+					if a.selected == personCard+id {
+						a.selected = ""
+					} else {
+						a.selected, a.more, a.shareOpen, a.sharePick = personCard+id, false, "", ""
+					}
+				}
+			}
 		}
 	case waitsForMe:
 		el.Cursor(ui.CursorPointer).Tooltip(strings.TrimLeft(spaced(who.name), " ") + "想加入，点一下同意")
 		if el.Clicked() {
+			if a.fullFor(l.ID, model.PersonID(id)) {
+				// No seat for them: first a seat to free (DESIGN §6.11).
+				a.selected, a.seatFor, a.seatFreeing, a.more = seatCard, id, false, false
+				return
+			}
 			a.holdFor(c, model.Op{Kind: model.OpMemberApprove, LAN: l.ID, Person: model.PersonID(id)}, "已同意"+spaced(who.name)+"加入")
 		}
 	case invitedByMe:

@@ -75,6 +75,9 @@ func main() {
 func pickStore() (client.Store, *places, map[ui.Key]func(c *ui.Context, a *app), *localclient.Client) {
 	if demoMode() {
 		d := client.NewDemo()
+		// As an M4 server would have it (DESIGN §6.11, §6.12).
+		d.Simulate("m3")
+		d.Simulate("m4")
 		return d, demoPlaces(), map[ui.Key]func(*ui.Context, *app){
 			ui.Key1: func(*ui.Context, *app) { d.Simulate("leave") },
 			ui.Key2: func(*ui.Context, *app) { d.Simulate("network") },
@@ -96,6 +99,15 @@ func pickStore() (client.Store, *places, map[ui.Key]func(c *ui.Context, a *app),
 			ui.KeyW: func(*ui.Context, *app) { d.Simulate("waiting") },
 			// This computer loses its network, or gets it back (§6.10).
 			ui.KeyL: func(*ui.Context, *app) { d.Simulate("nonet") },
+			// M3's (§6.11): the next seat limit; 小美 gives me her printer,
+			// or takes it back; Leo invites me, his seats full.
+			ui.KeyS: func(*ui.Context, *app) { d.Simulate("seats") },
+			ui.KeyG: func(*ui.Context, *app) { d.Simulate("share-in") },
+			ui.KeyY: func(*ui.Context, *app) { d.Simulate("invitation-full") },
+			// M4's (§6.12): my server stops, or comes back; an install
+			// command waiting is run on a server.
+			ui.KeyR: func(*ui.Context, *app) { d.Simulate("relay-down") },
+			ui.KeyJ: func(*ui.Context, *app) { d.Simulate("relay-joined") },
 		}, nil
 	}
 	if start := os.Getenv("DENEB_FAKE"); start != "" {
