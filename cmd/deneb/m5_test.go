@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"image"
 	"image/color"
 	"image/png"
 	"os"
@@ -202,6 +203,19 @@ func TestTrayIconsWindows(t *testing.T) {
 		tmpl, err := png.Decode(bytes.NewReader(trayIcons[st]))
 		if err != nil {
 			t.Fatal(err)
+		}
+		// The cut takes nothing of the mark: the menu bar's marks keep
+		// their star in the middle 16 points (a new logo's too).
+		b := tmpl.Bounds()
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			for x := b.Min.X; x < b.Max.X; x++ {
+				if (image.Point{X: x, Y: y}).In(b.Inset(trayInset)) {
+					continue
+				}
+				if a := color.NRGBAModel.Convert(tmpl.At(x, y)).(color.NRGBA).A; a != 0 {
+					t.Fatalf("%s (%d,%d): alpha %d in the margin the 16 points are cut from", st, x, y, a)
+				}
+			}
 		}
 		for _, tc := range []struct {
 			dark bool
