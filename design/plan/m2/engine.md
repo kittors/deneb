@@ -773,6 +773,7 @@ M1 节点慢一些，是因为 QEMU 在模拟 amd64。
     - `TestSmallPacketsTwiceOnLossyLine` 连挂两次：发一份停 5.96 s，发两份停 3.13 s，没到一半。CI 机器自己卡住的时间和丢包造成的差不多长，比不出来，所以 CI 上只记不判，本机照旧判。
     - `TestOneWayUDPShowsInTheCounters` 连挂两次：build 在 3 s 里一个 mac 的探测都没听到。走中转时直连探测隔几秒才发一次，3 s 的窗口碰不碰得上看运气。改成至少等 3 s，听到一个就停，最多等 15 s。
     - `TestPeersOnDifferentRelays` 挂了一次：18 s 后 mac 到 build 还是 connecting，自动重跑过了。没改，再出现就要查。
+    - `TestBothPathsLossyAfterCleanRelayStaysDirect`（b156f91 那一轮）连挂两次，两次挂在不同的地方。第一次是直连和中转都丢包时还是切到了中转，重跑时是一点丢包就切到了中转。手动重跑过了。那次只改了 Windows 的防火墙规则，和它无关。这周 CI 上看时机的引擎测试接连失手，该让引擎线一起理一遍。
 
 ### 11-11 凌晨：构建服务器和 NAS 换版以后直连回不来（m7-11102317-win 那一轮）
 

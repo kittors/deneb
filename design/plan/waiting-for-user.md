@@ -47,6 +47,7 @@
     - 测试机上现在有 4 条这样的阻止规则：M5 测试留下 2 条，a1 留下 2 条，都没删。要删，在测试机上以管理员跑：`Get-NetFirewallApplicationFilter | Where-Object { $_.Program -match "denebd" } | Get-NetFirewallRule | Remove-NetFirewallRule`
 - **已登录的电脑没有地方装网卡**：首次引导只给没登录或者还没有局域网的人看。重装以后，或者引导里跳过了装网卡，Windows 就会一直停在用户态。建议在窗口里加一个提示（像 Clash 那种提示卡），点了就走装网卡那一步。这是界面上的事，要先出设计给你看。
 - **Linux 双击星打开窗口做不到**：Ubuntu 26.04 自带的 libayatana 不支持，现在从菜单的"打开 Deneb"打开。DESIGN §7.2 那句要不要改，你定。
+- **Ubuntu 上窗口是直角**：设计写的是 12 点圆角，MyGo 在 GTK 下不裁圆角。要不要接受，你定。
 - **三个平台字体不一样**：MyGo 用各系统自己的字体，DESIGN §8 写的"内嵌字体"其实没做。要一致得内嵌一套开源字体，安装包会大几 MB。M5 线提了另开一个任务，在等你回答。
 
 ## 4. 已经搁置的
