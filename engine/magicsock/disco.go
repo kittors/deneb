@@ -399,12 +399,13 @@ func (c *Conn) handleDisco(b []byte, src netip.AddrPort, relay proto.RelayID, re
 		c.mu.Lock()
 		restarted := p.peerInstance != "" && p.peerInstance != m.Instance
 		p.peerInstance = m.Instance
+		label, nk := p.cfg.Label, p.cfg.NodeKey // under mu: SetPeers replaces cfg
 		c.mu.Unlock()
 		if restarted && c.opts.OnPeerRestart != nil {
 			// Without this, traffic we start would go on with a session the
 			// peer forgot, until WireGuard gives up on it after 15 seconds.
-			c.logf("[path] %s restarted; starting a new handshake", p.cfg.Label)
-			c.opts.OnPeerRestart(p.cfg.NodeKey)
+			c.logf("[path] %s restarted; starting a new handshake", label)
+			c.opts.OnPeerRestart(nk)
 		}
 	}
 	switch m.T {
@@ -810,7 +811,10 @@ func (c *Conn) noteTrafficLocked(p *peerState, now time.Time) bool {
 // wake probes a peer whose traffic just came back: the relay, a
 // call-me-maybe with our endpoints, and every address we know for it.
 func (c *Conn) wake(p *peerState) {
-	c.logf("[idle] %s: traffic again, probing", p.cfg.Label)
+	c.mu.Lock()
+	label := p.cfg.Label // under mu: SetPeers replaces cfg
+	c.mu.Unlock()
+	c.logf("[idle] %s: traffic again, probing", label)
 	c.probe(p)
 }
 
@@ -1326,9 +1330,13 @@ func (c *Conn) heartbeat() {
 		}
 		// A held path (silent past Trust) settles first: it answers again,
 		// or Hold runs out and the relay shows. Going idle now would freeze
-		// "direct" on a path that may be dead.
+		// "direct" on a path that may be dead. A path still "connecting"
+		// settles first too, within connectingFor: idle, nothing would ask
+		// again (reprobeDueLocked), and it would show "connecting" for as
+		// long as nobody used the line. With Idle shorter than connectingFor
+		// (tests), one lost relay pong did that (CI, 11-11).
 		held := !c.directTrustedLocked(p, now) && c.directHeldLocked(p, now)
-		if !p.idle && now.Sub(p.lastActive) > c.opts.Idle && !held {
+		if !p.idle && now.Sub(p.lastActive) > c.opts.Idle && !held && p.kind != kindConnecting {
 			p.idle = true
 			idled = append(idled, p.cfg.Label)
 		}

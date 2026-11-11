@@ -1238,6 +1238,9 @@ func (c *Conn) relayForLocked(p *peerState) proto.RelayID {
 
 func (c *Conn) sendRelay(p *peerState, b []byte) error {
 	c.mu.Lock()
+	// The peer's config is read under mu: SetPeers replaces it (a race the
+	// race detector found, 11-12).
+	to, label := key.NodePublicFromRaw32(mem.B(p.cfg.NodeKey[:])), p.cfg.Label
 	if d := p.relayHSDelay; d > 0 && isHandshakeMsg(b) {
 		// DelayRelayHandshakesForTest: the relay's TCP waiting out a lost
 		// segment on a lossy line.
@@ -1251,7 +1254,7 @@ func (c *Conn) sendRelay(p *peerState, b []byte) error {
 				if started {
 					go c.relayLoop(rc)
 				}
-				rc.client.Send(key.NodePublicFromRaw32(mem.B(p.cfg.NodeKey[:])), cp)
+				rc.client.Send(to, cp)
 			}
 		})
 		return nil
@@ -1259,13 +1262,13 @@ func (c *Conn) sendRelay(p *peerState, b []byte) error {
 	rc, started := c.relayLocked(c.relayForLocked(p), time.Now())
 	c.mu.Unlock()
 	if rc == nil {
-		return errors.New("no relay to reach " + p.cfg.Label)
+		return errors.New("no relay to reach " + label)
 	}
 	if started {
-		c.logf("[relay] connecting to %s to reach %s", rc.relay.Name, p.cfg.Label)
+		c.logf("[relay] connecting to %s to reach %s", rc.relay.Name, label)
 		go c.relayLoop(rc)
 	}
-	return rc.client.Send(key.NodePublicFromRaw32(mem.B(p.cfg.NodeKey[:])), b)
+	return rc.client.Send(to, b)
 }
 
 // SetPeers replaces the peer table with the peers that share an active
