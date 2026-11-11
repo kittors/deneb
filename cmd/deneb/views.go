@@ -326,12 +326,16 @@ func (a *app) waitingCanvas(c *ui.Context, p *palette, l *model.LAN) {
 	})
 }
 
-// notice is the first of the engine's notices not put away, or nil.
+// notice is the first of the engine's notices not put away; else the
+// window's own, of the network adapter not in yet (DESIGN §7.3); or nil.
 func (a *app) notice() *model.Notice {
 	for i := range a.snap.Notices {
 		if !a.noticesDone[a.snap.Notices[i].Code] {
 			return &a.snap.Notices[i]
 		}
+	}
+	if a.adapterMissing() && !a.noticesDone[adapterNotice.Code] {
+		return &adapterNotice
 	}
 	return nil
 }
@@ -404,6 +408,11 @@ func (a *app) noticeCard(c *ui.Context, p *palette) {
 				if para != "" {
 					ui.Text(c, para).FontSize(12).TextColor(p.ink2).LineHeight(1.5)
 				}
+			}
+			if n.Code == adapterNotice.Code {
+				// The window's own: its card puts the adapter in.
+				a.adapterCard(c, p)
+				return
 			}
 			if n.Rule != "" && n.Detail == "" {
 				// Clash's (M2); the others say where in their own words.

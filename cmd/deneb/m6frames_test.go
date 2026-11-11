@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,7 +16,8 @@ import (
 // M6 in the demo (DESIGN §7.3, §6.14): the first time's steps (sign in,
 // the network adapter, the first LAN, of one's own or a friend's), the
 // diagnostics package in this computer's card, and the notices of Surge
-// and v2rayN.
+// and v2rayN; then, the second batch, a computer signed in on Windows
+// puts the adapter in from its notice.
 
 // newM6Rig is the demo as an M6 server and engine have it; fresh, for a
 // person who has no LAN yet; with the first time's steps from step, unless
@@ -85,7 +88,68 @@ func TestM6Frames(t *testing.T) {
 			r.run(500 * time.Millisecond)
 			r.shot("先不装")
 		}
+		// M6's second batch: a computer signed in puts the adapter in.
+		if len(only) == 0 || only["adapter-card"] {
+			playAdapterCard(t, root, theme, dark)
+		}
 	}
+}
+
+// adapterRig is the window on Windows, as M5's scenes record it, of a
+// computer signed in whose engine has no network adapter, as after Deneb
+// was installed again over it: the pill is there as the window opens.
+func adapterRig(t *testing.T, dark bool, dir, still string) *m3rig {
+	r := newM4Rig(t)
+	m5World(r.d, "windows")
+	r.d.Simulate("m6")
+	r.d.Simulate("user-mode")
+	r.a.platform = "windows"
+	r.tt.SetTitleBar(winBar)
+	r.a.chrome = winButtons
+	r.tt.SetDark(dark)
+	r.run(600 * time.Millisecond)
+	r.dir, r.still = dir, still
+	return r
+}
+
+// Scene M6-07 (M6's second batch, DESIGN §7.3): the amber pill "还没装网卡";
+// its card says why, and what Windows will ask; 装网卡, the system asks
+// (the header says the adapter goes in), lets it in: the tick, then the
+// pill and the card go together. Beside it, two stills: put off with
+// 以后再说; Windows's question answered no.
+func playAdapterCard(t *testing.T, root, theme string, dark bool) {
+	dir := filepath.Join(root, theme+"-adapter-card")
+	reset(t, dir)
+	r := adapterRig(t, dark, dir, dir)
+	r.run(900 * time.Millisecond)
+	r.shot("胶囊")
+	r.tap(r.text("还没装网卡"))
+	r.run(1300 * time.Millisecond)
+	r.shot("卡片")
+	r.tap(r.text("装网卡"))
+	r.run(900 * time.Millisecond)
+	r.shot("等系统允许")
+	r.run(1300 * time.Millisecond)
+	r.shot("装好了")
+	r.run(1800 * time.Millisecond)
+	r.shot("收起")
+	r.park()
+	r.run(500 * time.Millisecond)
+
+	r = adapterRig(t, dark, t.TempDir(), dir)
+	r.tap(r.text("还没装网卡"))
+	r.run(1300 * time.Millisecond)
+	r.tap(r.text("以后再说"))
+	r.run(900 * time.Millisecond)
+	r.shot("以后再说")
+
+	r = adapterRig(t, dark, t.TempDir(), dir)
+	r.a.adapter = func(context.Context) error { return errors.New("not allowed as an administrator") }
+	r.tap(r.text("还没装网卡"))
+	r.run(1300 * time.Millisecond)
+	r.tap(r.text("装网卡"))
+	r.run(900 * time.Millisecond)
+	r.shot("没装上")
 }
 
 // typeSlowly types s a key at a time, as a hand does.

@@ -24,11 +24,11 @@ import (
 //     panel, which a click or a right-click opens, and which Windows rounds,
 //     outlines and shadows.
 //   - Linux: an AppIndicator among the top bar's icons: a click opens the
-//     system's menu (traymenu.go), a double click the window.
+//     system's menu (traymenu.go), whose "打开 Deneb" opens the window.
 //
 // The window closes to the bar: Deneb stays there, as the engine stays
-// (§2.4), and the panel's "打开 Deneb", the menu's, the Dock icon or a
-// double click on the mark bring it back. The first time it closes on
+// (§2.4), and the panel's "打开 Deneb", the menu's or the Dock icon bring
+// it back. The first time it closes on
 // Windows a tip over the mark says where Deneb is (traytip.go). A Linux
 // desktop without AppIndicator (GNOME as it comes) has no bar for the mark:
 // closing the window quits it there, and the connections go on.
@@ -75,9 +75,11 @@ func newMenuBar(a *app) *menuBar {
 	}
 	m := &menuBar{a: a, tray: tray, os: goos, mark: "solid"}
 	if goos == "linux" {
-		// A click opens the system's menu, once a double click's time is
-		// over; a double click opens the window, which GNOME's AppIndicator
-		// extension sends as the icon's activation (DESIGN §7.2).
+		// A click opens the system's menu, every click: Ubuntu 26.04's
+		// libayatana-appindicator3 (0.5.94) has no activation to hand Deneb,
+		// so the menu's "打开 Deneb" opens the window (DESIGN §7.2). Where
+		// the library has one (a double click, on GNOME's extension), it
+		// opens the window too.
 		m.menu = newTrayMenu(m)
 		tray.OnClick(m.openWindow)
 	} else {

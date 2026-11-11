@@ -308,16 +308,14 @@ func (a *app) onboardAdapter(c *ui.Context, p *palette, now time.Time) {
 	if a.platform == "windows" {
 		ask = "Windows 会弹一个窗口问你，点「是」就行。"
 	}
-	ui.Row(c).Gap(8).Padding(10, 14).Radius(12).Background(p.well).Margin(18, 0, 0, 0).Width(360).AlignItems(ui.Start).Children(func() {
-		ui.Icon(c, uiGlyphs["lock"]).Size(16, 16).TextColor(p.ink2).Margin(1, 0, 0, 0)
-		ui.Text(c, ask).FontSize(12).TextColor(p.ink2).LineHeight(1.5).Grow(1).Shrink(1)
-	})
-	if a.adapter == nil && !o.asking.IsZero() && o.inAt.IsZero() && now.Sub(o.asking) >= 1800*time.Millisecond {
+	askBox(c, p, ask).Margin(18, 0, 0, 0).Width(360)
+	if a.adapter == nil && !o.asking.IsZero() && o.inAt.IsZero() && now.Sub(o.asking) >= adapterAsk {
 		// The demo's system lets it in.
 		o.inAt = now
 		o.next = now.Add(900 * time.Millisecond)
+		a.adapterJob.done = true
 	} else if a.adapter == nil && !o.asking.IsZero() && o.inAt.IsZero() {
-		c.After(1800*time.Millisecond - now.Sub(o.asking))
+		c.After(adapterAsk - now.Sub(o.asking))
 	}
 	// The ways on, one at a time, fading across in a place that keeps its
 	// height.
@@ -343,7 +341,8 @@ func (a *app) onboardAdapter(c *ui.Context, p *palette, now time.Time) {
 			})
 		case !o.skipAt.IsZero():
 			way("adapter-skip").Children(func() {
-				ui.Text(c, "也能用：在 Deneb 里点「打开」就能连；以后在设置里随时能装").FontSize(12).TextColor(p.ink2).
+				// Where it is put in later: the pill in the window (DESIGN §7.3).
+				ui.Text(c, "也能用：在 Deneb 里点「打开」就能连；\n以后点窗口右上角的「还没装网卡」就能装").FontSize(12).TextColor(p.ink2).
 					Margin(12, 0, 0, 0).TextAlign(ui.Center).MaxWidth(360)
 			})
 		default:
@@ -369,6 +368,17 @@ func (a *app) onboardAdapter(c *ui.Context, p *palette, now time.Time) {
 			})
 		}
 	})
+}
+
+// askBox says what the system will ask the person, beside a lock, in a grey
+// box: the adapter's step, and its card in the window (DESIGN §7.3).
+func askBox(c *ui.Context, p *palette, text string) ui.Element {
+	box := ui.Row(c).Gap(8).Padding(10, 14).Radius(12).Background(p.well).AlignItems(ui.Start)
+	box.Children(func() {
+		ui.Icon(c, uiGlyphs["lock"]).Size(16, 16).TextColor(p.ink2).Margin(1, 0, 0, 0)
+		ui.Text(c, text).FontSize(12).TextColor(p.ink2).LineHeight(1.5).Grow(1).Shrink(1)
+	})
+	return box
 }
 
 // onboardButton is the steps' main button, as wide as their column, its
@@ -742,7 +752,7 @@ func (a *app) installAdapter(c *ui.Context) {
 	if a.adapter == nil {
 		return
 	}
-	run(a, c, func(ctx context.Context) (struct{}, error) { return struct{}{}, a.adapter(ctx) },
+	run(a, c, func(ctx context.Context) (struct{}, error) { return struct{}{}, a.putAdapterIn(ctx) },
 		func(c *ui.Context, _ struct{}, err error) {
 			now := c.Now()
 			if err != nil {
@@ -752,5 +762,8 @@ func (a *app) installAdapter(c *ui.Context) {
 			}
 			o.inAt = now
 			o.next = now.Add(900 * time.Millisecond)
+			// In: the window's pill never tells of it, though the engine
+			// that has it may not have answered yet.
+			a.adapterJob.done = true
 		})
 }

@@ -17,7 +17,8 @@ import (
 // middle of the screen, far from the mark. So a click opens the system's
 // menu, whose look the system gives, and Deneb only what is in it: how
 // things are, what waits for me, a check item for each LAN, and the way
-// into the window. A double click opens the window.
+// into the window: the system hands Deneb no click on the mark there
+// (DESIGN §7.2).
 //
 // The menu follows the world as the mark does (menuBar.follow), whether or
 // not the window shows: the items' words and checks change in place, and

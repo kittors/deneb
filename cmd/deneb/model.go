@@ -260,6 +260,9 @@ type app struct {
 	chrome   func(c *ui.Context, p *palette, bar ui.TitleBar)
 	// onboard is the first time's steps while they show (DESIGN §7.3).
 	onboard *onboarding
+	// adapterJob is the network adapter put in from its notice, on a
+	// computer signed in already (DESIGN §7.3, M6's second batch).
+	adapterJob adapterJob
 	// diagAt is when the diagnostics package began to be put together, while
 	// it is (DESIGN §6.14); diagBusy, while the engine puts it together.
 	// diagnostics has the engine put it together into the downloads, and

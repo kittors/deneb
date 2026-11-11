@@ -136,8 +136,6 @@ type deskScreen struct {
 	tip      bool // the first close's tip
 	tipUntil time.Time
 	icon     ui.Rect // where the star is
-	clickAt  time.Time
-	menuWait time.Time // Linux: the menu opens after a double click's time
 }
 
 // screenInk is the ink of the bar the star sits on: dark on Windows' light
@@ -169,7 +167,9 @@ func (s *deskScreen) view(c *ui.Context) {
 	root.Children(func() {
 		radius, x, y := float32(8), float32(110), float32(56)
 		if s.os == "linux" {
-			radius, x, y = 12, 130, topbarH+40
+			// Square: GTK3 decorates MyGo's window with its shadow, but
+			// does not round what it draws (DESIGN §7.2).
+			radius, x, y = 0, 130, topbarH+40
 		}
 		holder := ui.Box(c.Key("win-holder")).Absolute().Left(x).Top(y).Size(winW, winH).PassThrough()
 		holder.Children(func() {
@@ -200,7 +200,7 @@ func (s *deskScreen) view(c *ui.Context) {
 }
 
 // star is Deneb's mark in the bar, a button: the pointer on it lights it
-// up; a click (Windows), or two (Linux), do what the system lets them.
+// up; a click does what the system lets it.
 func (s *deskScreen) star(c *ui.Context, p *palette, size float32) {
 	ink := s.screenInk(p)
 	b := ui.ButtonBase(c.Key("star")).Size(size, size).Radius(4).Center().FocusRing(false).Label("Deneb")
@@ -218,24 +218,15 @@ func (s *deskScreen) star(c *ui.Context, p *palette, size float32) {
 }
 
 // click is a click on the star: on Windows the panel opens or goes; on
-// Linux a second click within a double click's time opens the window, and
-// one alone opens the menu once that time is over (GNOME's AppIndicator
-// extension, DESIGN §7.2).
+// Linux the system's menu, at once: GNOME's AppIndicator extension opens it
+// on every click and hands Deneb none, so a double click does nothing more
+// (DESIGN §7.2).
 func (s *deskScreen) click(c *ui.Context) {
-	now := c.Now()
+	s.open = !s.open
 	if s.os == "windows" {
-		s.open = !s.open
 		s.tip = false
 		s.a.panelShown = s.open
-		return
 	}
-	if now.Sub(s.clickAt) < 400*time.Millisecond {
-		s.clickAt, s.menuWait = time.Time{}, time.Time{}
-		s.open, s.shown = false, true
-		return
-	}
-	s.clickAt, s.menuWait = now, now.Add(400*time.Millisecond)
-	c.After(400 * time.Millisecond)
 }
 
 // taskbar is Windows 11's taskbar: a few pinned apps in the middle, and at
@@ -311,10 +302,6 @@ func (s *deskScreen) taskbar(c *ui.Context, p *palette, now time.Time) {
 // indicators; under the star, its menu.
 func (s *deskScreen) topbar(c *ui.Context, p *palette, now time.Time) {
 	a := s.a
-	if !s.menuWait.IsZero() && !now.Before(s.menuWait) {
-		// One click, no second: the menu.
-		s.menuWait, s.open = time.Time{}, !s.open
-	}
 	bar := ui.Row(c.Key("topbar")).Absolute().Left(0).Right(0).Top(0).Height(topbarH).Background(ui.RGBA(0, 0, 0, 0.94)).
 		Padding(0, 10).AlignItems(ui.Center)
 	bar.Children(func() {
@@ -671,9 +658,9 @@ func playWinTray(t *testing.T, root, theme string, dark bool) {
 }
 
 // Scene M5-04: the star in Ubuntu's top bar. A click opens the system's
-// menu, after a double click's time: how things are, the LANs with their
-// ticks (one unticked pauses it), "打开 Deneb". The window closed, a
-// double click on the star brings it back.
+// menu: how things are, the LANs with their ticks (one unticked pauses
+// it), "打开 Deneb". The window closed, the menu's "打开 Deneb" brings it
+// back: the star takes no double click (DESIGN §7.2).
 func playLinuxTray(t *testing.T, root, theme string, dark bool) {
 	r := newDeskRig(t, "linux", dark)
 	// Something waits for me: the star has its dot, the menu a row.
@@ -695,19 +682,15 @@ func playLinuxTray(t *testing.T, root, theme string, dark bool) {
 	r.shot("菜单里看到已暂停")
 	r.tap(r.text("工作室 · 已暂停"))
 	r.run(1200 * time.Millisecond)
-	// The window closed: two clicks on the star bring it back.
+	// The window closed: the menu's "打开 Deneb" brings it back.
 	r.s.shown = false
 	r.run(900 * time.Millisecond)
-	r.glide(r.star(), 22)
-	r.run(200 * time.Millisecond)
-	for i := 0; i < 2; i++ {
-		r.desk.Press(r.px, r.py)
-		r.run(50 * time.Millisecond)
-		r.desk.Release(r.px, r.py)
-		r.run(120 * time.Millisecond)
-	}
+	r.tap(r.star())
+	r.run(1200 * time.Millisecond)
+	r.shot("窗口关着时的菜单")
+	r.tap(r.text("打开 Deneb"))
 	r.run(1300 * time.Millisecond)
-	r.shot("双击打开窗口")
+	r.shot("菜单里打开窗口")
 	r.glide(ui.Point{X: 900, Y: 500}, 20)
 	r.run(600 * time.Millisecond)
 }

@@ -25,6 +25,7 @@ func (a *app) view(c *ui.Context) {
 	a.drain(c)
 	a.sync(c)
 	a.checkOnboard()
+	a.tickAdapter(c)
 	p := colors(c)
 	if o := a.onboard; o != nil && o.leaving.IsZero() {
 		// The first time's steps, the whole window (DESIGN §7.3).
@@ -488,6 +489,11 @@ const lanNameWidth = 420
 // summary is the line under the LAN's name and the color of its dot: how
 // many people and devices, and whether all of them are connected.
 func (a *app) summary(p *palette) (ui.Color, string) {
+	if !a.adapterJob.asking.IsZero() {
+		// The engine stops while the adapter goes in, and starts again as
+		// the service: no trouble to tell of (DESIGN §7.3).
+		return p.ink3, "正在装网卡…"
+	}
 	if a.snap.NoNetwork && a.snap.Engine {
 		// The trouble is here, not over there (DESIGN §6.10).
 		return p.ink3, "这台电脑没联网，联网后会自动连上"

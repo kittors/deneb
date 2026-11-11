@@ -520,8 +520,11 @@ func demoSnapshot() *model.Snapshot {
 		return model.Path{Kind: model.PathDirect, RTT: time.Duration(ms) * time.Millisecond}
 	}
 	return &model.Snapshot{
-		Version:  1,
-		Engine:   true,
+		Version: 1,
+		Engine:  true,
+		// This computer has its network adapter: the window's notice of one
+		// not in yet (Windows, DESIGN §7.3) is the event "user-mode".
+		Kernel:   true,
 		Loaded:   true,
 		LoggedIn: true,
 		Me:       "me",

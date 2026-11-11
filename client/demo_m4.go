@@ -193,19 +193,25 @@ func (d *Demo) m4Event(s *model.Snapshot, event string, now time.Time) *model.Sn
 		return m4Base(s, now)
 	case "m5":
 		// M5's scenes (DESIGN §7.2, §6.13): my server, named 公司机房, is
-		// in 周末联机 and carries Mia's MacBook.
+		// in 周末联机 in place of 阿杰's 东京, and carries Mia's MacBook:
+		// one relay dragged in, as in the scenes the user saw, recorded
+		// where it took the place of a device at home.
 		srv := s.Relays[demoServer]
 		if srv == nil {
 			return s
 		}
 		n := *s
 		n.Relays = maps(s.Relays)
+		delete(n.Relays, demoJieSrv)
 		r := *srv
 		r.Name, r.Using = "公司机房", []model.PersonID{"mia", "lin"}
 		n.Relays[demoServer] = &r
 		n.LANs = slices.Clone(s.LANs)
 		for i, l := range n.LANs {
 			nl := *l
+			not := func(id model.RelayID) bool { return id == demoJieSrv }
+			nl.AddedRelays = slices.DeleteFunc(slices.Clone(l.AddedRelays), not)
+			nl.Relays = slices.DeleteFunc(slices.Clone(l.Relays), not)
 			if l.ID == "weekend" && !nl.Added(demoServer) {
 				nl.AddedRelays = append(nl.AddedRelays, demoServer)
 				nl.Relays = append([]model.RelayID{demoServer}, nl.Relays...)

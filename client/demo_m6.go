@@ -11,16 +11,24 @@ import (
 
 // m6Event plays one of M6's outside events on s, or returns s:
 //   - "m6": the server and the engine as M6 has them: diagnostics.
-//   - "m6-fresh": signed in for the first time: no LAN, nothing given to me.
+//   - "m6-fresh": signed in for the first time: no LAN, nothing given to me,
+//     no network adapter.
 //   - "notice-surge", "notice-v2rayn": Surge's, or v2rayN's, tunnel takes
 //     Deneb's connections (§6.14, as Clash's of §6.8).
+//   - "user-mode": this computer's engine has no network adapter, as after
+//     Deneb was installed again over it, or the first time's step put off
+//     (§7.3, M6's second batch); "kernel": it has.
 func (d *Demo) m6Event(s *model.Snapshot, event string, now time.Time) *model.Snapshot {
 	n := *s
 	switch event {
+	case "user-mode", "kernel":
+		n.Kernel = event == "kernel"
 	case "m6":
 		n.Features = maps(s.Features)
 		n.Features[model.FeatureDiagnostics] = true
 	case "m6-fresh":
+		// Deneb just installed: no adapter yet either.
+		n.Kernel = false
 		n.LANs, n.ShareLANs, n.Shared, n.Invitations, n.Notices = nil, nil, nil, nil, nil
 		n.Seats.Used, n.Seats.People = 1, []model.PersonID{s.Me}
 	case "notice-surge":
