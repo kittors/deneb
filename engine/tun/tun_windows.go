@@ -21,6 +21,12 @@ import (
 // adapterName is the Wintun adapter's name, as `Get-NetAdapter` shows it.
 const adapterName = "Deneb"
 
+// adapterGUID is the adapter's GUID, the same at every start. Windows
+// keys a network to it (its name, and whether it is private): with a new
+// GUID each time, as Wintun picks when given none, every start put the
+// adapter on a new public network ("Deneb 2", "Deneb 3", ...).
+var adapterGUID = mustGUID("{236587F5-ABE7-4CFE-AE83-DB92D5BC46CF}")
+
 // NRPT: the DNS client's name resolution policy, one registry key per rule
 // (what Add-DnsClientNrptRule writes). Deneb's has a fixed name, so it is
 // found again after a crash. Rules under the group policy key, if there
@@ -37,14 +43,18 @@ type platform struct {
 	mu     sync.Mutex
 	luid   winipcfg.LUID
 	routes map[netip.Addr]bool
+
+	stopIn, inDone chan struct{} // letIn's
 }
 
 // Open creates the Wintun adapter "Deneb" with the device's address, a /32
 // route to the DNS address (SetPeers adds one per peer), and an NRPT rule
-// sending the domain, and only it, to the engine. Nothing else changes: no
-// default route, no DNS servers on any adapter, no firewall rule. Close
-// removes the rule and the adapter, which takes its routes with it; after
-// a crash, the next start does (CleanupStale).
+// sending the domain, and only it, to the engine. Then it lets the
+// network's devices in (letIn): the adapter's network made private, and
+// one firewall rule. Nothing else changes: no default route, no DNS
+// servers on any adapter, no other firewall rule, no other network's
+// category. Close removes the rules and the adapter, which takes its
+// routes with it; after a crash, the next start does (CleanupStale).
 func Open(cfg Config, logf func(string, ...any)) (*Kernel, error) {
 	if logf == nil {
 		logf = log.Printf
@@ -58,7 +68,7 @@ func Open(cfg Config, logf func(string, ...any)) (*Kernel, error) {
 	if err := wintunHere(); err != nil {
 		return nil, err
 	}
-	u := &Undo{Interface: adapterName, Route: cfg.Block}
+	u := &Undo{Interface: adapterName, Route: cfg.Block, Firewall: FirewallRule}
 	if cfg.DNS.IsValid() && cfg.Domain != "" {
 		u.NRPT = nrptRule
 	}
@@ -67,7 +77,7 @@ func Open(cfg Config, logf func(string, ...any)) (*Kernel, error) {
 		return nil, err
 	}
 	wgtun.WintunTunnelType = adapterName // the adapter's description: not "WireGuard", to tell it apart
-	dev, err := wgtun.CreateTUN(adapterName, cfg.MTU)
+	dev, err := wgtun.CreateTUNWithRequestedGUID(adapterName, &adapterGUID, cfg.MTU)
 	if err != nil {
 		return nil, fmt.Errorf("create the Wintun adapter: %w", err)
 	}
@@ -103,6 +113,7 @@ func Open(cfg Config, logf func(string, ...any)) (*Kernel, error) {
 		flushDNS()
 	}
 	logf("[tun] %s up: %s, a /32 route per peer, NRPT .%s -> %s", adapterName, cfg.Self, cfg.Domain, cfg.DNS)
+	k.letIn(logf)
 	return k, nil
 }
 
@@ -160,10 +171,17 @@ func (k *Kernel) addRoute(a netip.Addr) error {
 	return nil
 }
 
-// Close removes the NRPT rule, then the adapter with its routes.
+// Close removes the firewall rule and the NRPT rule, then the adapter with
+// its routes.
 func (k *Kernel) Close(logf func(string, ...any)) {
 	if logf == nil {
 		logf = log.Printf
+	}
+	k.stopLettingIn()
+	if k.undo != nil && k.undo.Firewall != "" {
+		if _, err := RemoveFirewallRule(); err != nil {
+			logf("[tun] firewall rule %s: %v", FirewallRule, err)
+		}
 	}
 	if k.undo != nil && k.undo.NRPT != "" {
 		removeNRPT(k.undo.NRPT, k.cfg.Domain, logf)
@@ -173,16 +191,23 @@ func (k *Kernel) Close(logf func(string, ...any)) {
 	if k.cfg.StateDir != "" {
 		os.Remove(filepath.Join(k.cfg.StateDir, undoFile))
 	}
-	logf("[tun] removed %s, its routes and the NRPT rule", adapterName)
+	logf("[tun] removed %s, its routes, the NRPT rule and the firewall rule", adapterName)
 }
 
-// undo removes what a crashed engine left: its NRPT rule. The adapter went
-// with the process that created it (Wintun 0.14 ties an adapter to its
-// creator's handle), its routes with it.
+// undo removes what a crashed engine left: its NRPT rule and its firewall
+// rule. The adapter went with the process that created it (Wintun 0.14
+// ties an adapter to its creator's handle), its routes with it.
 func undo(u *Undo, logf func(string, ...any)) {
 	if u.NRPT != "" {
 		removeNRPT(u.NRPT, "", logf)
 		flushDNS()
+	}
+	if u.Firewall != "" {
+		if removed, err := RemoveFirewallRule(); err != nil {
+			logf("[tun] firewall rule %s: %v", FirewallRule, err)
+		} else if removed {
+			logf("[tun] removed the firewall rule %s", FirewallRule)
+		}
 	}
 }
 
@@ -275,7 +300,13 @@ func Plan(cfg Config, peers []netip.Addr) ([]string, error) {
 			steps = append(steps, fmt.Sprintf("注意：组策略下发了 %d 条 NRPT 规则，有它们时本机的规则不生效，.%s 的名字会解析不了", n, cfg.Domain))
 		}
 	}
-	steps = append(steps, "引擎经物理网卡收发（IP_UNICAST_IF），不改默认路由、别的 DNS、防火墙；停下时撤掉规则和网卡")
+	steps = append(steps,
+		"网卡起来后，把它所在的网络设成专用网络，和家里的 Wi-Fi 一样：Windows 给新网卡的是公用网络，防火墙什么都不放进来，连 ping 都不回。只改这一个网络，别的网络的类别不动",
+		fmt.Sprintf("加一条防火墙入站规则 %s：从 %s 发给 %s 的都放进来，只在专用、域网络上；放进来以前引擎的过滤已经挑过（谁、哪些端口）。别的防火墙规则不动", FirewallRule, cfg.Block, cfg.Self))
+	if firewallRuleExists() {
+		steps = append(steps, fmt.Sprintf("已经有一条 %s（以前的引擎没删掉）：先删掉再加", FirewallRule))
+	}
+	steps = append(steps, "引擎经物理网卡收发（IP_UNICAST_IF），不改默认路由、别的 DNS；停下时撤掉 NRPT 规则、防火墙规则和网卡。网络的类别留着：网卡的 GUID 是固定的，下次还是同一个网络")
 	return steps, nil
 }
 

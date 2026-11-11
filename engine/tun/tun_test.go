@@ -4,6 +4,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -36,7 +37,7 @@ func TestCheckBlock(t *testing.T) {
 // TestUndoRecordIsChecked: the undo record is acted on as root or SYSTEM;
 // one Deneb would not have written is refused whole, so a state directory
 // someone else can write cannot have the engine delete their choice of
-// file, route or NRPT rule (M7 review).
+// file, route, NRPT rule or firewall rule (M7 review).
 func TestUndoRecordIsChecked(t *testing.T) {
 	dir := t.TempDir()
 	old := resolverDir
@@ -52,6 +53,7 @@ func TestUndoRecordIsChecked(t *testing.T) {
 		{Interface: "en0", Route: netip.MustParsePrefix("10.77.0.0/16")},
 		{Interface: "utun9", Route: netip.MustParsePrefix("0.0.0.0/0")},
 		{NRPT: "{00000000-0000-0000-0000-000000000000}"},
+		{Firewall: "Remote Desktop - User Mode (TCP-In)"},
 	} {
 		if err := u.check(); err == nil {
 			t.Errorf("record accepted: %+v", u)
@@ -70,10 +72,29 @@ func TestUndoRecordIsChecked(t *testing.T) {
 	for _, u := range []Undo{
 		{Interface: "utun7", Route: netip.MustParsePrefix("10.77.0.0/16"), ResolverFile: filepath.Join(resolverDir, "deneb.internal"), ResolverBody: body},
 		{Interface: "deneb0", Route: netip.MustParsePrefix("10.77.0.0/16"), Resolved: true},
-		{Interface: "Deneb", Route: netip.MustParsePrefix("10.77.0.0/16"), NRPT: nrptRuleName},
+		{Interface: "Deneb", Route: netip.MustParsePrefix("10.77.0.0/16"), NRPT: nrptRuleName, Firewall: FirewallRule},
 	} {
 		if err := u.check(); err != nil {
 			t.Errorf("Deneb's own record refused: %v", err)
+		}
+	}
+}
+
+// TestFirewallRuleArgs: Deneb's inbound rule is only for this device's
+// address, from the block, on private and domain networks; and no argument
+// needs quoting on netsh's command line.
+func TestFirewallRuleArgs(t *testing.T) {
+	args := firewallRuleArgs(netip.MustParseAddr("10.48.1.5"), netip.MustParsePrefix("10.48.0.0/16"))
+	have := map[string]bool{}
+	for _, a := range args {
+		have[a] = true
+		if strings.ContainsAny(a, " \t\"") {
+			t.Errorf("argument %q would need quotes", a)
+		}
+	}
+	for _, want := range []string{"add", "rule", "name=Deneb-In", "dir=in", "action=allow", "localip=10.48.1.5", "remoteip=10.48.0.0/16", "profile=private,domain"} {
+		if !have[want] {
+			t.Errorf("no %q in %q", want, args)
 		}
 	}
 }

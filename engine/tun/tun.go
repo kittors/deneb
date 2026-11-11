@@ -51,6 +51,7 @@ type Undo struct {
 	ResolverBody string       `json:"resolverBody,omitempty"`
 	Resolved     bool         `json:"resolved,omitempty"` // Linux: systemd-resolved was given the domain for Interface
 	NRPT         string       `json:"nrpt,omitempty"`     // Windows: the NRPT rule's registry key
+	Firewall     string       `json:"firewall,omitempty"` // Windows: the inbound firewall rule's name
 }
 
 const undoFile = "kernel-undo.json"
@@ -62,6 +63,24 @@ var resolverDir = "/etc/resolver"
 // nrptRuleName is the registry key of Deneb's NRPT rule on Windows
 // (tun_windows.go), fixed so that it is found again after a crash.
 const nrptRuleName = `{8F3B6C2E-1D4A-4E7B-9A5C-DE0EB2026001}`
+
+// FirewallRule is the name of the inbound rule kernel mode adds to the
+// Windows firewall (inbound_windows.go): fixed, so that it is found again
+// after a crash, and by `denebd service uninstall` and undo.ps1.
+const FirewallRule = "Deneb-In"
+
+// firewallRuleArgs are netsh's arguments for Deneb's inbound rule: what
+// comes from the block to this device's address, any protocol, on private
+// and domain networks. No argument has a space in it, so none needs quotes
+// on netsh's command line.
+func firewallRuleArgs(self netip.Addr, block netip.Prefix) []string {
+	return []string{
+		"add", "rule", "name=" + FirewallRule, "dir=in", "action=allow",
+		"localip=" + self.String(), "remoteip=" + block.String(), "protocol=any",
+		"profile=private,domain", "enable=yes",
+		"description=让同一个Deneb网络里的设备连进这台电脑；连得进哪些端口由Deneb决定。Deneb停下时删掉。",
+	}
+}
 
 // ErrNoResolver: on Linux, systemd-resolved is not what the system asks for
 // names, so the domain could not be handed to the engine. The engine then
@@ -155,7 +174,7 @@ func CleanupStale(stateDir string, logf func(string, ...any)) {
 // check refuses an undo record Deneb would not have written: an
 // interface not named as Deneb names its own, a route other than an
 // address block, a resolver file outside /etc/resolver or not written by
-// Deneb, an NRPT rule other than Deneb's.
+// Deneb, an NRPT rule or a firewall rule other than Deneb's.
 func (u *Undo) check() error {
 	if u.Interface != "" && !strings.HasPrefix(u.Interface, "utun") && !strings.HasPrefix(u.Interface, "deneb") && u.Interface != "Deneb" {
 		return fmt.Errorf("interface %q", u.Interface)
@@ -170,6 +189,9 @@ func (u *Undo) check() error {
 	}
 	if u.NRPT != "" && u.NRPT != nrptRuleName {
 		return fmt.Errorf("NRPT rule %q", u.NRPT)
+	}
+	if u.Firewall != "" && u.Firewall != FirewallRule {
+		return fmt.Errorf("firewall rule %q", u.Firewall)
 	}
 	return nil
 }

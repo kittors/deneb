@@ -18,6 +18,7 @@ import (
 
 	"github.com/kittors/deneb/engine"
 	"github.com/kittors/deneb/engine/localapi/socket"
+	"github.com/kittors/deneb/engine/tun"
 )
 
 // serviceName is the Windows service: `sc query Deneb`.
@@ -475,6 +476,14 @@ func uninstallService(m *mgr.Mgr, purge bool) error {
 		if err := engine.UndoKernel(state, log.Printf); err != nil {
 			fmt.Printf("撤销残留：%v\n", err)
 		}
+	}
+	// Kernel mode's firewall rule, if one is left whatever the state
+	// directory: the engine removes it when it stops, and the undo record
+	// after a crash.
+	if removed, err := tun.RemoveFirewallRule(); err != nil {
+		fmt.Printf("防火墙规则 %s：%v\n", tun.FirewallRule, err)
+	} else if removed {
+		fmt.Printf("已删除防火墙规则 %s\n", tun.FirewallRule)
 	}
 	dir := installDir()
 	self, _ := os.Executable()

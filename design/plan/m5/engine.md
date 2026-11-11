@@ -1,7 +1,7 @@
 # M5 · 组网引擎线状态
 
 > 负责目录：`engine/`、`cmd/denebd/`、`test/topo/`、`deploy/linux/`。依据：实现计划 §3 M5 的 Windows、Linux 引擎部分，验收表 [m5-acceptance.md](../m5-acceptance.md) 的 w1–w3、l1–l2。
-> 最后更新：2026-11-09 23:50。
+> 最后更新：2026-11-11 09:50。
 
 ## 进度
 
@@ -10,7 +10,7 @@
 | l1 Linux 内核模式：tun 网卡、按对端 `/32` 的路由、过滤；开着 IP 转发时拦住借道的包 | ✅ colima 的 systemd 容器里，见「测试」 |
 | l2 systemd-resolved 的 `~deneb.internal`，没有就退回用户态；systemd 服务；服务器包 | ✅ 同上 |
 | w1 Windows 空跑检查 | ✅ 测试机上只读跑过，见「做法：Windows」 |
-| w2 Windows 内核模式 | 主会话装过两轮。MTU 第二轮验过了（NlMtu 1280）。拆成几块的大包 ping 收不到回应，是过滤器的问题，每个平台都有，23:2x 改好，等真机复测 |
+| w2 Windows 内核模式 | 主会话装过两轮。MTU 第二轮验过了（NlMtu 1280）。拆成几块的大包 ping 收不到回应，是过滤器的问题，每个平台都有，23:2x 改好，等真机复测。11-11 03:1x 主会话又查到：别的设备连不进来，因为网卡在公用网络上；03:5x 改好，07:45–07:55 真机验过（见「过程记录」11-11 03:4x） |
 | w3 Windows 撤销和服务 | ✅ 撤销通过；服务 23:1x 照「过程记录」的测法全过（主会话，`test/topo/.accept/m5-11092313-winsvc/`） |
 
 ## 做法：Linux
@@ -61,12 +61,13 @@
 
 ## 做法：Windows（`engine/tun/tun_windows.go`）
 
-- 网卡：Wintun（`wintun.dll` 放在 `denebd.exe` 旁边，wireguard-go 从那里加载），名字和描述都叫 Deneb，地址是本机的 `/32`，网卡上不设 DNS 服务器。
+- 网卡：Wintun（`wintun.dll` 放在 `denebd.exe` 旁边，wireguard-go 从那里加载），名字和描述都叫 Deneb，GUID 固定，地址是本机的 `/32`，网卡上不设 DNS 服务器。
 - MTU：开网卡时把 IPv4、IPv6 的 IP 层 MTU（NlMtu）都设成 1280；机器上关了 IPv6 就只设 IPv4。wireguard-go 建 Wintun 网卡时只记下 MTU，不设到网卡上，网卡默认是 65535。那样 Windows 不分片，大包整个交给引擎，隧道带不过去就丢了。
 - 路由：每个对端一条 `/32`，DNS 地址一条，同步方式和 Linux 一样（`SetPeers`）。
 - DNS：一条 NRPT 规则，注册表 `SYSTEM\CurrentControlSet\Services\Dnscache\Parameters\DnsPolicyConfig\{8F3B6C2E-1D4A-4E7B-9A5C-DE0EB2026001}`，只管 `.deneb.internal`，指向 DNS 地址；写完清一次 DNS 缓存。别的规则不动。组策略下发了 NRPT 时本机规则不生效，空跑会提醒。
+- 让网络里的设备连进来：网卡所在的网络设成专用；加一条防火墙入站规则 Deneb-In，只放进从地址段发给本机地址的包，只在专用、域网络上（见「过程记录」11-11 03:4x）。
 - 绑物理网卡：UDP 用 `IP_UNICAST_IF` 绑在默认路由的网卡上（M1 起就有，`engine/bind`）；Tailscale、Wintun、Deneb 的网卡不当物理网卡。
-- 停下时删 NRPT 规则、关网卡（路由跟着网卡走）。崩溃时网卡随进程消失（Wintun 0.14 把网卡和创建它的句柄绑在一起），下次启动按记录删 NRPT 规则。
+- 停下时删防火墙规则和 NRPT 规则、关网卡（路由跟着网卡走）。崩溃时网卡随进程消失（Wintun 0.14 把网卡和创建它的句柄绑在一起），下次启动按记录删 NRPT 规则和防火墙规则。网络的类别留着。
 - Windows 服务（`denebd service install [run 的参数] | uninstall`，要管理员）：
   - 服务名 Deneb，以 LocalSystem 跑内核模式，开机自动启动；
   - 状态默认在 `%ProgramData%\Deneb`，`-state` 可以指到别处，比如原来用户态引擎的状态目录，就还是同一台设备；
@@ -76,8 +77,8 @@
   - 崩溃后 2 秒重启；
   - 以 SYSTEM 运行时，本机接口的命名管道也放行管理员组，管理员的 `deneb` 命令能用；
   - 还放行桌面的那个用户，普通权限打开的窗口就能连上服务（`-allow-user`，SID 或 `电脑名\用户名`，和 macOS、Linux 的 `-allow-uid` 对应）。管理员账号的窗口没提权时，令牌里的管理员组只用于拒绝，所以要单独放行这个用户。`service install` 没给 `-allow-user` 时自己找：先找装服务的程序所在会话里登录的用户（用管理员密码提权装的，也找得到原来那个人），找不到再找控制台前的用户。经 ssh 装时，程序所在的会话一般没有登录桌面的用户，就落到控制台前的用户；两处都找不到，就只放行管理员，并且说一声。
-- 撤销脚本 `deploy/windows/undo.ps1`：删服务、删 Deneb 的 NRPT 规则、删名叫 Deneb 的网卡；`-Purge` 连状态一起删。Tailscale、别的 NRPT 规则、别的网卡、防火墙都不碰。
-- 空跑 `denebd preflight -state <状态目录>`：查管理员、`wintun.dll`、有没有同名网卡、地址段里有没有别人的路由和地址、Tailscale 的路由、已有的 NRPT 规则和组策略，再列出会改的三样。
+- 撤销脚本 `deploy/windows/undo.ps1`：删服务、删 Deneb 的 NRPT 规则和防火墙规则 Deneb-In、删名叫 Deneb 的网卡；`-Purge` 连状态一起删。Tailscale、别的 NRPT 规则、别的网卡、别的防火墙规则、网络的类别都不碰。
+- 空跑 `denebd preflight -state <状态目录>`：查管理员、`wintun.dll`、有没有同名网卡、地址段里有没有别人的路由和地址、Tailscale 的路由、已有的 NRPT 规则和组策略，再列出会改的五样：网卡、路由、NRPT 规则、网络类别、防火墙规则。
 
 **w1（11-09 21:0x，测试机 DESKTOP-LF6684K，只读）**：新版 `m5-11092106-win` 放在测试机的 `%USERPROFILE%\deneb\m5-preflight\`（和正在跑的引擎分开，没碰它），对着正在跑的引擎的状态目录空跑：
 
@@ -288,3 +289,81 @@ go run ./test/topo -only linux-debian -m5 debian                # 只跑一个
   - 闲一会儿再 ping，不丢；
   - `in:fragment-without-head` 不再涨；
   - `out:malformed` 不再出现，换成 `ipv6`、`protocol`。
+
+### 11-11 03:4x：内核模式下别的设备连不进台式机（主会话测 M6 i4 时查到）
+
+现象（主会话 03:12–03:13，只读查的）：服务在内核模式跑时，从这台 Mac `denebd ping desktop` 发 3 收 0，按 IP 也不通，status 却是"直接连上"。Mac 连台式机的 22 端口是通的，因为 OpenSSH 自带一条所有网络类别都放行的规则。换回用户态引擎，ping 马上就通。
+
+**原因**：
+- Windows 把新网卡放进一个新网络，类别是公用。公用网络上，防火墙不放进任何没有规则的连接，连 ping 也不回。
+- 用户在 Windows 问"允许访问"时点了允许，默认也只勾专用网络，公用网络上还会多一条挡住这个程序的规则。所以就算点了允许，在台式机上开房间的游戏照样连不进来，文件共享、远程桌面也一样。
+- 每启动一次就多一个网络，测试机上已经到"Deneb 12"。原因是不给 GUID 时，Wintun 每次随机挑一个，Windows 就把它当成新网络。
+
+**改法**（照 Tailscale 对它网卡的做法）：
+- 网卡的 GUID 固定（`adapterGUID`）。Windows 每次认出的都是同一个网络，不再多出新的，设过的类别也留着。
+- 网卡起来后，经 Network List Manager（COM 的 `INetworkListManager`）找到网卡所在的网络。它是公用的，而且上面只有这一张网卡，就设成专用，和家里的 Wi-Fi 一样。别的网络不动。
+  - Windows 要过几秒才把新网卡放进网络，所以每秒查一次，最多查 30 s；
+  - 这一步不挡引擎启动。
+- 加一条防火墙入站规则 Deneb-In（`netsh advfirewall`）：
+  - 只放进从地址段（`10.48.0.0/16`）发给本机地址（`10.48.1.5`）的包，什么协议都行；
+  - 只在专用、域网络上生效：组策略把网络定成公用时，就照公用办；
+  - 发给本机这个地址的包只会从 Deneb 网卡进来，因为 Windows 收包用的是强主机模型。放进来以前，引擎的过滤已经挑过谁能发、能发到哪些端口；
+  - 先删掉同名的再加，免得两条并存；
+  - netsh 有时要很久，所以每次调用限时 30 s，也不挡引擎启动。
+- 撤销：
+  - 引擎停下时删规则；
+  - 撤销记录多一项 `firewall`，崩溃以后由下次启动或 `denebd service uninstall` 照记录删；
+  - `service uninstall` 不管有没有记录都再删一次；
+  - `undo.ps1` 也删；
+  - 网络的类别留着：网卡没了，这个网络就不在用了；下次装回来还是同一个网络，还是专用。
+- 空跑（w1）多列这两样；留着以前的 Deneb-In 时也会说。
+
+**测试**：
+- `TestUndoRecordIsChecked` 加了防火墙规则一项：名字不是 Deneb-In 的，整条记录都不认；
+- `TestFirewallRuleArgs`：规则只给本机地址、只放地址段来的、只在专用和域网络上，每个参数都不用加引号；
+- Windows amd64、arm64 的 `go vet` 都过，三个平台都编得过；
+- 方法表的位置对着 Wine 的 `netlistmgr.idl` 逐个核过。
+
+**测试机上只读跑过**（03:42–03:43，新版 `m5fw-11110338`，放在 `%USERPROFILE%\deneb\m5fw\`）：
+- `TestNetworksRead` 用同一套 COM 调用，读出了每张开着的网卡所在的网络：Tailscale 的是专用，WLAN 的是公用，上面都只有一张网卡。没崩，什么也没改。
+- 空跑列出了新加的两样，测试机上也没有留着的 Deneb-In。
+
+**真机验过了**（07:45–07:55，用户点头以后）：
+- 做法：
+  - 脚本和每步的输出在 `test/topo/.accept/m5fw-11110338-win/`；
+  - 先建了后备任务，到 25 分钟时以 SYSTEM 身份跑 `undo.ps1`；
+  - 停掉用户态引擎，照 m8 的参数装服务；
+  - Mac 这边用的是自己的用户态引擎，经 SOCKS 测。
+- 装服务：
+  - 内核模式起来后 0 s，网卡所在的网络就从公用改成了专用。这个网络是 "Deneb 13"，GUID 固定以后第一次装出来的那个；
+  - Deneb-In 只有一条：本机 `10.48.1.5`，对方 `10.48.0.0/16`，专用和域网络，任何协议；
+  - Tailscale（专用）、WLAN（公用）这两个网络没动。
+- 从 Mac 连：
+  - `denebd ping desktop` 发 4 收 4，直连，8 ms。改之前是发 3 收 0。
+  - 7000 连得进来，10 ms 连上，17 ms 收到第一行。
+    - 在 7000 上监听的是引擎自己的测试服务（`engine/testhooks.go`，只有 denebtest 版才有）。内核模式下它是一个真的 Windows 套接字，属于 `C:\Program Files\Deneb\denebd.exe`，防火墙里没有放行这个程序的规则。
+    - 03:43 那次用户态的基线也是它在回。
+  - 7001、22 连不上：被引擎的过滤丢掉了，日志是 `drop in service-not-open`。
+    - 7001 上测试机临时开着一个监听；
+    - 这两个端口都没在「周末联机」里开放。
+    - 所以 Deneb-In 不分端口，进得来的也只有开放了的端口。
+  - 用 nc 测时要注意：标准输入是空的，nc 一连上就退出，一行也收不到。改用一段手写的 SOCKS 探针测。
+- 重启服务：停下时删掉规则，起来后再加。网络还是 "Deneb 13"、专用，`Deneb*` 网络数没涨。
+- 杀掉服务进程：
+  - 服务管理器拉起来以后，引擎照撤销记录先删掉留下的规则，再加一条；
+  - Mac ping 4/4，7000 照样通；
+  - 网卡起来后约 1.2 s 才加上规则（netsh 要这么久），这段时间里连不进来。
+- `service uninstall -purge`：规则在服务停下时已经由引擎删掉了。服务和 `ProgramData\Deneb` 都删了，Deneb 网络断开。
+- 再装一次，关掉服务的失败重启，再杀进程：
+  - 留下了规则和 NRPT，网卡随进程一起没了；
+  - `undo.ps1 -Purge` 删掉了服务、`Program Files\Deneb`、NRPT、Deneb-In 和 `ProgramData\Deneb`。
+- 和装之前（07:42 的快照）比：
+  - 网卡、连着的网络和它们的类别、防火墙规则数（724）、NRPT、10.48 的路由、服务，都一样；
+  - 只多一个记住的网络 "Deneb 13"，类别是专用，没有网卡连着。这是有意留的，下次装还是这个网络。以前留下的 12 个照旧在。
+- 收尾晚了：
+  - `undo.ps1` 跑完以后，这台 Mac 换了局域网，走局域网的 ssh 断了，结果没传回来；
+  - 后备任务 08:10 照计划跑了一次，结果 0，那时已经没东西可撤；
+  - 09:42 才经 Tailscale 起回用户态引擎、删掉后备任务。测试机上的用户态引擎 07:45–09:42 一直没跑。
+- 测试机上留下的东西：
+  - `%USERPROFILE%\deneb\m5fw\`：新版、脚本、快照，还有临时监听用过的 `tick.ps1`。这些都已经停了；
+  - `%USERPROFILE%\deneb\undo.ps1` 是新版，旧的留在 `undo-before-m5fw.ps1`。
