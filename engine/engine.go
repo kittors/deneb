@@ -56,7 +56,11 @@ type Options struct {
 	Port       uint16 // UDP port; 0 means the saved one, or any
 	// BindInterface is "auto" (the default route's interface), "none", or
 	// an interface name.
-	BindInterface   string
+	BindInterface string
+	// RelayOnly: no UDP port on the network, peers through relays only
+	// (magicsock.Options.RelayOnly). The Windows window starts its own
+	// engine so, which Windows would otherwise ask the person about.
+	RelayOnly       bool
 	SOCKS           string // user-space mode: SOCKS5 for local apps, "" for none
 	Heartbeat       time.Duration
 	Trust           time.Duration
@@ -281,6 +285,7 @@ func New(opts Options) (*Engine, error) {
 	ms, err := magicsock.New(e.nodePriv, e.discoPriv, magicsock.Options{
 		Port:             port,
 		BindInterface:    ifname,
+		RelayOnly:        opts.RelayOnly,
 		Heartbeat:        opts.Heartbeat,
 		Trust:            opts.Trust,
 		Idle:             opts.Idle,
@@ -308,7 +313,7 @@ func New(opts Options) (*Engine, error) {
 	if _, berr := ms.BoundInterface(); berr != nil {
 		e.problem("bind", "没能把连接绑到物理网卡，改走系统路由："+berr.Error())
 	}
-	if e.st.Port != ms.Port() {
+	if !opts.RelayOnly && e.st.Port != ms.Port() { // a relay-only port is on the loopback address
 		e.st.Port = ms.Port()
 		e.saveState()
 	}

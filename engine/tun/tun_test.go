@@ -98,3 +98,28 @@ func TestFirewallRuleArgs(t *testing.T) {
 		}
 	}
 }
+
+// TestProcessRuleArgs: the service engine's rule is UDP to that program
+// only, on every kind of network. The program's path, with its space, is
+// one argument; no other argument needs quoting.
+func TestProcessRuleArgs(t *testing.T) {
+	exe := `C:\Program Files\Deneb\denebd.exe`
+	args := processRuleArgs(exe)
+	have := map[string]bool{}
+	for _, a := range args {
+		have[a] = true
+		if a != "program="+exe && strings.ContainsAny(a, " \t\"") {
+			t.Errorf("argument %q would need quotes", a)
+		}
+	}
+	for _, want := range []string{"add", "rule", "name=Deneb-Process", "dir=in", "action=allow", "program=" + exe, "protocol=udp", "profile=any"} {
+		if !have[want] {
+			t.Errorf("no %q in %q", want, args)
+		}
+	}
+	for _, a := range args {
+		if strings.HasPrefix(a, "localport=") || strings.HasPrefix(a, "remoteip=") {
+			t.Errorf("%q: the engine's port changes, and peers are anywhere", a)
+		}
+	}
+}

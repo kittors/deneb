@@ -211,6 +211,9 @@ type EngineInfo struct {
 	// Watchers is how many /v1/watch streams are open: the desktop client
 	// holds one while its window is open, so a script can wait for it.
 	Watchers int `json:"watchers"`
+	// RelayOnly: no UDP port on the network, peers through relays only
+	// (the Windows window's own engine; ListenPort is 0).
+	RelayOnly bool `json:"relayOnly,omitempty"`
 }
 
 // Problem is something the person may need to know, in one sentence.

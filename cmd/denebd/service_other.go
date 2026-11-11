@@ -20,3 +20,6 @@ func isAdmin() bool { return os.Geteuid() == 0 }
 // systemServiceRunning: only Windows has a service that takes the user's
 // identity (`service install -import-state`).
 func systemServiceRunning() bool { return false }
+
+// preflightService: only Windows has `service install`.
+func preflightService() []string { return nil }

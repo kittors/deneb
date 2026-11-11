@@ -319,6 +319,9 @@ func (c *Conn) sendPing(p *peerState, to netip.AddrPort) { c.ping(p, to, false) 
 func (c *Conn) sendFastPing(p *peerState, to netip.AddrPort) { c.ping(p, to, true) }
 
 func (c *Conn) ping(p *peerState, to netip.AddrPort, fast bool) {
+	if c.opts.RelayOnly {
+		return // no direct path is tried
+	}
 	tx := newTx()
 	c.mu.Lock()
 	c.recordLocked(p, probe{tx: tx, to: to, fast: fast, at: time.Now()})

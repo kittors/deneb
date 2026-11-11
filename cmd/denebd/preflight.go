@@ -26,7 +26,7 @@ func cmdPreflight(args []string) error {
 	if err != nil {
 		return fmt.Errorf("内核模式起不来：%w", err)
 	}
-	for _, s := range steps {
+	for _, s := range append(steps, preflightService()...) {
 		fmt.Println("- " + s)
 	}
 	fmt.Println("检查通过。")

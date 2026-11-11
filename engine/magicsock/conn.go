@@ -50,6 +50,13 @@ type Options struct {
 	BindInterface string
 	Heartbeat     time.Duration // how often to ping the direct path (M1: 1 s)
 	Trust         time.Duration // how long a direct path stays trusted without a pong (M1: 2.5 s)
+	// RelayOnly opens no UDP port on the network. The socket is on the
+	// loopback address; there is no STUN, no endpoint is offered and no
+	// direct path is tried, so peers are reached through relays only. It is
+	// for the Windows window's own engine: Windows asks the person whether
+	// to let in a program that opens a port, and a program in the person's
+	// own folder has no firewall rule (the service's engine has one).
+	RelayOnly bool
 	// Hold is how long a direct path that stopped answering keeps its
 	// place. From Trust to Hold after its last pong, packets go both direct
 	// and through the relay, and the path shown stays direct; only after
@@ -316,6 +323,15 @@ func (c *Conn) listen(port uint16, ifname string) (*net.UDPConn, error) {
 // listenOn opens a UDP socket pinned to ifname if it can; bound is the
 // interface it got pinned to ("" for none) and bindErr why not.
 func (c *Conn) listenOn(port uint16, ifname string) (pc *net.UDPConn, bound string, bindErr, err error) {
+	if c.opts.RelayOnly {
+		// Windows does not ask about the loopback address. The socket is
+		// there so that nothing else has to check for one.
+		p, err := net.ListenPacket("udp4", "127.0.0.1:0")
+		if err != nil {
+			return nil, "", nil, err
+		}
+		return p.(*net.UDPConn), "", nil, nil
+	}
 	lc := net.ListenConfig{}
 	if ifname != "" {
 		ctl, cerr := bind.Control(ifname)
@@ -1378,6 +1394,9 @@ func (c *Conn) stunLoop() {
 }
 
 func (c *Conn) stunOnce() {
+	if c.opts.RelayOnly {
+		return // a public address is for direct paths
+	}
 	c.mu.Lock()
 	type target struct {
 		id   proto.RelayID
@@ -1433,6 +1452,9 @@ func (c *Conn) handleSTUN(b []byte) {
 // 198.18/15) and of container bridges are left out: offering them only makes
 // peers ping into someone else's network.
 func (c *Conn) Endpoints() []netip.AddrPort {
+	if c.opts.RelayOnly {
+		return nil // nowhere: the relays only
+	}
 	var out []netip.AddrPort
 	seen := map[netip.AddrPort]bool{}
 	add := func(ap netip.AddrPort) {

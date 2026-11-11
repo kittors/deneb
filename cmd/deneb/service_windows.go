@@ -17,6 +17,15 @@ import (
 // Windows's question.
 var errDeclined = errors.New("not allowed as an administrator")
 
+// ownEngineArgs is how the window starts its own engine, the one before
+// the service is installed: relay-only, with no UDP port on the network.
+// A program in the person's folder that opens one makes Windows ask, on
+// the first run, whether to let it in from public and private networks;
+// unanswered, Windows also adds rules that block it. The service's engine
+// opens one with its own firewall rule (Deneb-Process, added when the
+// service is installed), so direct paths come with the adapter.
+var ownEngineArgs = []string{"run", "-relay-only"}
+
 // installService installs the engine at exe as the Windows service, or
 // installs it again over the one there (M6 i2, as M7 changed it):
 // `denebd.exe service install` copies it, with the wintun.dll beside it, to

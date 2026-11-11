@@ -71,6 +71,9 @@ func (c *Conn) isLocal(a netip.Addr) bool {
 
 // writeTo sends b to the peer at to, noting a refusal for the local network.
 func (c *Conn) writeTo(p *peerState, b []byte, to netip.AddrPort) error {
+	if c.opts.RelayOnly {
+		return nil // nothing goes direct; the socket is on the loopback address
+	}
 	var err error
 	if tl := c.testLocal.Load(); tl != nil && tl.refuse && tl.pfx.Contains(to.Addr()) {
 		err = &net.OpError{Op: "write", Net: "udp4", Err: syscall.EHOSTUNREACH}

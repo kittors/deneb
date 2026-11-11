@@ -1,7 +1,7 @@
 # M5 · 组网引擎线状态
 
 > 负责目录：`engine/`、`cmd/denebd/`、`test/topo/`、`deploy/linux/`。依据：实现计划 §3 M5 的 Windows、Linux 引擎部分，验收表 [m5-acceptance.md](../m5-acceptance.md) 的 w1–w3、l1–l2。
-> 最后更新：2026-11-11 09:50。
+> 最后更新：2026-11-11 21:55。
 
 ## 进度
 
@@ -66,6 +66,8 @@
 - 路由：每个对端一条 `/32`，DNS 地址一条，同步方式和 Linux 一样（`SetPeers`）。
 - DNS：一条 NRPT 规则，注册表 `SYSTEM\CurrentControlSet\Services\Dnscache\Parameters\DnsPolicyConfig\{8F3B6C2E-1D4A-4E7B-9A5C-DE0EB2026001}`，只管 `.deneb.internal`，指向 DNS 地址；写完清一次 DNS 缓存。别的规则不动。组策略下发了 NRPT 时本机规则不生效，空跑会提醒。
 - 让网络里的设备连进来：网卡所在的网络设成专用；加一条防火墙入站规则 Deneb-In，只放进从地址段发给本机地址的包，只在专用、域网络上（见「过程记录」11-11 03:4x）。
+- 直连进得来：`service install` 给服务的引擎加一条入站规则 Deneb-Process：发给 `%ProgramFiles%\Deneb\denebd.exe` 的 UDP 都放进来，所有网络类别都算，和 Tailscale 的 Tailscale-Process 一样。服务装着它就在，`service uninstall`、卸载程序、`undo.ps1` 删它（见「过程记录」11-11 21:4x）。
+- 第一次打开不弹防火墙框：窗口自己起的引擎带 `-relay-only`，UDP 只开在回环地址上，只经中转。装上服务以后由服务的引擎接手，直连照常（同上）。
 - 绑物理网卡：UDP 用 `IP_UNICAST_IF` 绑在默认路由的网卡上（M1 起就有，`engine/bind`）；Tailscale、Wintun、Deneb 的网卡不当物理网卡。
 - 停下时删防火墙规则和 NRPT 规则、关网卡（路由跟着网卡走）。崩溃时网卡随进程消失（Wintun 0.14 把网卡和创建它的句柄绑在一起），下次启动按记录删 NRPT 规则和防火墙规则。网络的类别留着。
 - Windows 服务（`denebd service install [run 的参数] | uninstall`，要管理员）：
@@ -77,8 +79,8 @@
   - 崩溃后 2 秒重启；
   - 以 SYSTEM 运行时，本机接口的命名管道也放行管理员组，管理员的 `deneb` 命令能用；
   - 还放行桌面的那个用户，普通权限打开的窗口就能连上服务（`-allow-user`，SID 或 `电脑名\用户名`，和 macOS、Linux 的 `-allow-uid` 对应）。管理员账号的窗口没提权时，令牌里的管理员组只用于拒绝，所以要单独放行这个用户。`service install` 没给 `-allow-user` 时自己找：先找装服务的程序所在会话里登录的用户（用管理员密码提权装的，也找得到原来那个人），找不到再找控制台前的用户。经 ssh 装时，程序所在的会话一般没有登录桌面的用户，就落到控制台前的用户；两处都找不到，就只放行管理员，并且说一声。
-- 撤销脚本 `deploy/windows/undo.ps1`：删服务、删 Deneb 的 NRPT 规则和防火墙规则 Deneb-In、删名叫 Deneb 的网卡；`-Purge` 连状态一起删。Tailscale、别的 NRPT 规则、别的网卡、别的防火墙规则、网络的类别都不碰。
-- 空跑 `denebd preflight -state <状态目录>`：查管理员、`wintun.dll`、有没有同名网卡、地址段里有没有别人的路由和地址、Tailscale 的路由、已有的 NRPT 规则和组策略，再列出会改的五样：网卡、路由、NRPT 规则、网络类别、防火墙规则。
+- 撤销脚本 `deploy/windows/undo.ps1`：删服务、删 Deneb 的 NRPT 规则和防火墙规则 Deneb-In、Deneb-Process、删名叫 Deneb 的网卡；`-Purge` 连状态一起删。Tailscale、别的 NRPT 规则、别的网卡、别的防火墙规则、网络的类别都不碰。
+- 空跑 `denebd preflight -state <状态目录>`：查管理员、`wintun.dll`、有没有同名网卡、地址段里有没有别人的路由和地址、Tailscale 的路由、已有的 NRPT 规则和组策略，再列出会改的五样：网卡、路由、NRPT 规则、网络类别、防火墙规则 Deneb-In；还有装服务时加的 Deneb-Process。
 
 **w1（11-09 21:0x，测试机 DESKTOP-LF6684K，只读）**：新版 `m5-11092106-win` 放在测试机的 `%USERPROFILE%\deneb\m5-preflight\`（和正在跑的引擎分开，没碰它），对着正在跑的引擎的状态目录空跑：
 
@@ -367,3 +369,61 @@ go run ./test/topo -only linux-debian -m5 debian                # 只跑一个
 - 测试机上留下的东西：
   - `%USERPROFILE%\deneb\m5fw\`：新版、脚本、快照，还有临时监听用过的 `tick.ps1`。这些都已经停了；
   - `%USERPROFILE%\deneb\undo.ps1` 是新版，旧的留在 `undo-before-m5fw.ps1`。
+
+### 11-11 21:4x：Windows 第一次打开时弹防火墙框（主会话 a1 查到）
+
+现象（主会话 04:0x，测试机，407ed73 打的正式包）：
+- 从开始菜单打开 Deneb，窗口起了自己的用户态引擎 `%LOCALAPPDATA%\Programs\Deneb\denebd.exe`。
+- 它一监听，Windows 安全中心就弹出"是否要允许公共网络和专用网络访问此应用？……发布者 未知"，同时给这个路径建了两条入站阻止规则（TCP、UDP，专用和公用）。
+- 普通人第一次打开就会看到这个框。
+
+**原因**：
+- 引擎的 UDP 在所有地址上监听（`magicsock` 的 `udp4 :端口`），直连就靠它。
+- 在桌面会话里起、又没有防火墙规则的程序这样一监听，Windows 就问。框没人答，Windows 就建阻止规则。
+- 服务里的引擎在会话 0，不会弹框。它的入站 UDP 却也没有规则放行，别人先发来的包进不来，只能等它先往外发过、打出洞来才行。
+- 经 ssh 起的测试引擎也在会话 0，所以以前没弹过。
+
+**改法**（用户 11-11 照建议定的）：
+- 窗口自己起的引擎只经中转（Windows 上 `denebd run -relay-only`，`cmd/deneb` 的 `ownEngineArgs`）：
+  - UDP 只开在 `127.0.0.1` 上，Windows 不问回环地址；
+  - 不做 STUN，不报直连地址，不往对端的直连地址发 ping。对端只能经中转连这台；
+  - 原来存的端口不改，装服务带过去还用它；
+  - `denebd status` 写"只经中转，不开 UDP 端口"，状态里 `engine.relayOnly` 为真。
+  - 这段时间不长：第一次打开的引导里就装网卡（服务），装好后由服务的引擎接手，直连照常。只是用户一直不装网卡的话，就一直只经中转。
+- 服务的引擎有自己的规则 Deneb-Process，和 Tailscale-Process 一样：
+  - 发给 `%ProgramFiles%\Deneb\denebd.exe` 的 UDP 都放进来，所有网络类别都算，因为物理网络常常是公用的；
+  - 不限端口（端口会换），不限来源（对端在哪都有）。能进来的只有 WireGuard 和 disco 的包，引擎认不出的都丢掉；
+  - `service install` 加它：在建好服务之后、启动之前，先删同名的再加。加不上只记一笔，不让安装失败，因为中转照常；
+  - 服务装着它就在。崩溃以后不用撤：服务管理器会重启引擎，引擎还要用它；
+  - `service uninstall` 删它，服务已经没了也删；
+  - 卸载程序：有服务时照旧提权跑 `service uninstall`。没有服务、只剩 Deneb-Process 或 Deneb-In 时（服务被别的办法删了）也跑。查规则不用管理员权限；
+  - `undo.ps1` 按名字删 Deneb-In 和 Deneb-Process；
+  - 空跑多列一条，已经有了也会说。
+
+**测试**：
+- `TestRelayOnly`：给了端口和网卡也只开在回环地址上，不绑网卡；静态地址也不报；不发直连 ping；换网卡重新开以后还在回环地址上。
+- `TestProcessRuleArgs`：只放 UDP、只给那个程序、所有网络类别；程序路径是一个参数，别的参数不用加引号。
+- 受影响的 9 个包的单测都过。Windows amd64、arm64 的 `go vet` 都过（引擎带不带 denebtest 都试了，窗口只试了 amd64）。窗口和引擎在三个平台上都编得过。
+- 正式包用 `deploy/package.sh windows` 从工作区打出，是 `deneb-setup-0.1.0-amd64.exe`，sha256 `91568e72…`。包里的 `denebd.exe`、`Deneb.exe` 都带 `-relay-only`。
+
+**真机验过了**（21:58–22:04，用户在引擎线会话里点头以后；测试机经 Tailscale 连；脚本和每步的输出在 `test/topo/.accept/m5proc-1111-win/`）：
+- 先删掉了以前测试时弹框建出来的 4 条 denebd.exe 阻止规则（`deneb\m5ui\` 2 条，`%LOCALAPPDATA%\Programs\Deneb\` 2 条），再存装之前的快照。
+- 静默安装正式包，停掉测试引擎（开始时它就没在跑）。空跑多列了 Deneb-Process 这一条。
+- 照 a1 的办法，在桌面会话里打开 Deneb：
+  - 窗口起的引擎在会话 1，命令行是 `denebd.exe run -relay-only`；
+  - 它只开了一个 UDP，在 `127.0.0.1` 上；监听的 TCP 只有 SOCKS 的 `127.0.0.1:41080`；
+  - 已登录，还是同一台设备，`relayOnly` 为真；
+  - 打开后过 1 分钟、2.5 分钟各看一次：防火墙规则数没变，没有新的指向 denebd 的规则；
+  - 两张整屏截图上都没有弹框，窗口里每台设备都是"经香港中转"。
+- 用命令行 `service install -import-state` 装服务（就是窗口里那一步，只是不经 UAC）：
+  - 输出了"已加防火墙规则 Deneb-Process"；
+  - Deneb-Process 只有一条：入站放行，所有网络类别，程序 `C:\Program Files\Deneb\denebd.exe`（带空格的路径 netsh 读对了），只 UDP，不限端口和来源；
+  - 服务的引擎在内核模式、已登录，还是同一台设备，UDP 开在 `0.0.0.0:41722`。Deneb-In 和专用网络都照旧；
+  - 服务在跑时再空跑，报"已有网卡占着 10.48.1.5"。这是空跑本来就有的检查，所以"已经有一条 Deneb-Process"那句没走到。
+- Mac 上 `denebd ping desktop`：发 4 收 4，直连，平均 7.9 ms。
+- 卸载程序（`Uninstall.exe /S`，19 s）：服务、Deneb-Process、Deneb-In、`Program Files\Deneb` 和程序都没了。服务的状态照设计留着，在测试机上手动删了。
+- 再装一次，用 `sc delete` 删掉服务、只留规则，再跑卸载程序（19 s）：Deneb-Process 和 `Program Files\Deneb` 都删了。
+- 照 start.ps1 起回测试引擎（已登录，还是同一台设备），删了后备任务。装之前（删完 4 条以后）和卸载后的快照完全一样。
+- 测试机上留着 `%USERPROFILE%\deneb\m5proc\`：脚本、安装包、截图，都已停。
+
+**还要注意**：装网卡以前，窗口里每台设备都"经中转"。a1 查到：已登录时首次引导里出不来"装网卡"。这时用户会一直只走中转，要客户端那边接住。

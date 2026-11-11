@@ -57,6 +57,7 @@ func runEngine(args []string, check bool) error {
 	mode := fs.String("mode", "userspace", "userspace, or kernel (root: an interface and routes; macOS /etc/resolver, Linux systemd-resolved)")
 	port := fs.Uint("port", 0, "UDP port (0: the last one used, or any)")
 	bindIf := fs.String("bind-if", "auto", "pin Internet traffic to this interface: auto (the default route's), none, or a name")
+	relayOnly := fs.Bool("relay-only", false, "open no UDP port on the network; peers through relays only (the Windows window's own engine: Windows would ask the person about a program that opens one)")
 	socks := fs.String("socks", "127.0.0.1:41080", "user-space mode: SOCKS5 for local programs (\"\" for none)")
 	hb := fs.Duration("heartbeat", 0, "direct-path heartbeat (default 1s)")
 	trust := fs.Duration("trust", 0, "how long a direct path is trusted without a pong (default 2.5s)")
@@ -124,7 +125,7 @@ func runEngine(args []string, check bool) error {
 	}
 	e, err := engine.New(engine.Options{
 		StateDir: *stateDir, ControlURL: *control, ControlPin: *pin, Mode: m,
-		Port: uint16(*port), BindInterface: *bindIf, SOCKS: *socks,
+		Port: uint16(*port), BindInterface: *bindIf, RelayOnly: *relayOnly, SOCKS: *socks,
 		Heartbeat: *hb, Trust: *trust, Idle: *idle, HomeRelay: proto.RelayID(*homeRelay), RelayIdle: *relayIdle, PathByLoss: *pathByLoss, DupSmall: *dupSmall, Hostname: *hostname, DisplayName: *display, Kind: proto.DeviceKind(*kind),
 		RelayRoots: roots, StaticEndpoints: eps, UserView: *userView, Version: version, LockWait: *waitLock,
 		SelfUpdate: serviceSelfUpdate(),

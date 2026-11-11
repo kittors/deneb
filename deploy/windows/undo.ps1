@@ -2,8 +2,9 @@
 # machine (M5 w3). Run as administrator:
 #   powershell -ExecutionPolicy Bypass -File undo.ps1 [-Purge]
 # Removes: the Deneb service and its engine in %ProgramFiles%\Deneb, Deneb's
-# NRPT rule, Deneb's inbound firewall rule (Deneb-In), an adapter named
-# Deneb (with its routes). -Purge also removes the state (keys, network
+# NRPT rule, Deneb's inbound firewall rules (Deneb-In for the adapter,
+# Deneb-Process for the service's engine), an adapter named Deneb (with
+# its routes). -Purge also removes the state (keys, network
 # map, log) in %ProgramData%\Deneb; a service installed with -state
 # elsewhere (the window's: %LOCALAPPDATA%\Deneb) keeps it there. Leaves
 # alone: Tailscale, other NRPT rules, other adapters, the firewall's other
@@ -34,12 +35,15 @@ if (Test-Path $key) {
     Clear-DnsClientCache
     Write-Output "removed Deneb's NRPT rule $rule"
 }
-# Kernel mode removes its firewall rule when it stops; one is left only
-# when the engine was killed.
-$fw = @(Get-NetFirewallRule -DisplayName 'Deneb-In' -ErrorAction SilentlyContinue)
-if ($fw.Count -gt 0) {
-    $fw | Remove-NetFirewallRule
-    Write-Output "removed the firewall rule Deneb-In ($($fw.Count))"
+# Kernel mode removes Deneb-In when it stops; one is left only when the
+# engine was killed. Deneb-Process stays as long as the service is
+# installed.
+foreach ($name in 'Deneb-In', 'Deneb-Process') {
+    $fw = @(Get-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue)
+    if ($fw.Count -gt 0) {
+        $fw | Remove-NetFirewallRule
+        Write-Output "removed the firewall rule $name ($($fw.Count))"
+    }
 }
 $adapter = Get-NetAdapter -Name Deneb -ErrorAction SilentlyContinue
 if ($adapter) {
@@ -56,4 +60,4 @@ if ($left) {
     Write-Output 'other NRPT rules still name .deneb.internal (not Deneb''s; left alone):'
     $left | Format-Table Name, Namespace, NameServers
 }
-Write-Output 'done. Get-NetAdapter, Get-DnsClientNrptRule, route print and Get-NetFirewallRule -DisplayName Deneb-In should match what they showed before.'
+Write-Output 'done. Get-NetAdapter, Get-DnsClientNrptRule, route print and Get-NetFirewallRule -DisplayName Deneb-* should match what they showed before.'

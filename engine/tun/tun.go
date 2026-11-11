@@ -82,6 +82,24 @@ func firewallRuleArgs(self netip.Addr, block netip.Prefix) []string {
 	}
 }
 
+// ProcessRule is the name of the inbound rule `denebd service install`
+// adds for the service's engine, like Tailscale's Tailscale-Process: UDP
+// to that program, on every kind of network, so that a peer's direct path
+// gets in. It stays as long as the service is installed. `service
+// uninstall` (which the app's uninstaller runs) and undo.ps1 remove it.
+const ProcessRule = "Deneb-Process"
+
+// processRuleArgs are netsh's arguments for Deneb-Process. The program's
+// path has a space in it (Program Files): Go quotes that argument whole,
+// and netsh reads it as one, as it does for Tailscale's rule.
+func processRuleArgs(exe string) []string {
+	return []string{
+		"add", "rule", "name=" + ProcessRule, "dir=in", "action=allow",
+		"program=" + exe, "protocol=udp", "profile=any", "enable=yes",
+		"description=让别的设备直接连到Deneb服务的引擎（UDP），不用绕中转。卸载Deneb服务时删掉。",
+	}
+}
+
 // ErrNoResolver: on Linux, systemd-resolved is not what the system asks for
 // names, so the domain could not be handed to the engine. The engine then
 // runs in user-space mode instead (plan §2.4).

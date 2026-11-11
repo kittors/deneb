@@ -69,6 +69,9 @@ func (e *Engine) stateLocked() *apitype.State {
 	}
 	bound, _ := e.ms.BoundInterface()
 	s.Engine = apitype.EngineInfo{Version: e.opts.Version, ListenPort: e.ms.Port(), BindInterface: bound, Watchers: len(e.subs)}
+	if e.opts.RelayOnly {
+		s.Engine.ListenPort, s.Engine.RelayOnly = 0, true // its socket is on the loopback address only
+	}
 	if e.stack != nil && e.opts.SOCKS != "" {
 		s.Engine.SOCKS = e.opts.SOCKS
 	}

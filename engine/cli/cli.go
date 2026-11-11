@@ -294,7 +294,11 @@ func (c *cmd) status(ctx context.Context, args []string) error {
 	if st.Mode == apitype.ModeKernel {
 		mode = "内核网卡"
 	}
-	fmt.Fprintf(c.out, "模式：%s；UDP %d", mode, st.Engine.ListenPort)
+	if st.Engine.RelayOnly {
+		fmt.Fprintf(c.out, "模式：%s；只经中转，不开 UDP 端口", mode)
+	} else {
+		fmt.Fprintf(c.out, "模式：%s；UDP %d", mode, st.Engine.ListenPort)
+	}
 	if st.Engine.BindInterface != "" {
 		fmt.Fprintf(c.out, "，绑在 %s", st.Engine.BindInterface)
 	}

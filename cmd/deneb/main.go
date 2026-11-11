@@ -245,7 +245,7 @@ func keepEngine(a *app, lc *localclient.Client) {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		err := lc.EnsureRunning(ctx, localclient.SpawnOptions{Binary: bin, Env: env})
+		err := lc.EnsureRunning(ctx, localclient.SpawnOptions{Binary: bin, Args: ownEngineArgs, Env: env})
 		cancel()
 		msg := ""
 		switch {

@@ -170,13 +170,15 @@ func (s *service) Execute(_ []string, req <-chan svc.ChangeRequest, status chan<
 // write, and runs the engine from there as a service: kernel mode, as
 // LocalSystem, started with Windows, restarted 2 s after a crash. Its
 // state is %ProgramData%\Deneb unless -state says otherwise (another
-// engine's state directory keeps that device's identity). Run again, it
-// updates what it installed. The window runs it, elevated, in the first
-// run's "install the adapter" step (M6 i2).
+// engine's state directory keeps that device's identity). It adds the
+// firewall rule Deneb-Process, which lets peers' direct UDP in to that
+// engine. Run again, it updates what it installed. The window runs it,
+// elevated, in the first run's "install the adapter" step (M6 i2).
 //
 // uninstall stops and deletes the service (the engine takes its adapter,
-// routes and NRPT rule down as it stops; whatever a crash left is undone
-// from the state directory's record) and removes %ProgramFiles%\Deneb.
+// routes, NRPT rule and Deneb-In down as it stops; whatever a crash left is
+// undone from the state directory's record), removes Deneb-Process and
+// %ProgramFiles%\Deneb.
 // The state, the device's identity, stays unless -purge. With no service
 // installed it does nothing: the app's uninstaller runs it either way.
 //
@@ -327,6 +329,15 @@ func installService(m *mgr.Mgr, args []string) (state string, err error) {
 	}, 600)
 	// Also when the engine stops with an error rather than crashing.
 	s.SetRecoveryActionsOnNonCrashFailures(true)
+	// Peers' direct paths come in on the engine's UDP port, on whatever
+	// network this computer is on (as often public as not). Without the
+	// rule the relay still works.
+	if err := tun.AddProcessRule(exe); err != nil {
+		fmt.Printf("防火墙规则 %s 没加上，别的设备直连可能进不来（中转照常）：%v\n", tun.ProcessRule, err)
+		noteServiceLog(state, "firewall rule %s: %v", tun.ProcessRule, err)
+	} else {
+		fmt.Printf("已加防火墙规则 %s：别的设备直连这台电脑的 UDP 进得来\n", tun.ProcessRule)
+	}
 	if err := s.Start(); err != nil {
 		return state, fmt.Errorf("装好了，起不来：%w", err)
 	}
@@ -485,6 +496,13 @@ func uninstallService(m *mgr.Mgr, purge bool) error {
 	} else if removed {
 		fmt.Printf("已删除防火墙规则 %s\n", tun.FirewallRule)
 	}
+	// The service engine's rule, which install added: it goes with the
+	// service, also when the service itself was already gone.
+	if removed, err := tun.RemoveProcessRule(); err != nil {
+		fmt.Printf("防火墙规则 %s：%v\n", tun.ProcessRule, err)
+	} else if removed {
+		fmt.Printf("已删除防火墙规则 %s\n", tun.ProcessRule)
+	}
 	dir := installDir()
 	self, _ := os.Executable()
 	for _, f := range []string{"denebd.exe", "wintun.dll"} {
@@ -516,6 +534,17 @@ func removeFile(path, self string) {
 }
 
 func isAdmin() bool { return windows.GetCurrentProcessToken().IsElevated() }
+
+// preflightService is what `service install` adds besides kernel mode's
+// own changes, for `denebd preflight` (w1).
+func preflightService() []string {
+	exe := filepath.Join(installDir(), "denebd.exe")
+	out := []string{fmt.Sprintf("装服务时（denebd service install）加一条防火墙入站规则 %s：发给 %s 的 UDP 都放进来，所有网络类别都算，别的设备直连用；卸载服务时删掉", tun.ProcessRule, exe)}
+	if tun.ProcessRuleExists() {
+		out = append(out, fmt.Sprintf("已经有一条 %s（服务装着，或者以前的没删掉）：装服务时先删掉再加", tun.ProcessRule))
+	}
+	return out
+}
 
 // systemServiceRunning: the Deneb service is serving its local API.
 func systemServiceRunning() bool { return socket.Exists(socket.SystemPath()) }

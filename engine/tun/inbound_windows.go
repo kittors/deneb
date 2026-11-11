@@ -117,11 +117,26 @@ func netsh(args ...string) error {
 	return nil
 }
 
-// firewallRuleExists: there is a rule named Deneb-In. netsh fails when
-// none matches.
-func firewallRuleExists() bool {
-	return netsh("show", "rule", "name="+FirewallRule, "dir=in") == nil
+// ruleExists: there is an inbound rule named name. netsh fails when none
+// matches.
+func ruleExists(name string) bool {
+	return netsh("show", "rule", "name="+name, "dir=in") == nil
 }
+
+// removeRule deletes every inbound rule named name, if there is one;
+// removed says there was.
+func removeRule(name string) (removed bool, err error) {
+	if !ruleExists(name) {
+		return false, nil
+	}
+	if err := netsh("delete", "rule", "name="+name, "dir=in"); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// firewallRuleExists: there is a rule named Deneb-In.
+func firewallRuleExists() bool { return ruleExists(FirewallRule) }
 
 // addFirewallRule adds Deneb-In, for this device's address, in place of
 // any rule by that name: an earlier run's that was not removed, which
@@ -133,15 +148,21 @@ func addFirewallRule(self netip.Addr, block netip.Prefix) error {
 
 // RemoveFirewallRule deletes Deneb's inbound rule (every rule by its name),
 // if there is one; removed says there was.
-func RemoveFirewallRule() (removed bool, err error) {
-	if !firewallRuleExists() {
-		return false, nil
-	}
-	if err := netsh("delete", "rule", "name="+FirewallRule, "dir=in"); err != nil {
-		return false, err
-	}
-	return true, nil
+func RemoveFirewallRule() (removed bool, err error) { return removeRule(FirewallRule) }
+
+// AddProcessRule adds Deneb-Process for the program exe, the service's
+// engine, in place of any rule by that name (an earlier install's).
+func AddProcessRule(exe string) error {
+	netsh("delete", "rule", "name="+ProcessRule, "dir=in") // fails when there is none
+	return netsh(processRuleArgs(exe)...)
 }
+
+// ProcessRuleExists: there is a rule named Deneb-Process.
+func ProcessRuleExists() bool { return ruleExists(ProcessRule) }
+
+// RemoveProcessRule deletes Deneb-Process (every rule by its name), if
+// there is one; removed says there was.
+func RemoveProcessRule() (removed bool, err error) { return removeRule(ProcessRule) }
 
 // The Network List Manager, through its COM interfaces' method tables.
 var (
