@@ -29,3 +29,6 @@ mygo_windows_*.syso
 __pycache__/
 *.pyc
 .DS_Store
+
+# The key that signs updates (go tool mygo keygen): never in the repository.
+mygo-update.key
