@@ -11,7 +11,12 @@
 # clients ship stay the same; the replaced container's log goes to
 # /opt/deneb-control/logs, a copy of the data taken while the old server is
 # stopped to /opt/deneb-control/backups, and the old image is kept as
-# deneb-control:prev (rollback-hk155.sh puts it back). A redeploy restarts
+# deneb-control:prev (rollback-hk155.sh puts it back).
+#
+# The server's log is in data/logs, a file a day kept 30 days (PRIVACY.md);
+# the container's own log has only what comes before those files open. The
+# saved logs keep 30 days too, the copies of the data (without the logs and
+# the daily backups) two months, the last one always. A redeploy restarts
 # the server: engines reconnect within seconds, and login links not used
 # yet stop working.
 #
@@ -62,6 +67,7 @@ ssh "$HOST" "
 		# approvals included, before replacing it.
 		docker logs $NAME > $REMOTE/logs/$NAME-\$stamp.log 2>&1
 		ls -1t $REMOTE/logs/$NAME-*.log | tail -n +31 | xargs -r rm -f
+		find $REMOTE/logs -maxdepth 1 -name '$NAME-*.log' -mtime +30 -delete
 		# Stopped, the database is quiet: copy it as it is, for a rollback
 		# to the exact state before this deploy.
 		docker stop -t 10 $NAME >/dev/null
@@ -72,7 +78,14 @@ ssh "$HOST" "
 			echo 'backup failed; the old server is running again' >&2
 			exit 1
 		fi
+		# The log and the daily backups stay with the server, which keeps
+		# them 30 days and two months: a copy holding them would keep them
+		# two months more. The copy is dated by when it was made (cp -a
+		# keeps the data's own date).
+		rm -rf $REMOTE/backups/data-\$stamp/logs $REMOTE/backups/data-\$stamp/backup
+		touch $REMOTE/backups/data-\$stamp
 		ls -1dt $REMOTE/backups/data-* | tail -n +11 | xargs -r rm -rf
+		find $REMOTE/backups -maxdepth 1 \\( -name 'data-*' -o -name 'rolled-back-*' \\) -mtime +60 -exec rm -rf {} +
 		echo "backup: $REMOTE/backups/data-\$stamp"
 	fi
 	docker rm -f $NAME >/dev/null 2>&1 || true
@@ -86,5 +99,6 @@ ssh "$HOST" "
 		$TAG -listen :$PORT -data /data -seed /data/seed.json -public-url $PUBLIC_URL
 	sleep 3
 	docker ps --filter name=^$NAME\$ --format '{{.Names}} {{.Status}}'
-	docker logs --tail 20 $NAME
+	docker logs --tail 5 $NAME
+	docker exec $NAME deneb-control logs -n 20 || true
 	cat $REMOTE/data/tls/pin.txt"

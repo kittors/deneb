@@ -271,7 +271,11 @@ func (s *Server) joinView(j *relayJoin, tok string) *proto.RelayJoin {
 // Docker: host network, its data in a volume that outlives the container,
 // back up by itself after a reboot.
 func (s *Server) relayCommand(code string) string {
-	return "docker run -d --name deneb-relay --restart unless-stopped --network host -v deneb-relay:/data " +
+	// The log is kept to 3 files of 10 MB: it has the addresses that
+	// connect, and on the owner's machine it would otherwise grow for as
+	// long as the relay runs (PRIVACY.md).
+	return "docker run -d --name deneb-relay --restart unless-stopped --network host " +
+		"--log-opt max-size=10m --log-opt max-file=3 -v deneb-relay:/data " +
 		s.cfg.RelayImage + " --join " + code + " --region auto"
 }
 

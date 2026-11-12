@@ -23,7 +23,10 @@
 //	deneb-control backups                                 # the database's daily copies (<data>/backup)
 //	deneb-control devices [-person <email>]               # the devices, and in what state
 //	deneb-control alerts [-n 20]                          # the problems now and the last alerts
+//	deneb-control logs [-n 200] [-grep <text>]            # the end of the log (its files keep 30 days)
 //	deneb-control device-delete -device <id>              # delete one, whoever's it is
+//	deneb-control account-delete -email <email> [-lans transfer|delete] [-yes]
+//	                                                      # what deleting an account takes; with -yes, delete it
 //
 // In the container: docker exec deneb-control deneb-control approve ...
 package main
@@ -34,6 +37,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -101,8 +105,12 @@ func main() {
 			os.Exit(runDevices(os.Args[2:]))
 		case "alerts":
 			os.Exit(runAlerts(os.Args[2:]))
+		case "logs":
+			os.Exit(runLogs(os.Args[2:]))
 		case "device-delete":
 			os.Exit(runDeviceDelete(os.Args[2:]))
+		case "account-delete":
+			os.Exit(runAccountDelete(os.Args[2:]))
 		}
 	}
 	var (
@@ -115,6 +123,7 @@ func main() {
 		tlsMode     = flag.String("tls", "auto", "serve HTTPS with the self-signed certificate: on, off, or auto (on unless -dev)")
 		tlsHosts    = flag.String("tls-hosts", "", "comma-separated IPs and names the certificate names (default: the public URL's host, 127.0.0.1, localhost)")
 		healthcheck = flag.String("healthcheck", "", "only check that this URL answers 200, then exit (for the container's health check)")
+		logDir      = flag.String("log-dir", "", `where the log goes: a file a day, kept 30 days (default "<data>/logs"; with -dev, or "off", the standard error only)`)
 		lifetime    = flag.Duration("login-lifetime", control.DefaultLoginLifetime, "how long a device's login lasts if the device does not come back; shorten it to see logins run out")
 		seatLimit   = flag.Int("seat-limit", control.DefaultSeatLimit, "people each person's LANs and shares may hold, themselves included; -1 for no limit")
 		relayImage  = flag.String("relay-image", control.DefaultRelayImage, "the Docker image the relays' one-line install command runs")
@@ -159,6 +168,26 @@ func main() {
 		if err := os.RemoveAll(*dataDir); err != nil {
 			log.Fatal(err)
 		}
+	}
+	// The log goes into files of its own that keep 30 days (PRIVACY.md):
+	// Docker's log of the container keeps by size, and at a quiet server
+	// that is months.
+	logOut := io.Writer(os.Stderr)
+	switch {
+	case *logDir == "off":
+		*logDir = ""
+	case *logDir == "" && !*dev:
+		*logDir = filepath.Join(*dataDir, "logs")
+	}
+	if *logDir != "" {
+		lf, err := control.OpenLogFiles(*logDir)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer lf.Close()
+		log.Printf("the log goes to %s, a file a day, kept %d days; read it with: deneb-control logs", *logDir, control.LogKeepDays)
+		log.SetOutput(lf)
+		logOut = lf
 	}
 	useTLS := *tlsMode == "on" || *tlsMode == "auto" && !*dev
 	if *tlsMode != "on" && *tlsMode != "off" && *tlsMode != "auto" {
@@ -239,6 +268,7 @@ func main() {
 		SeatLimit:     *seatLimit,
 		Pin:           pin,
 		RelayImage:    *relayImage,
+		LogDir:        *logDir,
 		Mailer:        mailer,
 		OpenSignup:    *openSignup,
 		Alerts:        alerts,
@@ -269,7 +299,7 @@ func main() {
 		// Streams and long polls watch this context, so a shutdown ends
 		// them instead of waiting on them.
 		BaseContext: func(net.Listener) context.Context { return ctx },
-		ErrorLog:    log.New(os.Stderr, "deneb-control: http: ", log.LstdFlags|log.LUTC),
+		ErrorLog:    log.New(logOut, "deneb-control: http: ", log.LstdFlags|log.LUTC),
 	}
 	ln, err := net.Listen("tcp", *listen)
 	if err != nil {
@@ -398,6 +428,25 @@ func setUpAlerts(dataDir, url, kind string) (alert.Sender, error) {
 	}
 	log.Printf("alerts: to %s", s)
 	return s, nil
+}
+
+// runLogs prints the end of the log, from its files.
+func runLogs(args []string) int {
+	var n *int
+	var grep *string
+	socket, _ := adminFlags("logs", args, func(fs *flag.FlagSet) {
+		n = fs.Int("n", 200, "how many of the last lines")
+		grep = fs.String("grep", "", "only the lines with this in them")
+	})
+	lines, err := control.AdminLogs(socket, *n, *grep)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	for _, l := range lines {
+		fmt.Println(l)
+	}
+	return 0
 }
 
 // runAlerts shows the problems firing now and the last alerts, newest
@@ -976,6 +1025,50 @@ func runDeviceDelete(args []string) int {
 		return 1
 	}
 	fmt.Println("删掉了：" + deviceLine(*d))
+	return 0
+}
+
+// runAccountDelete deletes an account for someone who asked the operator
+// to. Without -yes it only says what would go.
+func runAccountDelete(args []string) int {
+	var email, lans *string
+	var yes *bool
+	socket, fs := adminFlags("account-delete", args, func(fs *flag.FlagSet) {
+		email = fs.String("email", "", "the account's email")
+		lans = fs.String("lans", "", "the LANs it owns that have other people in them: transfer (each to its member who joined first) or delete (for everyone)")
+		yes = fs.Bool("yes", false, "delete it; without -yes, only say what would go")
+	})
+	if *email == "" {
+		fs.Usage()
+		return 2
+	}
+	d, err := control.AdminAccountDelete(socket, control.AdminAccountDeleteRequest{Email: *email, OwnedLANs: *lans, DryRun: !*yes})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	verb := "删掉了"
+	if d.DryRun {
+		verb = "会删掉"
+	}
+	fmt.Printf("%s %s：%d 台设备 %v，%d 个局域网 %v，%d 个中转站 %v，%d 次分享，%d 个邀请\n",
+		verb, *email, len(d.Devices), d.Devices, len(d.LANs), d.LANs, len(d.Relays), d.Relays, d.Shares, d.Invites)
+	for _, t := range d.Transferred {
+		fmt.Printf("  局域网 %s 转给 %s\n", t.LAN, t.To)
+	}
+	if len(d.Left) > 0 {
+		fmt.Printf("  退出局域网 %v\n", d.Left)
+	}
+	if len(d.RelaysInUse) > 0 {
+		fmt.Printf("  中转站 %v 别人正在用：他们的设备会改走公共中转站\n", d.RelaysInUse)
+	}
+	switch {
+	case len(d.Blocked) > 0:
+		fmt.Printf("还注销不了：它是局域网 %v 的拥有者，里面还有别人。加 -lans transfer（转给最早加入的成员）或 -lans delete（整个删掉）\n", d.Blocked)
+		return 1
+	case d.DryRun:
+		fmt.Println("还没删：确认无误，加 -yes 再跑一次")
+	}
 	return 0
 }
 

@@ -51,7 +51,20 @@ type OpArgs struct {
 	// Public: relay.join makes a code for a new public relay rather than
 	// one of the asker's own. The deployment's operators only. (M4)
 	Public bool `json:"public,omitempty"`
+	// Confirm, DryRun and OwnedLANs are account.delete's (M7): the
+	// asker's email typed again; only say what would go; and what becomes
+	// of the LANs they own that have other people in them,
+	// AccountTransfer or AccountDeleteLANs.
+	Confirm   string `json:"confirm,omitempty"`
+	DryRun    bool   `json:"dryRun,omitempty"`
+	OwnedLANs string `json:"ownedLANs,omitempty"`
 }
+
+// account.delete's choices for the LANs the person owns with others in.
+const (
+	AccountTransfer   = "transfer" // each to its member who joined it first
+	AccountDeleteLANs = "delete"   // gone, for everyone in them
+)
 
 // OpType names an operation. Next to each: the args it reads, then what it
 // answers with in OpResult.Result, and who may do it.
@@ -123,6 +136,24 @@ const (
 	// new address. There is no undo: a client that offers one holds the op
 	// back until its toast goes. (M7)
 	OpDeviceDelete OpType = "device.delete"
+	// Confirm (the asker's email again), optionally DryRun and OwnedLANs.
+	// The asker only: their account goes, and with it their devices
+	// (logged out at once, as with device.delete), their place in every
+	// LAN, the shares they give and are given, the invites they made, used
+	// or had made out to them, their services, their refusals and the
+	// refusals of them, their own relays (the LANs that used them fall
+	// back on the public relays) and every browser logged in as them.
+	// Result.Account says what went. The LANs they own that have other
+	// people in them need OwnedLANs: AccountTransfer hands each to its
+	// member who joined it first, AccountDeleteLANs deletes them; without
+	// it the op is refused (ErrConflict) while there are any. DryRun only
+	// says what would go and what blocks it (Account.Blocked), changing
+	// nothing, and needs no Confirm. An account the deployment's seed
+	// names (as an account or a relay's owner) is refused (ErrForbidden):
+	// the next start would make it again. What went stays in the backups
+	// until they are replaced, two months at most. The design:
+	// design/plan/m7/account-delete.md. (M7)
+	OpAccountDelete OpType = "account.delete"
 	// LAN, Person. The owner; the person's devices leave the LAN with them.
 	// It also turns down a person waiting to join.
 	OpMemberRemove OpType = "member.remove"
@@ -248,6 +279,43 @@ type OpOutput struct {
 	// RelayJoin is relay.join's code and install command. (M4)
 	RelayJoin *RelayJoin `json:"relayJoin,omitempty"`
 	Kick      string     `json:"kick,omitempty"` // relay.kick (M4)
+	// Account is what account.delete removed, or with DryRun would. (M7)
+	Account *AccountDeletion `json:"account,omitempty"`
+}
+
+// AccountDeletion is what account.delete removed, or with DryRun would.
+type AccountDeletion struct {
+	DryRun bool `json:"dryRun,omitempty"`
+	// Devices are the person's devices: logged out and gone.
+	Devices []DeviceID `json:"devices"`
+	// LANs are the LANs they own that go: theirs alone, or with OwnedLANs
+	// AccountDeleteLANs those with others in them too.
+	LANs []LANID `json:"lans"`
+	// Transferred are the LANs that go to another member, with OwnedLANs
+	// AccountTransfer.
+	Transferred []LANTransfer `json:"transferred,omitempty"`
+	// Left are other people's LANs they were in, invited to or waiting to
+	// join: they leave them.
+	Left []LANID `json:"left"`
+	// Blocked are the LANs they own with other people in them, while
+	// OwnedLANs says nothing: what the person has to decide first.
+	Blocked []LANID `json:"blocked,omitempty"`
+	// Relays are their own relays, which go. RelaysInUse are those of
+	// them others use, dragged into LANs with other people in them or one
+	// of the deployment's defaults: those people's devices fall back on
+	// the public relays.
+	Relays      []RelayID `json:"relays"`
+	RelaysInUse []RelayID `json:"relaysInUse,omitempty"`
+	// Shares are the shares they give and are given; Invites the invites
+	// they made, used or had made out to them.
+	Shares  int `json:"shares"`
+	Invites int `json:"invites"`
+}
+
+// LANTransfer is a LAN handed to another member.
+type LANTransfer struct {
+	LAN LANID    `json:"lan"`
+	To  PersonID `json:"to"`
 }
 
 // Error is how the control server says no. Code is for programs; Message is

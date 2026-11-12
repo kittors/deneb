@@ -491,7 +491,7 @@ func TestRelayJoin(t *testing.T) {
 
 	j := w.mac.must(proto.OpRelayJoin, proto.OpArgs{}).Result.RelayJoin
 	if j == nil || !strings.HasPrefix(j.Code, proto.RelayJoinPrefix) || j.Relay != "" || !j.ExpiresAt.Equal(now.Add(relayJoinLife)) ||
-		j.Command != "docker run -d --name deneb-relay --restart unless-stopped --network host -v deneb-relay:/data "+DefaultRelayImage+" --join "+j.Code+" --region auto" {
+		j.Command != "docker run -d --name deneb-relay --restart unless-stopped --network host --log-opt max-size=10m --log-opt max-file=3 -v deneb-relay:/data "+DefaultRelayImage+" --join "+j.Code+" --region auto" {
 		t.Fatalf("relay.join: %+v", j)
 	}
 	v := w.mac.view()

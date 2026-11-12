@@ -31,8 +31,9 @@ const (
 )
 
 // RunBackups writes the day's copy at start, if it is missing, and checks
-// every hour after.
+// every hour after; once a day it also runs the cleanup.
 func (s *Server) RunBackups(ctx context.Context) {
+	cleanedOn := ""
 	for {
 		name, err := s.backup()
 		if err != nil {
@@ -43,6 +44,16 @@ func (s *Server) RunBackups(ctx context.Context) {
 		s.health.mu.Lock()
 		s.health.backupErr = err
 		s.health.mu.Unlock()
+		// The daily cleanup (cleanup.go), once a day as the backup is,
+		// and after it: the day's copy still has what it removes, for a
+		// rollback of the cleanup itself.
+		if day := s.now().UTC().Format("20060102"); day != cleanedOn {
+			if _, err := s.cleanup(); err != nil {
+				s.logf("cleanup: %v", err)
+			} else {
+				cleanedOn = day
+			}
+		}
 		select {
 		case <-ctx.Done():
 			return

@@ -81,7 +81,7 @@
 
 1. 先在服务器上，对要用的那份备份跑一遍演练。
 2. 停服务：`docker stop -t 10 deneb-control`。
-3. 把现在的数据目录整个另存一份：`cp -a data data.before-restore-<时间>`。
+3. 把现在的数据目录整个另存一份：`cp -a data data.before-restore-<时间>`。恢复确认无误后删掉它：里面的日志和每天的备份不会自己过期（PRIVACY.md 第 7 节）。
 4. 删掉 `data/deneb.db`、`deneb.db-wal`、`deneb.db-shm`，把备份拷成 `data/deneb.db`，再 `chown 65534:65534`、`chmod 600`。`tls/` 和 `seed.json` 不动。
 5. 起服务：`docker start deneb-control`。服务器会生成新的签名密钥，设备很快自己重新认证。
 6. 核对：`/healthz`、`deneb-control relays`，前后给五台设备各拍一次快照比对。

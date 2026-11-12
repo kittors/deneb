@@ -2,7 +2,9 @@ package control
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
 	"fmt"
@@ -253,9 +255,9 @@ func (s *Server) askCode(email string, from loginFrom) error {
 	p := s.state.Load().w.byEmail[email]
 	switch {
 	case test:
-		s.logf("%s: code asked for %q %s: a test account, its code is the seed's", from.what, email, from)
+		s.logf("%s: code asked for %s %s: a test account, its code is the seed's", from.what, s.logEmail(email), from)
 	case p == nil && !s.cfg.OpenSignup:
-		s.logf("%s: code asked for %q %s: no account, nothing sent", from.what, email, from)
+		s.logf("%s: code asked for %s %s: no account, nothing sent", from.what, s.logEmail(email), from)
 	default:
 		code, why := s.mailed.issue(email, now)
 		if code != "" {
@@ -265,9 +267,27 @@ func (s *Server) askCode(email string, from loginFrom) error {
 		if p != nil {
 			account = string(p.ID)
 		}
-		s.logf("%s: code asked for %q %s, account %s: %s", from.what, email, from, account, why)
+		s.logf("%s: code asked for %s %s, account %s: %s", from.what, s.logEmail(email), from, account, why)
 	}
 	return nil
+}
+
+// logEmail is an email as the log says it. One with an account, or a test
+// account's, as it is: the operator's support needs it. One with none
+// (someone mistyped, or tries emails to see which have accounts) is not
+// kept as it is (PRIVACY.md): its domain, which tells a pattern (many made-up
+// domains) without telling who, and a short keyed hash, which tells the
+// same email asked again from the rest. The key is made at each start and
+// never written down, so a hash cannot be matched to an email from the log,
+// nor across restarts.
+func (s *Server) logEmail(email string) string {
+	_, test := s.testCodes[email]
+	if test || s.state.Load().w.byEmail[email] != nil {
+		return strconv.Quote(email)
+	}
+	h := hmac.New(sha256.New, s.logKey)
+	h.Write([]byte(email))
+	return fmt.Sprintf("\"…%s\" #%x", email[strings.LastIndexByte(email, '@'):], h.Sum(nil)[:6])
 }
 
 // checkCode is a login's second step: it returns whom the code logs in,
@@ -278,7 +298,7 @@ func (s *Server) checkCode(email, code string, from loginFrom) (proto.PersonID, 
 	}
 	now := s.now()
 	if !s.tries.take(email, now) {
-		s.logf("%s: %q is blocked for too many wrong codes %s", from.what, email, from)
+		s.logf("%s: %s is blocked for too many wrong codes %s", from.what, s.logEmail(email), from)
 		return "", errTooManyTries
 	}
 	addr := addressKey(from.ip)
@@ -294,7 +314,7 @@ func (s *Server) checkCode(email, code string, from loginFrom) (proto.PersonID, 
 		ok = s.mailed.check(email, code, now)
 	}
 	if !ok {
-		s.logf("%s: wrong code for %q %s", from.what, email, from)
+		s.logf("%s: wrong code for %s %s", from.what, s.logEmail(email), from)
 		return "", errWrongCode
 	}
 	s.tries.reset(email)

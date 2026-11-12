@@ -302,6 +302,7 @@ var opHandlers = map[proto.OpType]opHandler{
 	proto.OpDeviceRenew:          opDeviceRenew,
 	proto.OpDeviceDelete:         opDeviceDelete,
 	proto.OpDeviceSetDNSName:     opDeviceSetDNSName,
+	proto.OpAccountDelete:        opAccountDelete,
 
 	proto.OpShareCreate:     opShareCreate,
 	proto.OpShareRevoke:     opShareRevoke,
@@ -412,8 +413,14 @@ func opLANDelete(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
 	if err := c.ownerOnly(l, "只有拥有者能删除这个局域网"); err != nil {
 		return err
 	}
+	return c.deleteLAN(l)
+}
+
+// deleteLAN deletes l, for lan.delete and account.delete.
+func (c *opCtx) deleteLAN(l *lan) error {
 	// Opens are keyed by scope, not by a foreign key, as shares (M3) are
-	// scopes too; they go by hand. Members, devices and invites cascade.
+	// scopes too; they go by hand. Members, devices, invites and the
+	// relays dragged in cascade.
 	if err := c.exec(`DELETE FROM opens WHERE scope = ?`, proto.LANScope(l.ID)); err != nil {
 		return err
 	}

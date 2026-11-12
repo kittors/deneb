@@ -31,7 +31,18 @@ ssh "$HOST" "
 	if [ $RESTORE = yes ]; then
 		last=\$(ls -1dt $REMOTE/backups/data-* | head -1)
 		mv $REMOTE/data $REMOTE/backups/rolled-back-\$stamp
+		# Dated by now: deploy-hk155.sh drops these after two months.
+		touch $REMOTE/backups/rolled-back-\$stamp
 		cp -a \$last $REMOTE/data
+		# The log and the daily backups go on with the server, which keeps
+		# them 30 days and two months, rather than two months more in the
+		# data set aside.
+		for d in logs backup; do
+			if [ -d $REMOTE/backups/rolled-back-\$stamp/\$d ]; then
+				rm -rf $REMOTE/data/\$d
+				mv $REMOTE/backups/rolled-back-\$stamp/\$d $REMOTE/data/\$d
+			fi
+		done
 		echo \"restored \$last\"
 	fi
 	docker run -d --name $NAME \

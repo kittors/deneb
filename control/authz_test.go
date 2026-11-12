@@ -135,9 +135,10 @@ func TestNoOneActsOnOthers(t *testing.T) {
 		{w.jdesk, proto.OpRelayUnkick, proto.OpArgs{Kick: kick}},
 	}
 	// Ops with nothing of anyone else's to name: they make the asker's
-	// own (a LAN, a relay); the link case of invite.accept is the link's
-	// holder joining, which is what a link is for.
-	ownOnly := []proto.OpType{proto.OpLANCreate, proto.OpRelayCreate}
+	// own (a LAN, a relay) or delete the asker's account (TestAccountDelete);
+	// the link case of invite.accept is the link's holder joining, which is
+	// what a link is for.
+	ownOnly := []proto.OpType{proto.OpLANCreate, proto.OpRelayCreate, proto.OpAccountDelete}
 
 	covered := map[proto.OpType]bool{}
 	for _, op := range ownOnly {

@@ -226,7 +226,8 @@ func TestLoginLogs(t *testing.T) {
 	mu.Unlock()
 	for _, want := range []string{
 		`login: link ` + c[:4] + `… for "hk-155" (linux) from 127.0.0.1`,
-		`login: code asked for "nobody@deneb.test" (code ` + c[:4] + `…, from 127.0.0.1): no account, nothing sent`,
+		`login: code asked for "…@deneb.test" #`,
+		`(code ` + c[:4] + `…, from 127.0.0.1): no account, nothing sent`,
 		`login: wrong code for "jie@deneb.test"`,
 		`logged in as jie@deneb.test in a browser at 127.0.0.1`,
 		`login page: no login waits for code ` + c[:4] + `…`,
@@ -237,5 +238,9 @@ func TestLoginLogs(t *testing.T) {
 	}
 	if strings.Contains(all, c) {
 		t.Error("the log carries a whole login code")
+	}
+	// An email with no account is not in the log as it is (PRIVACY.md).
+	if strings.Contains(all, "nobody@deneb.test") {
+		t.Error("the log carries an email that has no account")
 	}
 }

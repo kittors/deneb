@@ -259,7 +259,9 @@ func (s *Server) handleLoginWait(w http.ResponseWriter, r *http.Request, c *call
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request, c *caller) {
 	_, err := s.change("", func(tx *sql.Tx, w *World) error {
-		_, err := tx.Exec(`UPDATE devices SET logged_out = 1, last_seen = ? WHERE id = ?`, ms(s.now()), c.dev.ID)
+		// The addresses it reported go with the login (PRIVACY.md); the
+		// row stays, so the same person gets its address back.
+		_, err := tx.Exec(`UPDATE devices SET logged_out = 1, last_seen = ?, endpoints = '[]' WHERE id = ?`, ms(s.now()), c.dev.ID)
 		return err
 	})
 	if err != nil {

@@ -43,6 +43,9 @@ type Config struct {
 	// Mailer mails the login codes (M7); nil mails none, and only the
 	// seed's test accounts, with their fixed codes, can log in.
 	Mailer Mailer
+	// LogDir is where the log files are (LogFiles), for deneb-control
+	// logs; empty when the log goes to the standard error only.
+	LogDir string
 	// Alerts is where the server's alerts go (design/plan/m7/control-ops.md
 	// §3); nil logs them only. Name is who they say they are from; empty,
 	// the public URL's host.
@@ -85,6 +88,13 @@ const DefaultRelayImage = "deneb-relay:v0"
 // DefaultSeatLimit is the free seats per person (pricing-and-relays §1.4).
 const DefaultSeatLimit = 6
 
+// randomKey is 32 random bytes.
+func randomKey() []byte {
+	b := make([]byte, 32)
+	rand.Read(b)
+	return b
+}
+
 // Server is a control server. Its Handler serves every interface.
 type Server struct {
 	cfg  Config
@@ -106,6 +116,9 @@ type Server struct {
 
 	alerts *alert.Alerter
 	health *health
+	// logKey keys the hashes the log writes for emails with no account
+	// (logEmail); made at each start, never stored.
+	logKey []byte
 
 	// presence gathers devices coming and going (markOnline);
 	// presenceDelay is how long (tests shorten it).
@@ -184,6 +197,7 @@ func New(cfg Config) (*Server, error) {
 		health:    newHealth(),
 
 		presenceDelay: defaultPresenceDelay,
+		logKey:        randomKey(),
 		keepAlive:     proto.StreamKeepAlive,
 		relayLive:     newRelayLive(),
 		versions:      newVersionWaiter(),
