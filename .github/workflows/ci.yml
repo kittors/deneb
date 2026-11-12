@@ -1,6 +1,7 @@
 # Deneb's checks, on every push to main and every pull request: tests on
-# Linux and macOS; go vet and a build for each system, of releases and of
-# test builds; and what a release must hold (no test build, every license).
+# Linux and macOS, and some on Windows; go vet and a build for each system,
+# of releases and of test builds; and what a release must hold (no test
+# build, every license).
 #
 # It needs no secrets and reaches no server of ours, nor any test machine.
 # The tests that do (DENEB_ACCEPT, DENEB_REAL, DENEB_REMOTE, DENEB_PROD_COPY,
@@ -61,6 +62,37 @@ jobs:
           cache: test
       - name: go test
         run: bash .github/scripts/go-test.sh ./...
+
+  test-windows:
+    name: Test (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash # Git's, as on the other systems: go-test.sh is bash
+    steps:
+      - name: Keep line endings as committed
+        # The Windows image checks text out with CRLF, which a bash script and
+        # the fuzz corpus (testdata/fuzz) do not survive.
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false # nothing here pushes
+      - uses: ./.github/actions/go
+        with:
+          cache: test
+      - name: go test
+        # The packages written for Windows too, or that hold anywhere: the
+        # log rolled over while it is open (engine/logfile, cmd/denebd), the
+        # filter, kernel mode's parts that need no adapter (engine/tun, with
+        # the Network List Manager read), DNS, a socket pinned to an
+        # interface (engine/bind), the protocol. None needs an administrator
+        # or installs a service. Not here yet: localclient's tests listen on
+        # Unix socket paths, where Windows has named pipes; the engine's and
+        # magicsock's in-process networks hang on timing and have not run on
+        # Windows; the window's click where a Mac's fonts put the text; the
+        # control server is its line's.
+        run: bash .github/scripts/go-test.sh ./engine/logfile ./cmd/denebd ./engine/filter ./engine/tun ./engine/dns ./engine/bind ./proto
 
   build:
     name: Vet and build (${{ matrix.goos }})

@@ -12,7 +12,22 @@
 | --- | --- | --- |
 | Test (Linux) | ubuntu-latest | `go test` 除窗口（cmd/deneb）以外的全部包 |
 | Test (macOS) | macos-latest | `go test ./...`，全部包，包括窗口和只在 macOS 上跑的网卡测试 |
+| Test (Windows) | windows-latest | `go test` 七个包，见下面（11-12 加） |
 | Vet and build (linux / darwin / windows) | ubuntu-latest | 每个系统一个任务，依次做下面几件 |
+
+"Test (Windows)" 跑的七个包，都不要管理员权限，也不装服务：
+
+- `engine/logfile`、`cmd/denebd`：日志开着也能滚动、文件开着也能改名。这两件只在 Windows 上才是真考验，测试机离线时就靠这里；
+- `engine/filter`：过滤器，连同模糊测试的种子和回归输入；
+- `engine/tun`：内核模式里不用网卡的部分，包括只读地读一遍 Network List Manager；
+- `engine/dns`、`engine/bind`（UDP 绑到默认路由的网卡上）、`proto`。
+
+还没放进来的，和原因：
+
+- `engine/localapi/localclient`：测试在临时目录里开 Unix 套接字，Windows 上要的是命名管道；
+- `engine`、`engine/magicsock`：进程内的网络测试看时机，没在 Windows 上跑过，先不放；
+- `cmd/deneb`：窗口的测试按 Mac 的字体点坐标，只在 macOS 上跑；
+- 控制服务器那几个包：归控制线。
 
 "Vet and build" 每个系统依次做：
 
@@ -32,6 +47,7 @@
   - 两次都失败才算失败；
   - 下面几种情况不再跑：一个包没编过、在测试外 panic、超时，或者一次失败了三个以上的测试。
 - **缓存**：模块缓存和编译缓存每个任务各存一份，按 go.mod、go.sum 和日期区分，每天存一次。
+- **Windows 上保留原来的换行**：GitHub 的 Windows 机器取代码时默认把换行改成 CRLF，bash 脚本和模糊测试的语料（`testdata/fuzz`）会读坏。这个任务先设 `core.autocrlf false` 再取代码，只影响那台机器。脚本用 Git 带的 bash 跑，和别的系统一样。
 
 ## 本地先验
 
