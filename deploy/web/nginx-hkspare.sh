@@ -52,7 +52,9 @@ install)
 	render > "$tmp"
 	new=$(ssh "$HOST" mktemp)
 	scp -q "$tmp" "$HOST:$new"
-	ssh "$HOST" sh -s -- "$new" "$CONF" "$WEB_HOST" "$MARK" "${NGINX_ORDER_CHECKED:-no}" <<'EOF'
+	# ssh hands the remote shell one line to parse again: the mark, with its
+	# spaces and #, goes in single quotes or it is a comment there.
+	ssh "$HOST" sh -s -- "$new" "$CONF" "$WEB_HOST" "'$MARK'" "${NGINX_ORDER_CHECKED:-no}" <<'EOF'
 set -eu
 new=$1 conf=$2 host=$3 mark=$4 checked=$5
 trap 'rm -f "$new"' EXIT
@@ -94,7 +96,7 @@ fi
 EOF
 	;;
 remove)
-	ssh "$HOST" sh -s -- "$CONF" "$MARK" <<'EOF'
+	ssh "$HOST" sh -s -- "$CONF" "'$MARK'" <<'EOF'
 set -eu
 conf=$1 mark=$2
 if [ ! -e "$conf" ]; then echo "no $conf: nothing to do"; exit 0; fi
