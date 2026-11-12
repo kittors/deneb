@@ -18,6 +18,11 @@ var ErrNotOurs = errors.New("the engine's endpoint here belongs to someone else"
 // use it so that a fake engine never touches the real path.
 const EnvPath = "DENEB_SOCKET"
 
+// EnvLog names the file an engine started by a client (localclient's
+// EnsureRunning) has its stdout and stderr in, so that the engine can roll
+// it over while it runs (cmd/denebd).
+const EnvLog = "DENEB_LOG"
+
 // Path is where a client should connect: $DENEB_SOCKET if set; otherwise the
 // system daemon's endpoint (kernel mode) if one is listening; otherwise this
 // user's own (user-space mode).

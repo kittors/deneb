@@ -114,6 +114,9 @@ func runEngine(args []string, check bool) error {
 	if check {
 		return nil
 	}
+	if p := os.Getenv(socket.EnvLog); p != "" {
+		rollLog(p) // started by the window, which put the log there
+	}
 	if m == apitype.ModeUserspace && systemServiceRunning() {
 		// The service is this device already (its identity came from this
 		// user's state): a second engine of it would fight over it.

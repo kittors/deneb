@@ -59,7 +59,7 @@ func (c *Client) EnsureRunning(ctx context.Context, o SpawnOptions) error {
 	}
 	defer logf.Close()
 	cmd := exec.Command(bin, args...)
-	cmd.Env = append(append(os.Environ(), o.Env...), socket.EnvPath+"="+c.spawnPath())
+	cmd.Env = append(append(os.Environ(), o.Env...), socket.EnvPath+"="+c.spawnPath(), socket.EnvLog+"="+logPath)
 	cmd.Stdout, cmd.Stderr = logf, logf
 	detach(cmd)
 	if err := cmd.Start(); err != nil {
