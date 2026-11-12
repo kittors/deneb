@@ -253,9 +253,19 @@
   - 窗口拉起引擎时，用环境变量 `DENEB_LOG` 告诉它日志在哪。引擎先核对自己的 stderr 写的正是这个文件，才会去动它。
   - 换的时候用 dup2 把新文件接到 stdout、stderr 上。日志、库直接写到 stderr 的东西、崩溃时的输出，都接着写进新文件，一行不丢。
   - 换完，新日志的第一行写明：日志超过 10 MB，前面的在 `denebd.log.1`。
-- **Windows**：系统服务启动时就会换（原来就有）。Windows 上由窗口拉起的引擎，也就是装网卡之前的那个，这次没做。
+- **Windows**：系统服务启动时就会换（原来就有）。Windows 上由窗口拉起的引擎，也就是装网卡之前的那个，11-12 也补上了，规矩和 macOS、Linux 一样：
+  - 难处：Go 在 Windows 上开文件不带 FILE_SHARE_DELETE，文件开着就改不了名。窗口把日志交给引擎当 stdout、stderr，引擎开着它的整个期间都改不了。
+  - 现在窗口和引擎都用 `engine/logfile` 开日志。它在 Windows 上带 FILE_SHARE_DELETE，开着也能改名；别的平台照旧是 0600、只往后加。
+  - 换的时候，先把开着的文件改名成 `.1`，再开新文件，然后把新文件交出去：
+    - 用 SetStdHandle 换掉进程的标准输出、标准错误。Go 运行时崩溃时每次都会重新取标准错误，所以崩溃输出也进新文件；
+    - os.Stdout、os.Stderr 和 log 也换成新文件；
+    - 最后关掉旧句柄。
+  - 新文件的权限跟着文件夹走：`%LOCALAPPDATA%` 只有这个用户、SYSTEM 和管理员能进。
+  - 真机没验：测试机 11-12 上午一直离线（Tailscale 显示两小时前就下线了）。只做了本机测试和交叉编译，Windows 的测试程序编出来了，没在 Windows 上跑过。
 - **测试**：
   - `TestRollLog`：超了就换，没超不动；写日志的描述符接到新文件上，旧内容在 `.1` 里；新文件是 0600；
+  - `TestRollLogWhileOpen`：日志在写的地方还开着（像引擎的 stdout、stderr），照样能换，换完接着写进新文件。在 Windows 上，这条就是改名这件事本身；
+  - `logfile.TestRenameWhileOpen`：`logfile.Open` 开着的文件能改名，连着两轮，第二轮盖掉第一轮的 `.1`；
   - `TestRollLogOnlyItsOwn`：不是自己 stderr 的文件不碰。
   - 在这台 Mac 上真起了一个临时引擎（自己的状态目录和本机接口，只经中转，不开 SOCKS）：启动时 11 MB 的日志马上换了；运行中又写了 10.6 MB，29 s 后也换了，引擎照常在跑。
 

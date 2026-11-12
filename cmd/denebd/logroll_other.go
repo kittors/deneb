@@ -1,8 +1,14 @@
-//go:build !darwin && !linux
+//go:build !darwin && !linux && !windows
 
 package main
 
-// rollLog: on Windows the service rolls its own log as it starts
-// (openServiceLog). The log of an engine the window starts there, which
-// runs until the adapter is installed, is not rolled yet.
-func rollLog(string) {}
+import (
+	"errors"
+	"os"
+)
+
+// takeOverStd: no platform Deneb ships on lands here.
+func takeOverStd(f *os.File) error {
+	f.Close()
+	return errors.ErrUnsupported
+}

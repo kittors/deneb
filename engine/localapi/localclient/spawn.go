@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kittors/deneb/engine/localapi/socket"
+	"github.com/kittors/deneb/engine/logfile"
 )
 
 // SpawnOptions say how to start a user-space engine.
@@ -53,7 +54,9 @@ func (c *Client) EnsureRunning(ctx context.Context, o SpawnOptions) error {
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
 		return err
 	}
-	logf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	// Opened so that the engine can rename it while it runs, also on
+	// Windows: it rolls it over past 10 MB (cmd/denebd).
+	logf, err := logfile.Open(logPath)
 	if err != nil {
 		return err
 	}

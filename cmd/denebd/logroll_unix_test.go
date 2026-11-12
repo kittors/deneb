@@ -27,6 +27,11 @@ func TestRollLog(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer unix.Close(fd)
+	// takeOverStd's way, on fd rather than on this test's own 1 and 2.
+	takeOver := func(nf *os.File) error {
+		defer nf.Close()
+		return unix.Dup2(int(nf.Fd()), fd)
+	}
 	write := func(s string) {
 		if _, err := unix.Write(fd, []byte(s)); err != nil {
 			t.Fatal(err)
@@ -38,11 +43,11 @@ func TestRollLog(t *testing.T) {
 	}
 	os.WriteFile(path+".1", []byte("older\n"), 0o600)
 	write("before\n")
-	if rolled, err := rollIfLarge(path, 100, fd); rolled || err != nil {
+	if rolled, err := rollIfLarge(path, 100, takeOver); rolled || err != nil {
 		t.Fatalf("under the limit: rolled %v, %v", rolled, err)
 	}
 	write(strings.Repeat("x", 100) + "\n")
-	if rolled, err := rollIfLarge(path, 100, fd); !rolled || err != nil {
+	if rolled, err := rollIfLarge(path, 100, takeOver); !rolled || err != nil {
 		t.Fatalf("over the limit: rolled %v, %v", rolled, err)
 	}
 	write("after\n")
@@ -54,19 +59,5 @@ func TestRollLog(t *testing.T) {
 	}
 	if fi, err := os.Stat(path); err != nil || fi.Mode().Perm()&0o077 != 0 {
 		t.Errorf("the new log: %v, %v", fi.Mode(), err)
-	}
-}
-
-// TestRollLogOnlyItsOwn: a file the engine's stderr does not go to is
-// never moved, however large.
-func TestRollLogOnlyItsOwn(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "denebd.log")
-	os.WriteFile(path, make([]byte, 1024), 0o600)
-	if isStderr(path) {
-		t.Fatal("a temporary file taken for stderr")
-	}
-	rollLog(path)
-	if _, err := os.Stat(path + ".1"); err == nil {
-		t.Fatal("rolled a file it does not write to")
 	}
 }
