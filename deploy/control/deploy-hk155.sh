@@ -47,6 +47,14 @@ if [ -f "$WEB_SITE" ]; then
 		WEB_FLAGS="-web-url https://${WEB_HOST:?in $WEB_SITE} -trust-proxy ${WEB_PROXY_IP:?in $WEB_SITE}"
 	fi
 fi
+# Sign-up: open on hk-155 since 2026-11-12 (the user: "都可以"), with the
+# login codes mailed through Cloudflare (data/mail.json): an email with no
+# account gets a code too, and its account is made when the code checks
+# out. OPEN_SIGNUP=no deploys it closed again.
+SIGNUP_FLAGS=
+if [ "${OPEN_SIGNUP:-yes}" = yes ]; then
+	SIGNUP_FLAGS=-open-signup
+fi
 ARCHES=amd64 deploy/control/build.sh
 
 # The port must be free, unless our own container is the one holding it.
@@ -107,7 +115,7 @@ ssh "$HOST" "
 		--log-opt max-size=10m --log-opt max-file=3 \
 		-v $REMOTE/data:/data \
 		-v /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro \
-		$TAG -listen :$PORT -data /data -seed /data/seed.json -public-url $PUBLIC_URL $WEB_FLAGS
+		$TAG -listen :$PORT -data /data -seed /data/seed.json -public-url $PUBLIC_URL $WEB_FLAGS $SIGNUP_FLAGS
 	sleep 3
 	docker ps --filter name=^$NAME\$ --format '{{.Names}} {{.Status}}'
 	docker logs --tail 5 $NAME
