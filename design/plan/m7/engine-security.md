@@ -261,7 +261,10 @@
     - os.Stdout、os.Stderr 和 log 也换成新文件；
     - 最后关掉旧句柄。
   - 新文件的权限跟着文件夹走：`%LOCALAPPDATA%` 只有这个用户、SYSTEM 和管理员能进。
-  - 真机没验：测试机 11-12 上午一直离线（Tailscale 显示两小时前就下线了）。只做了本机测试和交叉编译，Windows 的测试程序编出来了，没在 Windows 上跑过。
+  - 测试机 11-12 上午一直离线，所以把这几条测试放进了 CI 新加的 Windows 任务（GitHub 的 windows-latest，见 ci.md）。ef0486c 那一轮（run 43144978579）七个包都过，没有重跑：
+    - `engine/logfile` 的 `TestRenameWhileOpen`：开着的日志能改名，连着两轮都行；
+    - `cmd/denebd` 的 `TestRollLogWhileOpen`：开着的日志照样能换，换完接着写进新文件。
+  - 还没做：在测试机上让窗口真的拉起引擎，把日志写过 10 MB，看它换。等测试机回来再做。
 - **测试**：
   - `TestRollLog`：超了就换，没超不动；写日志的描述符接到新文件上，旧内容在 `.1` 里；新文件是 0600；
   - `TestRollLogWhileOpen`：日志在写的地方还开着（像引擎的 stdout、stderr），照样能换，换完接着写进新文件。在 Windows 上，这条就是改名这件事本身；
