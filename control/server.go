@@ -18,6 +18,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -41,11 +42,12 @@ type Config struct {
 	// server, this server's own invite links redirect there, and its
 	// browser API takes requests from it as its own. Empty, as before.
 	WebURL string
-	// TrustLocalProxy takes a request's address from X-Real-IP when it
-	// comes from this machine: the address nginx saw, passed on by
-	// deneb-web. Without it every browser behind them looks like
-	// 127.0.0.1, and shares the per-address limits on login codes.
-	TrustLocalProxy bool
+	// TrustProxies are where deneb-web runs, behind nginx: a request from
+	// one of them takes its address from X-Real-IP, the address nginx saw,
+	// which deneb-web passes on. Without it every browser behind them looks
+	// like that machine, and shares the per-address limits on login codes.
+	// From anywhere else the header counts for nothing.
+	TrustProxies []netip.Prefix
 	// Dev turns on what only a development server may have: POST
 	// /dev/approve, which completes a device login without a browser.
 	Dev bool
@@ -467,8 +469,8 @@ func (s *Server) routes() {
 
 // Handler serves the device interface, the two web pages and /healthz.
 func (s *Server) Handler() http.Handler {
-	if s.cfg.TrustLocalProxy {
-		return localProxy(s.mux)
+	if len(s.cfg.TrustProxies) > 0 {
+		return trustProxies(s.mux, s.cfg.TrustProxies)
 	}
 	return s.mux
 }
@@ -482,20 +484,43 @@ func (s *Server) inviteBase() string {
 	return s.cfg.PublicURL
 }
 
-// localProxy takes a request's address from X-Real-IP when the request
-// comes from this machine: deneb-web, passing on what nginx saw. From
-// anywhere else the header counts for nothing, so no one outside can
-// choose the address the limits and the log see.
-func localProxy(next http.Handler) http.Handler {
+// trustProxies takes a request's address from X-Real-IP when the request
+// comes from one of proxies: deneb-web, passing on what nginx saw. From
+// anywhere else the header counts for nothing, so no one else can choose
+// the address the limits and the log see.
+func trustProxies(next http.Handler, proxies []netip.Prefix) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if v := r.Header.Get("X-Real-IP"); v != "" {
 			peer, err := netip.ParseAddrPort(r.RemoteAddr)
 			from, err2 := netip.ParseAddr(strings.TrimSpace(v))
-			if err == nil && err2 == nil && peer.Addr().Unmap().IsLoopback() {
+			if err == nil && err2 == nil && slices.ContainsFunc(proxies, func(p netip.Prefix) bool { return p.Contains(peer.Addr().Unmap()) }) {
 				r = r.WithContext(r.Context())
 				r.RemoteAddr = netip.AddrPortFrom(from.Unmap(), 0).String()
 			}
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// ParseProxies reads -trust-proxy: addresses or prefixes, comma-separated,
+// as 198.51.100.4,127.0.0.1 or 2001:db8::/64.
+func ParseProxies(s string) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for _, f := range strings.Split(s, ",") {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		if p, err := netip.ParsePrefix(f); err == nil {
+			out = append(out, p.Masked())
+			continue
+		}
+		a, err := netip.ParseAddr(f)
+		if err != nil {
+			return nil, fmt.Errorf("-trust-proxy: %q is no address", f)
+		}
+		a = a.Unmap()
+		out = append(out, netip.PrefixFrom(a, a.BitLen()))
+	}
+	return out, nil
 }

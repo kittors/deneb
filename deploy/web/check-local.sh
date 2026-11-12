@@ -1,8 +1,10 @@
 #!/bin/sh
 # Checks the Web version's whole chain on this machine, before a deploy:
-# nginx with the site file nginx-hk155.sh makes (in Docker, nginx:1.27-alpine,
-# a self-signed certificate) → deneb-web → deneb-control -dev, as on hk-155
-# but under deneb.example.com. Run deploy/web/build.sh first (for the app).
+# nginx with the site file nginx-hkspare.sh makes (in Docker,
+# nginx:1.27-alpine, a self-signed certificate) → deneb-web → deneb-control
+# -dev, as on hk-spare and hk-155 but all here, under deneb.example.com, the
+# control server trusting X-Real-IP from 127.0.0.1 where deneb-web runs. Run
+# deploy/web/build.sh first (for the app).
 #
 #   deploy/web/check-local.sh
 #
@@ -19,7 +21,7 @@ rm -rf "$e"; mkdir -p "$e/live" "$e/data"
 go build -o "$e/deneb-control" ./cmd/deneb-control
 go build -o "$e/deneb-web" ./cmd/deneb-web
 "$e/deneb-control" -dev -listen 127.0.0.1:47981 -data "$e/data" -log-dir off -public-url http://127.0.0.1:47981 \
-	-web-url https://deneb.example.com -trust-local-proxy > "$e/control.log" 2>&1 &
+	-web-url https://deneb.example.com -trust-proxy 127.0.0.1 > "$e/control.log" 2>&1 &
 cpid=$!
 "$e/deneb-web" -listen 127.0.0.1:47982 -static "$root/deploy/web/app" -control http://127.0.0.1:47981 > "$e/web.log" 2>&1 &
 wpid=$!
@@ -27,8 +29,8 @@ trap 'kill $cpid $wpid 2>/dev/null; docker rm -f deneb-e2e-nginx >/dev/null 2>&1
 curl -s --retry 30 --retry-connrefused --retry-delay 1 -o /dev/null http://127.0.0.1:47981/healthz
 curl -s --retry 30 --retry-connrefused --retry-delay 1 -o /dev/null http://127.0.0.1:47982/
 
-printf 'WEB_HOST=deneb.example.com\nWEB_PORT=47982\nNGINX_IP=0.0.0.0\n' > "$e/site.env"
-SITE="$e/site.env" deploy/web/nginx-hk155.sh show | sed 's|http://127.0.0.1:47982|http://host.docker.internal:47982|' > "$e/site.conf"
+printf 'WEB_HOST=deneb.example.com\nWEB_PORT=47982\nNGINX_LISTEN_80="80"\nNGINX_LISTEN_443="443 ssl;[::]:443 ssl"\n' > "$e/site.env"
+SITE="$e/site.env" deploy/web/nginx-hkspare.sh show | sed 's|http://127.0.0.1:47982|http://host.docker.internal:47982|' > "$e/site.conf"
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=deneb.example.com \
 	-keyout "$e/live/privkey.pem" -out "$e/live/fullchain.pem" 2>/dev/null
 docker run -d --name deneb-e2e-nginx -p 127.0.0.1:47983:443 \

@@ -22,13 +22,13 @@ RESTORE=no
 # As deploy-hk155.sh: the Web version's flags, if it is live (dropped below
 # for an image from before them).
 cd "$(dirname "$0")/../.."
-WEB_SITE=${WEB_SITE:-deploy/web/site.hk155.env}
+WEB_SITE=${WEB_SITE:-deploy/web/site.hkspare.env}
 WEB_FLAGS=
 if [ -f "$WEB_SITE" ]; then
 	case $WEB_SITE in /*) ;; *) WEB_SITE=./$WEB_SITE ;; esac
 	. "$WEB_SITE"
 	if [ "${WEB_LIVE:-no}" = yes ]; then
-		WEB_FLAGS="-web-url https://${WEB_HOST:?in $WEB_SITE} -trust-local-proxy"
+		WEB_FLAGS="-web-url https://${WEB_HOST:?in $WEB_SITE} -trust-proxy ${WEB_PROXY_IP:?in $WEB_SITE}"
 	fi
 fi
 

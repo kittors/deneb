@@ -1,20 +1,20 @@
-# deneb-web: made by deploy/web/nginx-hk155.sh from deploy/web/nginx.conf.template
+# deneb-web: made by deploy/web/nginx-hkspare.sh from deploy/web/nginx.conf.template
 #
 # The Web version of Deneb (design/plan/m7/web-deploy.md): @WEB_HOST@ over
 # HTTPS, passed on to deneb-web on 127.0.0.1:@WEB_PORT@. Nothing is logged per
 # request: the paths carry invite codes (/i/<code>, /api/v1/invites/<code>).
-# The listen address is the one nginx's other sites listen on, so this binds
-# nothing new; no http2 here, so the other sites' sockets stay as they are.
+# It listens as nginx's other sites on this machine do, so it binds nothing
+# new and takes no address from them; no http2 of its own.
 
 server {
-	listen @NGINX_IP@:80;
+@LISTEN_80@
 	server_name @WEB_HOST@;
 	access_log off;
 	return 301 https://$host$request_uri;
 }
 
 server {
-	listen @NGINX_IP@:443 ssl;
+@LISTEN_443@
 	server_name @WEB_HOST@;
 	ssl_certificate     /etc/letsencrypt/live/@WEB_HOST@/fullchain.pem;
 	ssl_certificate_key /etc/letsencrypt/live/@WEB_HOST@/privkey.pem;
@@ -32,10 +32,12 @@ server {
 		proxy_set_header Host $host;
 		# The address the control server's limits and log go by, set here so
 		# a browser cannot choose it; deneb-web passes it on as it is, and the
-		# control server takes it from this machine only (-trust-local-proxy).
+		# control server takes it from this machine's address only
+		# (-trust-proxy).
 		proxy_set_header X-Real-IP $remote_addr;
 		# deneb-web drops Secure for development over plain HTTP; this is
-		# HTTPS, so the session cookie gets it back.
+		# HTTPS, so the session cookie gets it back (nginx 1.19.3 or later;
+		# before, proxy_cookie_path / "/; Secure"; does the same).
 		proxy_cookie_flags ~ secure;
 		# The view's stream, frame by frame, open for long; keep-alives come
 		# every 15 s.

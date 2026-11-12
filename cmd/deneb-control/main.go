@@ -135,7 +135,7 @@ func main() {
 		smtpTLS     = flag.String("smtp-tls", "", "tls (implicit, port 465) or starttls (port 587)")
 		openSignup  = flag.Bool("open-signup", false, "let an email with no account log in: its account is made when its code checks out")
 		webURL      = flag.String("web-url", "", "the Web version's address, as https://deneb.example.com: invite links open it, and this server's own invite links redirect there")
-		localProxy  = flag.Bool("trust-local-proxy", false, "take a browser's address from X-Real-IP on requests from this machine (deneb-web behind nginx), not from anywhere else")
+		trustProxy  = flag.String("trust-proxy", "", "where deneb-web runs behind nginx, as 198.51.100.4 (comma-separated addresses or prefixes): a browser's address comes from X-Real-IP on requests from there, and from nowhere else")
 		alertURL    = flag.String("alert-webhook", "", "where alerts go: a WeCom, Feishu, DingTalk, Telegram or Bark bot's URL, or any JSON webhook; it holds the bot's key, so rather put it in <data>/alert.json or DENEB_ALERT_URL, which ps does not show")
 		alertKind   = flag.String("alert-kind", "", "wecom, feishu, dingtalk, telegram, bark or webhook (default: from the URL's host)")
 		name        = flag.String("name", "", "who the alerts say they are from (default: the public URL's host)")
@@ -260,23 +260,27 @@ func main() {
 		}
 		log.Printf("certificate pin %s (also in %s)", pin, filepath.Join(*dataDir, "tls", "pin.txt"))
 	}
+	proxies, err := control.ParseProxies(*trustProxy)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	srv, err := control.New(control.Config{
-		DataDir:         *dataDir,
-		PublicURL:       *publicURL,
-		WebURL:          *webURL,
-		TrustLocalProxy: *localProxy,
-		Dev:             *dev,
-		Seed:            seed,
-		LoginLifetime:   *lifetime,
-		SeatLimit:       *seatLimit,
-		Pin:             pin,
-		RelayImage:      *relayImage,
-		LogDir:          *logDir,
-		Mailer:          mailer,
-		OpenSignup:      *openSignup,
-		Alerts:          alerts,
-		Name:            *name,
+		DataDir:       *dataDir,
+		PublicURL:     *publicURL,
+		WebURL:        *webURL,
+		TrustProxies:  proxies,
+		Dev:           *dev,
+		Seed:          seed,
+		LoginLifetime: *lifetime,
+		SeatLimit:     *seatLimit,
+		Pin:           pin,
+		RelayImage:    *relayImage,
+		LogDir:        *logDir,
+		Mailer:        mailer,
+		OpenSignup:    *openSignup,
+		Alerts:        alerts,
+		Name:          *name,
 	})
 	if err != nil {
 		log.Fatal(err)

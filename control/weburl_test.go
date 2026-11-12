@@ -13,11 +13,16 @@ import (
 // (design/plan/m7/web-deploy.md): invite links open it, this server's own
 // invite links redirect there, the browser API takes its origin as its own
 // (for browsers that send no Sec-Fetch-Site), and a browser's address comes
-// from X-Real-IP, set by nginx and passed on by deneb-web.
+// from X-Real-IP, set by nginx and passed on by deneb-web, trusted for
+// coming from where deneb-web runs (here this machine, the test's client).
 func TestWebURL(t *testing.T) {
 	ts := httptest.NewUnstartedServer(nil)
+	proxies, err := ParseProxies("127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	s, err := New(Config{DataDir: t.TempDir(), PublicURL: "http://" + ts.Listener.Addr().String(), Dev: true,
-		Seed: DevSeed(), Logf: func(string, ...any) {}, WebURL: "https://deneb.example.com/", TrustLocalProxy: true})
+		Seed: DevSeed(), Logf: func(string, ...any) {}, WebURL: "https://deneb.example.com/", TrustProxies: proxies})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,18 +90,28 @@ func TestWebURL(t *testing.T) {
 	}
 }
 
-// TestLocalProxy: X-Real-IP counts only on a request from this machine,
-// and only when it is an address.
-func TestLocalProxy(t *testing.T) {
+// TestTrustProxies: X-Real-IP counts only on a request from where
+// deneb-web runs (-trust-proxy), here another machine, and only when it is
+// an address; from anywhere else, this machine included, it counts for
+// nothing.
+func TestTrustProxies(t *testing.T) {
+	if _, err := ParseProxies("198.51.100.4,not-an-address"); err == nil {
+		t.Fatal("-trust-proxy took a name")
+	}
+	proxies, err := ParseProxies(" 198.51.100.4 , 2001:db8:1::/64,")
+	if err != nil || len(proxies) != 2 {
+		t.Fatalf("-trust-proxy: %v, %v", proxies, err)
+	}
 	var got string
-	h := localProxy(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { got = r.RemoteAddr }))
+	h := trustProxies(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { got = r.RemoteAddr }), proxies)
 	for _, c := range []struct{ peer, header, want string }{
-		{"127.0.0.1:5000", "203.0.113.9", "203.0.113.9:0"},
-		{"[::1]:5000", "2001:db8::9", "[2001:db8::9]:0"},
-		{"[::ffff:127.0.0.1]:5000", " 203.0.113.9 ", "203.0.113.9:0"},
-		{"198.51.100.7:5000", "203.0.113.9", "198.51.100.7:5000"}, // from outside
-		{"127.0.0.1:5000", "203.0.113.9, 198.51.100.1", "127.0.0.1:5000"},
-		{"127.0.0.1:5000", "", "127.0.0.1:5000"},
+		{"198.51.100.4:5000", "203.0.113.9", "203.0.113.9:0"},
+		{"[2001:db8:1::7]:5000", "2001:db8::9", "[2001:db8::9]:0"},
+		{"[::ffff:198.51.100.4]:5000", " 203.0.113.9 ", "203.0.113.9:0"},
+		{"198.51.100.7:5000", "203.0.113.9", "198.51.100.7:5000"}, // another machine
+		{"127.0.0.1:5000", "203.0.113.9", "127.0.0.1:5000"},       // this one, not named
+		{"198.51.100.4:5000", "203.0.113.9, 198.51.100.1", "198.51.100.4:5000"},
+		{"198.51.100.4:5000", "", "198.51.100.4:5000"},
 	} {
 		r := httptest.NewRequest("GET", "/", nil)
 		r.RemoteAddr = c.peer
