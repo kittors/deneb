@@ -29,7 +29,12 @@ func (a *app) accountRowView(c *ui.Context, p *palette) {
 	}
 	row.Transition(ui.ElementTransition{Duration: 120 * time.Millisecond, Colors: true})
 	row.Children(func() {
-		ball(c, a.people[a.me], 32, false)
+		if who := a.people[a.me]; who != nil {
+			ball(c, who, 32, false)
+		} else {
+			// Logged out under the window, a frame before the sign-in.
+			ui.Box(c).Size(32, 32).Radius(999).Background(p.well)
+		}
 		name := ""
 		if me := a.snap.Person(a.snap.Me); me != nil {
 			name = me.Name
@@ -167,7 +172,9 @@ func (a *app) logout(c *ui.Context) {
 			return a.store.Do(ctx, model.Op{Kind: model.OpLogout})
 		}, func(c *ui.Context, _ model.Result, err error) {
 			if err != nil {
-				a.curtain = nil
+				if a.curtain != nil {
+					a.curtain.back = true
+				}
 				a.problem(c, err)
 				return
 			}
@@ -184,6 +191,10 @@ type curtain struct {
 	at, lift time.Time
 	then     func(c *ui.Context)
 	done     bool
+	// Deleting this computer, sent once the curtain is down: done, the
+	// sign-in comes; refused, it lifts back over the window as it was.
+	op   *pending
+	back bool
 }
 
 const (
@@ -202,10 +213,18 @@ func (a *app) curtainView(c *ui.Context, p *palette, lifting bool) {
 	if cu == nil {
 		return
 	}
+	if o := cu.op; o != nil && o.done {
+		cu.op = nil
+		if o.err != nil {
+			cu.back = true
+		} else {
+			a.signedOut()
+		}
+	}
 	now := c.Now()
 	k := float32(1)
 	switch {
-	case lifting && cu.done:
+	case (lifting || cu.back) && cu.done:
 		if cu.lift.IsZero() {
 			cu.lift = now
 		}
@@ -230,7 +249,10 @@ func (a *app) curtainView(c *ui.Context, p *palette, lifting bool) {
 // (checkOnboard); the demo, which has no sign-in of its own, too.
 func (a *app) signedOut() {
 	a.selected, a.more, a.accountOpen, a.deleting = "", false, false, nil
-	a.onboard = &onboarding{}
+	if o := a.onboard; o == nil || o.step != 0 || !o.leaving.IsZero() {
+		// (The real window may be at it already: what was typed stays.)
+		a.onboard = &onboarding{}
+	}
 }
 
 // canDelete reports whether d is mine to delete: my own devices (DESIGN
@@ -271,14 +293,22 @@ func (a *app) deleteDevice(c *ui.Context, d *device) {
 	op := model.Op{Kind: model.OpDeviceDelete, Device: d.dev}
 	if d.id == a.self {
 		a.holdFor(c, op, "这台电脑会被删掉")
+		held := a.pend[len(a.pend)-1]
 		// As the toast goes, the window fades to its background, and then
 		// the server hears of it: the sign-in comes in through it.
 		commit := a.toast.commit
 		a.toast.commit = func(c *ui.Context) {
+			if c == nil {
+				// The window closed to the bar: nothing to fade.
+				commit(nil)
+				return
+			}
 			a.lowerCurtain(c, func(c *ui.Context) {
 				commit(c)
 				if s := a.store.Snapshot(); s != nil && !s.LoggedIn {
 					a.signedOut()
+				} else if a.curtain != nil {
+					a.curtain.op = held
 				}
 			})
 		}

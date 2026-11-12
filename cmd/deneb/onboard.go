@@ -61,7 +61,16 @@ type signer interface {
 // nothing yet gets the others, once on this computer. Signed in with LANs
 // already, there is nothing to show: done.
 func (a *app) checkOnboard() {
+	if a.snap.LoggedIn && a.gone != nil {
+		// Signed in again: the account deleted before is old news.
+		a.gone = nil
+	}
 	if a.signer == nil || a.onboard != nil || !a.snap.Engine && a.snap.Version == 0 {
+		return
+	}
+	if a.deleting != nil || a.curtain != nil && !a.curtain.done {
+		// The window fades to its background first (DESIGN §6.15): the
+		// steps come once it has, by then too or now.
 		return
 	}
 	switch {

@@ -26,8 +26,13 @@ type accountDeleting struct {
 	asking  bool                   // a dry run is under way
 	refused string                 // the server's no to the dry run, in its words (an account the seed names)
 	email   string
-	sending bool   // the account is being deleted
-	trouble string // what went wrong, in a sentence
+	sending bool     // the account is being deleted
+	relays  []string // then: mine, by name, which the sign-in says to stop
+	// The engine was logged out meanwhile: the account deleted, or this
+	// computer logged out from elsewhere. The window keeps the snapshot
+	// from before (sync).
+	loggedOut bool
+	trouble   string // what went wrong, in a sentence
 	// The demo's server answers at once: it waits as long as a real one
 	// takes, from since, so that the recordings show the wait.
 	since             time.Time
@@ -61,11 +66,15 @@ func (a *app) openAccountDelete(c *ui.Context) {
 		dl.waitDry = true
 		return
 	}
-	a.dryRun(c, "")
+	a.dryRun(c, dl.owned)
 }
 
 // dryRun asks the server what deleting would delete, the LANs I own that
 // have others in them as owned says; with owned empty, which they are.
+// The page asks with the default choice at once: the LANs it hands over
+// are those to choose for, so one dry run tells both (the engine may hold
+// each op up to 3 s, waiting for a version that changed nothing of its
+// own).
 func (a *app) dryRun(c *ui.Context, owned string) {
 	dl := a.deleting
 	dl.asking, dl.trouble = true, ""
@@ -86,6 +95,11 @@ func (a *app) dryRun(c *ui.Context, owned string) {
 				return
 			case r.Account == nil:
 				return
+			}
+			if dl.blocked == nil && owned == model.AccountTransfer {
+				for _, t := range r.Account.Transferred {
+					dl.blocked = append(dl.blocked, t.LAN)
+				}
 			}
 			if owned == "" && len(r.Account.Blocked) > 0 {
 				// Theirs to choose: what the default choice would do.
@@ -116,25 +130,34 @@ func (a *app) sendDelete(c *ui.Context) {
 	if len(dl.blocked) > 0 {
 		op.OwnedLANs = dl.owned
 	}
-	var relays []string
+	dl.relays = nil
 	if dl.acc != nil {
 		for _, id := range dl.acc.Relays {
-			relays = append(relays, a.ownRelayName(id))
+			dl.relays = append(dl.relays, a.ownRelayName(id))
 		}
 	}
 	run(a, c, func(ctx context.Context) (model.Result, error) { return a.store.Do(ctx, op) },
 		func(c *ui.Context, _ model.Result, err error) {
+			if a.deleting != dl || a.curtain != nil {
+				// Gone already: this computer was logged out first.
+				return
+			}
 			if err != nil {
 				dl.sending = false
 				dl.trouble = troubleWords(err)
 				return
 			}
-			// Gone: the window fades to the sign-in, which says so.
-			a.lowerCurtain(c, func(*ui.Context) {
-				a.signedOut()
-				a.gone = &accountGone{relays: relays}
-			})
+			a.accountGone(c, dl)
 		})
+}
+
+// accountGone fades the window to the sign-in, which says the account is
+// gone.
+func (a *app) accountGone(c *ui.Context, dl *accountDeleting) {
+	a.lowerCurtain(c, func(*ui.Context) {
+		a.signedOut()
+		a.gone = &accountGone{relays: dl.relays}
+	})
 }
 
 // ownRelayName is one of my relays as the page names it.
@@ -173,7 +196,7 @@ func (a *app) accountDeleteView(c *ui.Context, p *palette) {
 		on    *bool
 		after time.Duration
 		do    func()
-	}{{&dl.waitDry, demoDryRun, func() { a.dryRun(c, "") }}, {&dl.waitSend, demoDelete, func() { a.sendDelete(c) }}} {
+	}{{&dl.waitDry, demoDryRun, func() { a.dryRun(c, dl.owned) }}, {&dl.waitSend, demoDelete, func() { a.sendDelete(c) }}} {
 		if !*w.on {
 			continue
 		}
@@ -186,6 +209,17 @@ func (a *app) accountDeleteView(c *ui.Context, p *palette) {
 	}
 	if a.deleting != dl {
 		return
+	}
+	if dl.loggedOut && a.curtain == nil {
+		if dl.sending {
+			// The server logs this computer out as it deletes the account,
+			// before the engine answers (it waits for a version that never
+			// comes): the window goes on at once.
+			a.accountGone(c, dl)
+		} else {
+			// Logged out from elsewhere: nothing here to delete any more.
+			a.lowerCurtain(c, func(*ui.Context) { a.signedOut() })
+		}
 	}
 	// Its own background takes the pointer: nothing under it answers, and
 	// it moves the window, as the first time's steps do.

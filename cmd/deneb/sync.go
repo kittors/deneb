@@ -37,6 +37,12 @@ func (a *app) sync(c *ui.Context) {
 		a.clock = c.Now()
 	}
 	base := a.store.Snapshot()
+	if dl := a.deleting; dl != nil && base != nil && !base.LoggedIn && a.base != nil && a.base.LoggedIn {
+		// The server logs this computer out as it deletes the account: the
+		// page stays as it was, names and all, while the window fades to
+		// the sign-in (DESIGN §6.15).
+		dl.loggedOut, base = true, a.base
+	}
 	if base != a.base || a.gen != a.synced {
 		a.pend = slices.DeleteFunc(a.pend, func(p *pending) bool {
 			return p.done && (p.err != nil || base.Version >= p.ver)

@@ -314,6 +314,10 @@ func (l *Live) buildLocked(now time.Time) *model.Snapshot {
 		}
 		for _, p := range v.People {
 			s.People[model.PersonID(p.ID)] = person(p, s.Me)
+			if model.PersonID(p.ID) == s.Me {
+				// Mine only: the account card, and deleting the account (M7).
+				s.Email = p.Email
+			}
 		}
 		for _, d := range v.Devices {
 			md := deviceFrom(d)
@@ -581,8 +585,11 @@ func toPath(p apitype.PeerPath) model.Path {
 // whose answer was lost to an engine starting over is sent again with the
 // same key, so that it takes effect once.
 func (l *Live) Do(ctx context.Context, op model.Op) (model.Result, error) {
-	if op.Kind == model.OpLANPause {
+	switch op.Kind {
+	case model.OpLANPause:
 		return l.pause(ctx, op.LAN, op.On)
+	case model.OpLogout:
+		return l.logout(ctx)
 	}
 	args := proto.OpArgs{
 		LAN: proto.LANID(op.LAN), Device: proto.DeviceID(op.Device), Person: proto.PersonID(op.Person),
@@ -596,6 +603,7 @@ func (l *Live) Do(ctx context.Context, op model.Op) (model.Result, error) {
 	if err := l.relayArgs(op, &args); err != nil {
 		return model.Result{}, err
 	}
+	accountArgs(op, &args)
 	if op.Kind == model.OpServiceSet {
 		svc := l.service(op.Device, op.LAN, op.Service)
 		if svc == nil {
@@ -641,6 +649,7 @@ func (l *Live) Do(ctx context.Context, op model.Op) (model.Result, error) {
 				r.Link = out.Link
 			}
 			r.Share = string(out.Share)
+			r.Account = accountAnswer(out.Account)
 			l.relaysDone(op, out.OpOutput, &r)
 		}
 	}
