@@ -424,10 +424,11 @@ func TestM1Topology(t *testing.T) {
 	if svcs := serviceOf(lanByName(jdesk.view(), "周末联机"), build.id); len(svcs) != 1 {
 		t.Fatalf("after undo 阿杰 sees %+v", svcs)
 	}
-	// The same switch again changes nothing and moves no version.
+	// The same switch again changes nothing and moves no version; it
+	// answers with one the Mac has (TestNoChangeVersion).
 	v0 := s.Version()
-	if res := mac.must(proto.OpServiceSet, proto.OpArgs{Device: build.id, LAN: weekend, Service: web, On: true}); res.Version != v0 {
-		t.Fatalf("a no-op moved the version from %d to %d", v0, res.Version)
+	if res := mac.must(proto.OpServiceSet, proto.OpArgs{Device: build.id, LAN: weekend, Service: web, On: true}); s.Version() != v0 || res.Version > v0 {
+		t.Fatalf("a no-op moved the version from %d to %d, answered %d", v0, s.Version(), res.Version)
 	}
 	// Ports belong to one service.
 	mac.refused(proto.ErrConflict, proto.OpServiceSet, proto.OpArgs{Device: build.id, LAN: weekend,
@@ -591,6 +592,91 @@ func (st *stream) next(t *testing.T) proto.StreamFrame {
 		t.Fatal("no frame within 5 s")
 	}
 	panic("unreachable")
+}
+
+// TestNoChangeVersion: an op that changes nothing answers with the newest
+// version the asker's streams were sent, not the current one, which may be
+// a change it never hears of: an engine waits for the version an op
+// answers with, up to 3 s. A change it did hear of is in the answer.
+func TestNoChangeVersion(t *testing.T) {
+	s, ts := newTestServer(t, "")
+	mac := newEngine(t, ts.URL, "mac", proto.MacOS)
+	jdesk := newEngine(t, ts.URL, "jdesk", proto.Windows)
+	mac.login("kittors@deneb.test")
+	jdesk.login("jie@deneb.test")
+	weekend := jdesk.must(proto.OpLANCreate, proto.OpArgs{Name: "周末联机"}).Result.LAN
+	inv := jdesk.must(proto.OpLANInvite, proto.OpArgs{LAN: weekend}).Result.Invite
+	mac.must(proto.OpInviteAccept, proto.OpArgs{Invite: inv.URL})
+	again := proto.OpArgs{LAN: weekend, Device: mac.id} // in already: no change
+
+	// No stream open: nothing to wait for.
+	if v := mac.must(proto.OpLANAddDevice, again).Version; v != 0 {
+		t.Fatalf("no change, no stream: version %d", v)
+	}
+
+	// The stream opens; the Mac coming online is a change of its own,
+	// published a moment later. has is the newest version the Mac got.
+	before := s.Version()
+	st := mac.stream(t, false)
+	has := st.next(t).Version
+	for deadline := time.Now().Add(5 * time.Second); s.Version() == before; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("coming online was never published")
+		}
+	}
+	drain := func() {
+		for {
+			select {
+			case f := <-st.frames:
+				has = f.Version
+			case <-time.After(100 * time.Millisecond):
+				return
+			}
+		}
+	}
+	drain()
+
+	// 阿杰's new invite changes only his view: the current version moves
+	// past the Mac's, and the Mac's no-change op does not ask it to wait
+	// for a version it will never get.
+	jdesk.must(proto.OpLANInvite, proto.OpArgs{LAN: weekend})
+	if s.Version() <= has {
+		t.Fatalf("the current version %d did not move past the Mac's %d", s.Version(), has)
+	}
+	if v := mac.must(proto.OpLANAddDevice, again).Version; v != has {
+		t.Fatalf("no change: version %d, want the Mac's %d (the current one is %d)", v, has, s.Version())
+	}
+
+	// 阿杰 renames 周末联机, which the Mac hears; then another invite it
+	// does not. The Mac's no-change op answers with the rename.
+	renamed := jdesk.must(proto.OpLANRename, proto.OpArgs{LAN: weekend, Name: "周末"}).Version
+	if f := st.next(t); f.Version != renamed {
+		t.Fatalf("the rename reached the Mac as version %d, not %d", f.Version, renamed)
+	}
+	jdesk.must(proto.OpLANInvite, proto.OpArgs{LAN: weekend})
+	if v := mac.must(proto.OpLANAddDevice, again).Version; v != renamed || s.Version() <= renamed {
+		t.Fatalf("no change after the rename: version %d, want %d (the current one is %d)", v, renamed, s.Version())
+	}
+
+	// From a browser: the newest version its person's browser streams were
+	// sent, 0 with none open.
+	b := newWebBrowser(t, ts.URL)
+	b.login("kittors@deneb.test", DevCode)
+	if st, r := b.op(proto.OpLANAddDevice, again); st != 200 || r.Version != 0 {
+		t.Fatalf("no change from a browser with no stream: %d, version %d", st, r.Version)
+	}
+	me := s.state.Load().w.byEmail["kittors@deneb.test"].ID
+	tab := &sub{person: me, view: true, notify: make(chan struct{}, 1)}
+	if _, ok := s.hub.add(tab); !ok {
+		t.Fatal("no room for the tab")
+	}
+	defer s.hub.remove(tab, nil)
+	now := s.state.Load()
+	s.hub.prime(tab, now.w, now.v)
+	jdesk.must(proto.OpLANInvite, proto.OpArgs{LAN: weekend})
+	if st, r := b.op(proto.OpLANAddDevice, again); st != 200 || r.Version != now.v || s.Version() <= now.v {
+		t.Fatalf("no change from a browser with a tab open: %d, version %d, want %d (the current one is %d)", st, r.Version, now.v, s.Version())
+	}
 }
 
 func TestStream(t *testing.T) {

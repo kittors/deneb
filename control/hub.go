@@ -78,6 +78,27 @@ func (s *sub) take() ([]byte, bool) {
 	return b, s.ended && b != nil
 }
 
+// lastSent is the newest version handed to device's streams, or with
+// device empty to person's browsers; 0 when none is open or none has had a
+// frame yet. An op that changed nothing answers with it (applyOp).
+func (h *hub) lastSent(device proto.DeviceID, person proto.PersonID) uint64 {
+	h.mu.Lock()
+	var mine []*sub
+	for s := range h.subs {
+		if device != "" && s.device == device || device == "" && person != "" && s.person == person {
+			mine = append(mine, s)
+		}
+	}
+	h.mu.Unlock()
+	var v uint64
+	for _, s := range mine {
+		s.mu.Lock()
+		v = max(v, s.lastV)
+		s.mu.Unlock()
+	}
+	return v
+}
+
 func (h *hub) isOnline(id proto.DeviceID) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()

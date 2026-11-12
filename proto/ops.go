@@ -262,7 +262,11 @@ const (
 type OpResult struct {
 	// Version is the version the change landed in. The client keeps its
 	// "waiting for the server" overlay until a snapshot at least this new
-	// arrives. An op that changed nothing answers with the current version.
+	// arrives. An op that changed nothing answers with the newest version
+	// the asker's streams were sent (0 with none open): one it has or is
+	// about to get, so waiting for it never hangs on someone else's change
+	// that does not reach the asker, yet still sees a change that does,
+	// as another device's to the same switch a moment before. (M7)
 	Version uint64    `json:"version"`
 	Result  *OpOutput `json:"result,omitempty"`
 }

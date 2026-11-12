@@ -99,6 +99,7 @@ func (s *Server) applyOp(from proto.DeviceID, person proto.PersonID, op proto.Op
 	now := s.now()
 	var out proto.OpOutput
 	var ctx *opCtx
+	before := s.state.Load().v
 	v, err := s.changeLocked(from, func(tx *sql.Tx, w *World) error {
 		var dev *device
 		if from != "" {
@@ -132,12 +133,24 @@ func (s *Server) applyOp(from proto.DeviceID, person proto.PersonID, op proto.Op
 		json.NewEncoder(&body).Encode(proto.ErrorBody{Error: &ae.body})
 		return opEntry{status: ae.status, body: body.Bytes(), at: now}
 	}
+	if v == before {
+		// Nothing changed (errNoChange): the answer is the newest version
+		// the asker's streams were handed, one it has or is about to get.
+		// The current version may be someone else's change that never
+		// reaches it, and an engine waiting for that would wait in vain
+		// (Engine.Do gives up after 3 s); a change that does reach it, as
+		// another device's to the same switch a moment before, is in it,
+		// so the asker still waits for that one.
+		s.logf("op %s from %s: no change", op.Op, from)
+		v = s.hub.lastSent(from, person)
+	} else {
+		s.logf("op %s from %s: version %d", op.Op, from, v)
+	}
 	res := proto.OpResult{Version: v}
 	if out != (proto.OpOutput{}) {
 		res.Result = &out
 	}
 	json.NewEncoder(&body).Encode(res)
-	s.logf("op %s from %s: version %d", op.Op, from, v)
 	return opEntry{status: http.StatusOK, body: body.Bytes(), at: now}
 }
 

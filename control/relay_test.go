@@ -689,8 +689,8 @@ func TestRelayKick(t *testing.T) {
 	}
 	// Again changes nothing; only the owner kicks.
 	v := s.Version()
-	if res := w.mac.must(proto.OpRelayKick, proto.OpArgs{Relay: r, Device: w.build.id}); res.Version != v {
-		t.Fatal("kicking twice made a new version")
+	if res := w.mac.must(proto.OpRelayKick, proto.OpArgs{Relay: r, Device: w.build.id}); s.Version() != v || res.Version > v {
+		t.Fatalf("kicking twice made a new version: %d → %d, answered %d", v, s.Version(), res.Version)
 	}
 	w.jdesk.refused(proto.ErrForbidden, proto.OpRelayKick, proto.OpArgs{Relay: r, Device: w.mac.id})
 	w.mac.refused(proto.ErrInvalid, proto.OpRelayKick, proto.OpArgs{Relay: r})
