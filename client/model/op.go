@@ -101,6 +101,11 @@ type Op struct {
 	// M4.
 	Relay RelayID
 	Join  string // relay.revokeJoin: a RelayJoin's ID
+
+	// M7 (DESIGN §6.15): account.delete.
+	DryRun    bool
+	OwnedLANs string // AccountTransfer or AccountDeleteLANs
+	Confirm   string // my email again, to delete for real
 }
 
 // Result is what an op that went through answers.
@@ -114,6 +119,8 @@ type Result struct {
 	// relay.join: the install command, and the join it is (M4).
 	Command string
 	Join    string
+	// account.delete: what went, or would (M7).
+	Account *AccountDeletion
 }
 
 // With returns the snapshot as it will be once op takes effect, for the view
@@ -124,6 +131,13 @@ type Result struct {
 // what op changes is copied.
 func (s *Snapshot) With(op Op) *Snapshot {
 	switch op.Kind {
+	case OpDeviceDelete:
+		if op.Device == s.Self {
+			// This computer: the window goes to the login once the server
+			// took it; until then it stays as it is.
+			return s
+		}
+		return s.withoutDevice(op.Device)
 	case OpLANAddDevice:
 		l := s.LAN(op.LAN)
 		if l == nil || l.Has(op.Device) || l.HasPending(op.Device) {

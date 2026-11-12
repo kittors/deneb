@@ -218,6 +218,9 @@
                       
                                 
                           
+                                                                          
+                                                           
+                                  
  
 
                               
@@ -310,7 +313,8 @@
                                                                            
                                                                                                           
                                                                                                                   
-                                                                                                 
+                                                                                                
+                                       
 
                          
               
@@ -332,6 +336,11 @@
                     
                 
                    
+                                                                         
+                                                             
+                   
+                                    
+                   
  
 
                      
@@ -348,6 +357,22 @@
                       
                         
                 
+                                                   
+ 
+
+// AccountDeletion is what account.delete deletes, or would (dryRun):
+// design/plan/m7/account-delete.md §2.
+                                  
+                   
+                      
+                
+                                               
+                
+                    
+                    
+                          
+                 
+                  
  
 
                            

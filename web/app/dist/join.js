@@ -3,6 +3,7 @@
 // Each step replaces the card's contents, fading them in while its height
 // follows; the email is the one field to fill in, the code six boxes that
 // send themselves once full.
+import { PRIVACY_URL, goneNote, wireGone, fadeIn, takeFade } from './account.js';
 import { api, ApiError } from './api.js';
                                                                   
 import { colorIndex } from './model.js';
@@ -37,7 +38,9 @@ function page(root             )                                                
   el.innerHTML =
     `<div class="brand">${star(18)}<span>Deneb</span></div>` +
     `<main class="join-card" aria-live="polite"></main>` +
-    `<p class="join-note">${esc(spaced(NOTE))}</p>`;
+    `<p class="join-note">${esc(spaced(NOTE))}</p>` +
+    // The privacy notes, on GitHub (M7, DESIGN §6.15).
+    `<p class="join-privacy"><a href="${PRIVACY_URL}" target="_blank" rel="noopener">隐私说明</a></p>`;
   root.replaceChildren(el);
   return { card: el.querySelector('.join-card')               , note: el.querySelector('.join-note')               , destroy: () => el.remove() };
 }
@@ -211,6 +214,18 @@ function loginSteps(card             , who        , title        , done         
 // mountLogin is the card for logging in without an invite.
 export function mountLogin(root             , o              )             {
   const { card, destroy } = page(root);
+  // An account just deleted (M7): the page says so, and how to stop its relays.
+  const gone = goneNote();
+  if (gone) {
+    card.insertAdjacentHTML('beforebegin', gone.line);
+    if (gone.relays) {
+      card.insertAdjacentHTML('afterend', gone.relays);
+      wireGone(card.parentElement               );
+    }
+  }
+  // In from a window that faded to this page's background: logged out, or
+  // the account deleted (DESIGN §6.15).
+  if (takeFade() || gone) fadeIn(card.parentElement               , 260);
   const who = `<span class="jc-mark">${star(24, '#fff')}</span>`;
   loginSteps(card, who, '登录 Deneb', o.onDone);
   return destroy;

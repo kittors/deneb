@@ -600,275 +600,285 @@ func (a *app) card(c *ui.Context, p *palette) {
 	}
 	card.Transition(ui.ElementTransition{Duration: 200 * time.Millisecond, Size: true,
 		Enter: &ui.Motion{Scale: 0.96, Y: -8}, Exit: &ui.Motion{Scale: 0.97, Y: -6}})
+	if a.ch > 0 {
+		// Taller than the canvas, as this computer's with "更多" open in a
+		// short window: it scrolls in itself (M7, DESIGN §6.15).
+		card.MaxHeight(a.ch - 24)
+	}
 	card.Children(func() {
-		// Another device's words take the place of these at once and fade
-		// in: two sets of words fading across each other read as a muddle.
-		body := ui.Column(c.Key("body-" + d.key())).Padding(16)
-		body.Transition(ui.ElementTransition{Duration: 180 * time.Millisecond, Enter: &ui.Motion{}})
-		body.Children(func() {
-			// My devices take a new name and kind in place (DESIGN §6.9):
-			// a click on the name edits it, one on the tile shows the kinds.
-			named := mine && d.id != a.self
-			ui.Row(c).Gap(12).AlignItems(ui.Start).Children(func() {
-				if mine {
-					kind := ui.ButtonBase(c.Key("kind")).Radius(12).FocusRing(false).Cursor(ui.CursorPointer)
-					kind.AnimatePose(pressPose(kind, 0.94), ui.Snappy)
-					kind.Children(func() { deviceTile(c, p, d.kind, a.tileColor(d), 40, false) })
-					if kind.Clicked() {
-						a.picking = !a.picking
+		ui.Scroll(c.Key("card-scroll")).Shrink(1).Children(func() {
+			// Another device's words take the place of these at once and fade
+			// in: two sets of words fading across each other read as a muddle.
+			body := ui.Column(c.Key("body-" + d.key())).Padding(16)
+			body.Transition(ui.ElementTransition{Duration: 180 * time.Millisecond, Enter: &ui.Motion{}})
+			body.Children(func() {
+				// My devices take a new name and kind in place (DESIGN §6.9):
+				// a click on the name edits it, one on the tile shows the kinds.
+				named := mine && d.id != a.self
+				ui.Row(c).Gap(12).AlignItems(ui.Start).Children(func() {
+					if mine {
+						kind := ui.ButtonBase(c.Key("kind")).Radius(12).FocusRing(false).Cursor(ui.CursorPointer)
+						kind.AnimatePose(pressPose(kind, 0.94), ui.Snappy)
+						kind.Children(func() { deviceTile(c, p, d.kind, a.tileColor(d), 40, false) })
+						if kind.Clicked() {
+							a.picking = !a.picking
+						}
+					} else {
+						deviceTile(c, p, d.kind, a.tileColor(d), 40, false)
 					}
-				} else {
-					deviceTile(c, p, d.kind, a.tileColor(d), 40, false)
-				}
-				ui.Column(c).Gap(2).Grow(1).Children(func() {
-					if r := a.renaming; r != nil && r.id == d.id {
-						a.nameField(c, p, r, 15, func(name string) {
-							a.send(c, model.Op{Kind: model.OpDeviceRename, Device: d.dev, Name: name})
-						})
-					} else if named {
-						name := ui.ButtonBase(c.Key("name")).FocusRing(false).Cursor(ui.CursorText).AlignSelf(ui.Start)
-						name.Children(func() {
+					ui.Column(c).Gap(2).Grow(1).Children(func() {
+						if r := a.renaming; r != nil && r.id == d.id {
+							a.nameField(c, p, r, 15, func(name string) {
+								a.send(c, model.Op{Kind: model.OpDeviceRename, Device: d.dev, Name: name})
+							})
+						} else if named {
+							name := ui.ButtonBase(c.Key("name")).FocusRing(false).Cursor(ui.CursorText).AlignSelf(ui.Start)
+							name.Children(func() {
+								ui.Text(c, d.name).FontSize(15).FontWeight(600).SingleLine().MaxWidth(cardNameWidth)
+							})
+							if name.Clicked() {
+								a.renaming = &renaming{id: d.id, name: d.name}
+							}
+						} else {
 							ui.Text(c, d.name).FontSize(15).FontWeight(600).SingleLine().MaxWidth(cardNameWidth)
-						})
-						if name.Clicked() {
-							a.renaming = &renaming{id: d.id, name: d.name}
 						}
-					} else {
-						ui.Text(c, d.name).FontSize(15).FontWeight(600).SingleLine().MaxWidth(cardNameWidth)
-					}
-					who := "我的设备"
-					if !mine {
-						who = strings.TrimLeft(spaced(owner.name), " ") + "的设备"
-					}
-					if given := a.givenWho(d); given != "" {
-						// Given to me, or a LAN's own (DESIGN §6.11).
-						who = given
-					}
-					ui.Text(c, who).FontSize(12).TextColor(p.ink2)
-					if a.sameName(d) {
-						// Two of one name on the canvas: a word on which, and a
-						// way to tell them apart (DESIGN §6.8).
-						ui.Row(c).Gap(4).Children(func() {
-							ui.Text(c, "和另一台同名").FontSize(12).TextColor(p.ink3)
-							if named && a.renaming == nil {
-								ui.Text(c, "·").FontSize(12).TextColor(p.ink3)
-								fix := ui.ButtonBase(c.Key("rename")).FocusRing(false).Cursor(ui.CursorPointer)
-								fix.Children(func() { ui.Text(c, "改个名字").FontSize(12).TextColor(p.primary) })
-								if fix.Clicked() {
-									a.renaming = &renaming{id: d.id, name: d.name}
+						who := "我的设备"
+						if !mine {
+							who = strings.TrimLeft(spaced(owner.name), " ") + "的设备"
+						}
+						if given := a.givenWho(d); given != "" {
+							// Given to me, or a LAN's own (DESIGN §6.11).
+							who = given
+						}
+						ui.Text(c, who).FontSize(12).TextColor(p.ink2)
+						if a.sameName(d) {
+							// Two of one name on the canvas: a word on which, and a
+							// way to tell them apart (DESIGN §6.8).
+							ui.Row(c).Gap(4).Children(func() {
+								ui.Text(c, "和另一台同名").FontSize(12).TextColor(p.ink3)
+								if named && a.renaming == nil {
+									ui.Text(c, "·").FontSize(12).TextColor(p.ink3)
+									fix := ui.ButtonBase(c.Key("rename")).FocusRing(false).Cursor(ui.CursorPointer)
+									fix.Children(func() { ui.Text(c, "改个名字").FontSize(12).TextColor(p.primary) })
+									if fix.Clicked() {
+										a.renaming = &renaming{id: d.id, name: d.name}
+									}
 								}
-							}
-						})
-					}
-				})
-				if iconButton(c, p, "close", "关闭").Background(p.well).Clicked() {
-					a.selected, a.more, a.picking, a.renaming = "", false, false, nil
-				}
-			})
-			if mine {
-				a.kinds(c, p, d)
-			}
-			// How it is connected, in one sentence. Through a relay of M4, a
-			// click shows the relay's card (DESIGN §6.12).
-			how := ui.Row(c.Key("how-row")).Gap(10).Padding(12).Radius(14).Background(p.well).Margin(14, 0, 0, 0)
-			if d.path == "relay" && a.snap.Can(model.FeatureRelays) && a.snap.Relays[a.relayOf(d)] != nil {
-				how.Cursor(ui.CursorPointer).Label("看看这个中转站")
-				if how.Clicked() {
-					a.openRelay(a.relayOf(d))
-				}
-			}
-			how.Children(func() {
-				icon, title, sub, col := a.howConnected(d, owner, p)
-				badge := ui.Box(c).Size(30, 30).Radius(999).Center().
-					RadialGradient(ui.RadialGradient{Center: ui.Point{X: 0.34, Y: 0.28}, Stops: []ui.GradientStop{
-						{Color: col.Mix(white, 0.45), At: 0}, {Color: col, At: 0.55}, {Color: col.Mix(black, 0.15), At: 1}}})
-				badge.Children(func() {
-					if icon == "" {
-						ui.Icon(c, deviceGlyphs["relay"]).Size(16, 16).TextColor(white)
-					} else {
-						ui.Icon(c, uiGlyphs[icon]).Size(16, 16).TextColor(white)
-					}
-				})
-				// New words fade in as the state changes, as another device's
-				// do; what can be done about it folds in and out under them,
-				// the card's height following.
-				ui.Column(c.Key("how")).Grow(1).Children(func() {
-					words := ui.Column(c.Key("how-" + title)).Gap(2)
-					words.Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{}})
-					words.Children(func() {
-						ui.Text(c, title).FontSize(13).FontWeight(500)
-						ui.Text(c, sub).FontSize(12).TextColor(p.ink2)
-					})
-					// What can be done about it, in a click (DESIGN §6.8). It
-					// folds in and out, its height drawn out frame by frame;
-					// folding shut, it keeps its last words.
-					label, do := a.remedy(d, owner)
-					if a.remedyWas == nil {
-						a.remedyWas = map[string]string{}
-					}
-					if label != "" {
-						a.remedyWas[d.id] = label
-					}
-					holder := ui.Column(c.Key("remedy-holder")).Clip()
-					shown := float32(0)
-					if label != "" {
-						shown = 1
-					}
-					k := holder.AnimateTo("shown", shown, ui.Animation{Duration: 180 * time.Millisecond})
-					holder.Height((8 + 28) * k)
-					if was := a.remedyWas[d.id]; k > 0 && was != "" {
-						holder.Children(func() {
-							b := ui.ButtonBase(c.Key("remedy")).Height(28).Padding(0, 12).Radius(999).Background(p.bg).FocusRing(false).
-								Shadow(0, 1, 2, 0, ui.RGBA(9, 9, 11, 0.06)).AlignSelf(ui.Start).Margin(8, 0, 0, 0).Opacity(k)
-							b.AnimatePose(pressPose(b, 0.94), ui.Snappy)
-							b.Children(func() { ui.Text(c, was).FontSize(12).FontWeight(500).SingleLine() })
-							if b.Clicked() && label != "" {
-								do(c)
-							}
-						})
-					}
-				})
-			})
-			// This computer in the "全部" view is in no one LAN: what it opens,
-			// and to whom, is each LAN's, on its own canvas.
-			perLAN := !((a.all() || a.shared()) && d.id == a.self)
-			label := "你可以用"
-			if mine {
-				label = "开放给大家的"
-			}
-			if perLAN {
-				ui.Text(c, label).FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(18, 4, 8, 4)
-			}
-			// The list as this frame began: an op sent from it brings a new
-			// one, which the next frame shows.
-			svcs := d.services
-			if !perLAN {
-				// Nothing to list: the list takes no room.
-				svcs = nil
-			}
-			ui.Column(c).Radius(14).Background(p.well).Padding(0, 12).Dividers(1, p.line).Children(func() {
-				for i := range svcs {
-					s := svcs[i]
-					ui.Row(c.Key(s.name)).Height(44).Gap(10).Children(func() {
-						muted := !mine && !s.on
-						ink := p.ink
-						if muted {
-							ink = p.ink3
-						}
-						ui.Icon(c, uiGlyphs[s.icon]).Size(18, 18).TextColor(p.ink2)
-						ui.Text(c, s.name).FontSize(13).FontWeight(500).TextColor(ink).Grow(1)
-						switch {
-						case mine:
-							if toggle(c, p, s.on) {
-								a.send(c, model.Op{Kind: model.OpServiceSet, LAN: d.lan, Device: d.dev, Service: s.svc.Key, On: !s.on})
-							}
-						case s.on:
-							b := ui.ButtonBase(c.Key("open")).Height(28).Padding(0, 12).Radius(999).Background(p.bg).FocusRing(false).
-								Shadow(0, 1, 2, 0, ui.RGBA(9, 9, 11, 0.06))
-							b.AnimatePose(pressPose(b, 0.94), ui.Snappy)
-							b.Children(func() { ui.Text(c, "打开").FontSize(12).FontWeight(500) })
-							if b.Clicked() {
-								a.openService(c, d, s)
-							}
-						default:
-							ui.Text(c, "没开放").FontSize(12).TextColor(p.ink3)
+							})
 						}
 					})
+					if iconButton(c, p, "close", "关闭").Background(p.well).Clicked() {
+						a.selected, a.more, a.picking, a.renaming = "", false, false, nil
+					}
+				})
+				if mine {
+					a.kinds(c, p, d)
 				}
-			})
-			if mine && perLAN {
-				ui.Text(c, "谁能用").FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(18, 4, 8, 4)
-				ui.Row(c).Gap(8).Wrap().Children(func() {
-					for _, id := range a.membersOf(d) {
-						if id == d.owner {
-							continue
+				// How it is connected, in one sentence. Through a relay of M4, a
+				// click shows the relay's card (DESIGN §6.12).
+				how := ui.Row(c.Key("how-row")).Gap(10).Padding(12).Radius(14).Background(p.well).Margin(14, 0, 0, 0)
+				if d.path == "relay" && a.snap.Can(model.FeatureRelays) && a.snap.Relays[a.relayOf(d)] != nil {
+					how.Cursor(ui.CursorPointer).Label("看看这个中转站")
+					if how.Clicked() {
+						a.openRelay(a.relayOf(d))
+					}
+				}
+				how.Children(func() {
+					icon, title, sub, col := a.howConnected(d, owner, p)
+					badge := ui.Box(c).Size(30, 30).Radius(999).Center().
+						RadialGradient(ui.RadialGradient{Center: ui.Point{X: 0.34, Y: 0.28}, Stops: []ui.GradientStop{
+							{Color: col.Mix(white, 0.45), At: 0}, {Color: col, At: 0.55}, {Color: col.Mix(black, 0.15), At: 1}}})
+					badge.Children(func() {
+						if icon == "" {
+							ui.Icon(c, deviceGlyphs["relay"]).Size(16, 16).TextColor(white)
+						} else {
+							ui.Icon(c, uiGlyphs[icon]).Size(16, 16).TextColor(white)
 						}
-						off := d.refused[id]
-						chip := ui.ButtonBase(c.Key("who-"+id)).Height(34).Padding(0, 12, 0, 4).Gap(8).Radius(999).Background(p.well).FocusRing(false).
-							Cursor(ui.CursorPointer)
-						if chip.Hovered() {
-							chip.Background(p.well2)
+					})
+					// New words fade in as the state changes, as another device's
+					// do; what can be done about it folds in and out under them,
+					// the card's height following.
+					ui.Column(c.Key("how")).Grow(1).Children(func() {
+						words := ui.Column(c.Key("how-" + title)).Gap(2)
+						words.Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{}})
+						words.Children(func() {
+							ui.Text(c, title).FontSize(13).FontWeight(500)
+							ui.Text(c, sub).FontSize(12).TextColor(p.ink2)
+						})
+						// What can be done about it, in a click (DESIGN §6.8). It
+						// folds in and out, its height drawn out frame by frame;
+						// folding shut, it keeps its last words.
+						label, do := a.remedy(d, owner)
+						if a.remedyWas == nil {
+							a.remedyWas = map[string]string{}
 						}
-						chip.Transition(ui.ElementTransition{Duration: 120 * time.Millisecond, Colors: true})
-						chip.AnimatePose(pressPose(chip, 0.95), ui.Snappy)
-						if chip.Clicked() {
-							off = !off
-							a.send(c, model.Op{Kind: model.OpDeviceRefuse, Device: d.dev, Person: model.PersonID(id), Refuse: off})
+						if label != "" {
+							a.remedyWas[d.id] = label
 						}
-						// Refused, the ball greys and a slash draws across it,
-						// and the name greys with it.
-						k := chip.AnimateTo("off", map[bool]float32{false: 0, true: 1}[off], ui.Animation{Duration: 200 * time.Millisecond})
-						chip.Children(func() {
-							ballOff(c, a.people[id], 26, k)
-							ui.Text(c, a.people[id].name).FontSize(13).FontWeight(500).TextColor(p.ink.Mix(p.ink3, k))
+						holder := ui.Column(c.Key("remedy-holder")).Clip()
+						shown := float32(0)
+						if label != "" {
+							shown = 1
+						}
+						k := holder.AnimateTo("shown", shown, ui.Animation{Duration: 180 * time.Millisecond})
+						holder.Height((8 + 28) * k)
+						if was := a.remedyWas[d.id]; k > 0 && was != "" {
+							holder.Children(func() {
+								b := ui.ButtonBase(c.Key("remedy")).Height(28).Padding(0, 12).Radius(999).Background(p.bg).FocusRing(false).
+									Shadow(0, 1, 2, 0, ui.RGBA(9, 9, 11, 0.06)).AlignSelf(ui.Start).Margin(8, 0, 0, 0).Opacity(k)
+								b.AnimatePose(pressPose(b, 0.94), ui.Snappy)
+								b.Children(func() { ui.Text(c, was).FontSize(12).FontWeight(500).SingleLine() })
+								if b.Clicked() && label != "" {
+									do(c)
+								}
+							})
+						}
+					})
+				})
+				// This computer in the "全部" view is in no one LAN: what it opens,
+				// and to whom, is each LAN's, on its own canvas.
+				perLAN := !((a.all() || a.shared()) && d.id == a.self)
+				label := "你可以用"
+				if mine {
+					label = "开放给大家的"
+				}
+				if perLAN {
+					ui.Text(c, label).FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(18, 4, 8, 4)
+				}
+				// The list as this frame began: an op sent from it brings a new
+				// one, which the next frame shows.
+				svcs := d.services
+				if !perLAN {
+					// Nothing to list: the list takes no room.
+					svcs = nil
+				}
+				ui.Column(c).Radius(14).Background(p.well).Padding(0, 12).Dividers(1, p.line).Children(func() {
+					for i := range svcs {
+						s := svcs[i]
+						ui.Row(c.Key(s.name)).Height(44).Gap(10).Children(func() {
+							muted := !mine && !s.on
+							ink := p.ink
+							if muted {
+								ink = p.ink3
+							}
+							ui.Icon(c, uiGlyphs[s.icon]).Size(18, 18).TextColor(p.ink2)
+							ui.Text(c, s.name).FontSize(13).FontWeight(500).TextColor(ink).Grow(1)
+							switch {
+							case mine:
+								if toggle(c, p, s.on) {
+									a.send(c, model.Op{Kind: model.OpServiceSet, LAN: d.lan, Device: d.dev, Service: s.svc.Key, On: !s.on})
+								}
+							case s.on:
+								b := ui.ButtonBase(c.Key("open")).Height(28).Padding(0, 12).Radius(999).Background(p.bg).FocusRing(false).
+									Shadow(0, 1, 2, 0, ui.RGBA(9, 9, 11, 0.06))
+								b.AnimatePose(pressPose(b, 0.94), ui.Snappy)
+								b.Children(func() { ui.Text(c, "打开").FontSize(12).FontWeight(500) })
+								if b.Clicked() {
+									a.openService(c, d, s)
+								}
+							default:
+								ui.Text(c, "没开放").FontSize(12).TextColor(p.ink3)
+							}
 						})
 					}
 				})
-				ui.Text(c, "点一下头像，就不让他用了").FontSize(12).TextColor(p.ink3).Padding(8, 4, 0, 4)
-			}
-			if mine {
-				// Given to people one by one, and which way (DESIGN §6.11).
-				a.shareSection(c, p, d)
-			}
-			given := a.snap.SharedOf(d.dev) != nil
-			if given {
-				ui.Text(c, "只有你能连它，反过来不行").FontSize(12).TextColor(p.ink3).Padding(8, 4, 0, 4)
-			}
-			ui.Row(c).Margin(12, 0, 0, 0).AlignItems(ui.Center).Children(func() {
-				more := ui.ButtonBase(c.Key("more")).Height(28).Padding(0, 4).Gap(2).Radius(8).FocusRing(false)
-				if more.Clicked() {
-					a.more = !a.more
+				if mine && perLAN {
+					ui.Text(c, "谁能用").FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(18, 4, 8, 4)
+					ui.Row(c).Gap(8).Wrap().Children(func() {
+						for _, id := range a.membersOf(d) {
+							if id == d.owner {
+								continue
+							}
+							off := d.refused[id]
+							chip := ui.ButtonBase(c.Key("who-"+id)).Height(34).Padding(0, 12, 0, 4).Gap(8).Radius(999).Background(p.well).FocusRing(false).
+								Cursor(ui.CursorPointer)
+							if chip.Hovered() {
+								chip.Background(p.well2)
+							}
+							chip.Transition(ui.ElementTransition{Duration: 120 * time.Millisecond, Colors: true})
+							chip.AnimatePose(pressPose(chip, 0.95), ui.Snappy)
+							if chip.Clicked() {
+								off = !off
+								a.send(c, model.Op{Kind: model.OpDeviceRefuse, Device: d.dev, Person: model.PersonID(id), Refuse: off})
+							}
+							// Refused, the ball greys and a slash draws across it,
+							// and the name greys with it.
+							k := chip.AnimateTo("off", map[bool]float32{false: 0, true: 1}[off], ui.Animation{Duration: 200 * time.Millisecond})
+							chip.Children(func() {
+								ballOff(c, a.people[id], 26, k)
+								ui.Text(c, a.people[id].name).FontSize(13).FontWeight(500).TextColor(p.ink.Mix(p.ink3, k))
+							})
+						}
+					})
+					ui.Text(c, "点一下头像，就不让他用了").FontSize(12).TextColor(p.ink3).Padding(8, 4, 0, 4)
 				}
-				turn := float32(0)
+				if mine {
+					// Given to people one by one, and which way (DESIGN §6.11).
+					a.shareSection(c, p, d)
+				}
+				given := a.snap.SharedOf(d.dev) != nil
+				if given {
+					ui.Text(c, "只有你能连它，反过来不行").FontSize(12).TextColor(p.ink3).Padding(8, 4, 0, 4)
+				}
+				ui.Row(c).Margin(12, 0, 0, 0).AlignItems(ui.Center).Children(func() {
+					more := ui.ButtonBase(c.Key("more")).Height(28).Padding(0, 4).Gap(2).Radius(8).FocusRing(false)
+					if more.Clicked() {
+						a.more = !a.more
+					}
+					turn := float32(0)
+					if a.more {
+						turn = 90
+					}
+					more.Children(func() {
+						ui.Text(c, "更多").FontSize(13).TextColor(p.ink2)
+						ui.Icon(c, uiGlyphs["chevron"]).Size(14, 14).TextColor(p.ink2).Rotate(more.AnimateTo("turn", turn, ui.Snappy))
+					})
+					ui.Spacer(c)
+					if d.removable() {
+						// The click for the drag into the tray (§6.4).
+						out := ui.ButtonBase(c.Key("leave")).Height(28).Padding(0, 10).Radius(999).FocusRing(false)
+						if out.Hovered() {
+							out.Background(p.well)
+						}
+						out.AnimatePose(pressPose(out, 0.96), ui.Snappy)
+						out.Children(func() { ui.Text(c, "移出这个局域网").FontSize(12).TextColor(p.ink2) })
+						if out.Clicked() {
+							a.takeOut(c, d, true, false)
+						}
+					}
+					if given && a.shared() && a.snap.Can(model.FeatureShareMode) {
+						// Given to me: I can give it back (DESIGN §6.11).
+						out := ui.ButtonBase(c.Key("give-back")).Height(28).Padding(0, 10).Radius(999).FocusRing(false)
+						if out.Hovered() {
+							out.Background(p.well)
+						}
+						out.AnimatePose(pressPose(out, 0.96), ui.Snappy)
+						out.Children(func() { ui.Text(c, "不要了").FontSize(12).TextColor(p.ink2) })
+						if out.Clicked() {
+							a.leaveShare(c, d)
+						}
+					}
+				})
 				if a.more {
-					turn = 90
-				}
-				more.Children(func() {
-					ui.Text(c, "更多").FontSize(13).TextColor(p.ink2)
-					ui.Icon(c, uiGlyphs["chevron"]).Size(14, 14).TextColor(p.ink2).Rotate(more.AnimateTo("turn", turn, ui.Snappy))
-				})
-				ui.Spacer(c)
-				if d.removable() {
-					// The click for the drag into the tray (§6.4).
-					out := ui.ButtonBase(c.Key("leave")).Height(28).Padding(0, 10).Radius(999).FocusRing(false)
-					if out.Hovered() {
-						out.Background(p.well)
-					}
-					out.AnimatePose(pressPose(out, 0.96), ui.Snappy)
-					out.Children(func() { ui.Text(c, "移出这个局域网").FontSize(12).TextColor(p.ink2) })
-					if out.Clicked() {
-						a.takeOut(c, d, true, false)
-					}
-				}
-				if given && a.shared() && a.snap.Can(model.FeatureShareMode) {
-					// Given to me: I can give it back (DESIGN §6.11).
-					out := ui.ButtonBase(c.Key("give-back")).Height(28).Padding(0, 10).Radius(999).FocusRing(false)
-					if out.Hovered() {
-						out.Background(p.well)
-					}
-					out.AnimatePose(pressPose(out, 0.96), ui.Snappy)
-					out.Children(func() { ui.Text(c, "不要了").FontSize(12).TextColor(p.ink2) })
-					if out.Clicked() {
-						a.leaveShare(c, d)
-					}
+					detail := ui.Column(c.Key("detail"))
+					detail.Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{}, Exit: &ui.Motion{}})
+					detail.Children(func() {
+						for i, line := range a.details(d) {
+							top := float32(2)
+							if i == 0 {
+								top = 8
+							}
+							ui.Text(c, line).FontSize(12).TextColor(p.ink2).Padding(top, 4, 0, 4).SingleLine()
+						}
+						if d.id == a.self && a.snap.Can(model.FeatureDiagnostics) {
+							a.diagnosticsRow(c, p)
+						}
+						if a.canDelete(d) {
+							a.deleteRow(c, p, d)
+						}
+					})
 				}
 			})
-			if a.more {
-				detail := ui.Column(c.Key("detail"))
-				detail.Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{}, Exit: &ui.Motion{}})
-				detail.Children(func() {
-					for i, line := range a.details(d) {
-						top := float32(2)
-						if i == 0 {
-							top = 8
-						}
-						ui.Text(c, line).FontSize(12).TextColor(p.ink2).Padding(top, 4, 0, 4).SingleLine()
-					}
-					if d.id == a.self && a.snap.Can(model.FeatureDiagnostics) {
-						a.diagnosticsRow(c, p)
-					}
-				})
-			}
 		})
 	})
 }

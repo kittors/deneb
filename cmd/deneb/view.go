@@ -36,7 +36,9 @@ func (a *app) view(c *ui.Context) {
 	case !a.snap.Engine && a.snap.Version == 0, a.snap.LoggedIn && !a.snap.Loaded:
 		a.startingView(c, p)
 		return
-	case !a.snap.LoggedIn:
+	case !a.snap.LoggedIn && a.deleting == nil:
+		// (The account just deleted: its page stays, scrolled where it was,
+		// while the window fades to the sign-in, DESIGN §6.15.)
 		a.loginView(c, p)
 		return
 	}
@@ -70,15 +72,20 @@ func (a *app) view(c *ui.Context) {
 			a.inviteLayer(c, p)
 		})
 		a.personChip(c, p)
+		a.accountLayer(c, p)
+		// Deleting the account, over the window (DESIGN §6.15).
+		a.accountDeleteLayer(c, p)
 		if a.chrome != nil {
 			// The window buttons as the system draws them, for the
 			// recordings of Windows and Linux (DESIGN §7.2).
 			a.chrome(c, p, bar)
 		}
-		if a.onboard != nil {
-			// The first time's steps fading away over the window.
+		if a.onboard != nil && !a.onboard.leaving.IsZero() {
+			// The first time's steps fading away over the window. (Steps
+			// set out this frame, as logging out does, show from the next.)
 			a.onboardOver(c, p)
 		}
+		a.curtainView(c, p, false)
 	})
 }
 
@@ -211,15 +218,8 @@ func (a *app) sidebar(c *ui.Context, p *palette, bar ui.TitleBar) {
 			a.show(c, model.SharedLANID, false)
 		}
 		ui.Spacer(c)
-		ui.Row(c).Gap(10).Padding(8, 6, 4, 8).Children(func() {
-			ball(c, a.people[a.me], 32, false)
-			name := ""
-			if me := a.snap.Person(a.snap.Me); me != nil {
-				name = me.Name
-			}
-			ui.Text(c, name).FontSize(13).FontWeight(500).Grow(1).SingleLine()
-			iconButton(c, p, "gear", "设置")
-		})
+		// Me: the account card (M7, DESIGN §6.15).
+		a.accountRowView(c, p)
 	})
 }
 

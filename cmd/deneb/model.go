@@ -263,6 +263,16 @@ type app struct {
 	// adapterJob is the network adapter put in from its notice, on a
 	// computer signed in already (DESIGN §7.3, M6's second batch).
 	adapterJob adapterJob
+	// M7 (DESIGN §6.15): the account card, open over the window above the
+	// sidebar's last row (where that was in the last frame, and how tall
+	// the window is); the page that deletes the account, while it shows;
+	// what the sign-in says once the account was deleted.
+	accountOpen  bool
+	accountRowAt ui.Rect
+	winH         float32
+	deleting     *accountDeleting
+	gone         *accountGone
+	curtain      *curtain // the window fading to its background, and back, around the sign-in
 	// diagAt is when the diagnostics package began to be put together, while
 	// it is (DESIGN §6.14); diagBusy, while the engine puts it together.
 	// diagnostics has the engine put it together into the downloads, and

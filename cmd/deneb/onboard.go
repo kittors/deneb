@@ -165,6 +165,9 @@ func (a *app) onboardView(c *ui.Context, p *palette) {
 				}
 			})
 		})
+		// The window coming here through its background (logged out,
+		// deleted): the curtain lifts over the steps (DESIGN §6.15).
+		a.curtainView(c, p, true)
 	})
 }
 
@@ -177,6 +180,10 @@ func onboardTitle(c *ui.Context, p *palette, title, sub string) {
 // onboardSignIn is the first step: the email, then the code sent to it.
 func (a *app) onboardSignIn(c *ui.Context, p *palette, now time.Time) {
 	o := a.onboard
+	if a.gone != nil {
+		// The account was just deleted (DESIGN §6.15).
+		a.goneNote(c, p)
+	}
 	onboardTitle(c, p, "登录 Deneb", "用邮箱就行，我们发一个 6 位验证码")
 	// The email, then the code: one at a time, fading across in a place
 	// that keeps its height.
@@ -202,6 +209,7 @@ func (a *app) onboardSignIn(c *ui.Context, p *palette, now time.Time) {
 		}
 		way("way-code").Children(func() { a.onboardCode(c, p, now) })
 	})
+	a.goneRelays(c, p)
 }
 
 // onboardCode is the six boxes of the code sent to the email, and the line

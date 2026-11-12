@@ -7,7 +7,7 @@
 // opens to them, "+", the × that takes it back. With no device yet, "this
 // computer" dashed opens the download card and fills in when this computer
 // logs in.
-import { frame, clear, follow, App, G, esc, spaced, glyphOf, nameOf, ago, rows, sideRowAt } from './shell.ts';
+import { frame, clear, follow, deletingDevs, App, G, esc, spaced, glyphOf, nameOf, ago, rows, sideRowAt } from './shell.ts';
 import { can, shareSection, wireShare, forget } from './sharecard.ts';
 import { D } from './clock.ts';
 import { ApiError } from './api.ts';
@@ -18,7 +18,7 @@ import type { Ctx } from './main.ts';
 import type { Route } from './router.ts';
 import type { UserView, DeviceView, LANView } from './model.ts';
 
-type Dev = { type: string; owner: string; name: string; x: number; y: number; off?: string; pending?: boolean };
+type Dev = { type: string; owner: string; name: string; x: number; y: number; off?: string; pending?: boolean; out?: boolean };
 const SELF = 'this-computer';
 const DASH = `<svg class="dash" viewBox="0 0 60 60" width="60" height="60" aria-hidden="true"><rect x="0.75" y="0.75" width="58.5" height="58.5" rx="17.25" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="4.5 3.5"/></svg>`;
 
@@ -31,8 +31,10 @@ export function minePage(root: HTMLElement, ctx: Ctx, _route: Route): () => void
   const P = App.PEOPLE;
   const cv: HTMLElement = app.canvas;
   const DEVS: Record<string, Dev> = {};
-  const mineList = (): DeviceView[] => v.devices.filter((d) => d.owner === v.me && !d.publicLAN);
-  const devOf = (id: string) => v.devices.find((d) => d.id === id);
+  const mineList = (): DeviceView[] => v.devices.filter((d) => d.owner === v.me && !d.publicLAN && !deletingDevs.has(d.id));
+  // Logged out (M7, DESIGN §6.15): grey, "已登出", and their card deletes them.
+  const outList = (): DeviceView[] => (v.loggedOutDevices || []).filter((d) => d.owner === v.me && !d.publicLAN && !deletingDevs.has(d.id));
+  const devOf = (id: string) => v.devices.find((d) => d.id === id) || (v.loggedOutDevices || []).find((d) => d.id === id);
   // The LANs a device of mine can go in: mine, or ones where members bring
   // their own (not a studio that shares out its own devices).
   const lansFor = (): LANView[] => listedLANs(v).filter((l) => l.mode !== 'share' || l.owner === v.me);
@@ -45,6 +47,10 @@ export function minePage(root: HTMLElement, ctx: Ctx, _route: Route): () => void
     for (const d of mineList()) {
       ids.push(d.id);
       DEVS[d.id] = Object.assign(DEVS[d.id] || { x: 0, y: 0 }, { type: glyphOf(d.kind), owner: v.me, name: d.displayName || d.name, off: d.online ? undefined : ago(d.lastSeen) });
+    }
+    for (const d of outList()) {
+      ids.push(d.id);
+      DEVS[d.id] = Object.assign(DEVS[d.id] || { x: 0, y: 0 }, { type: glyphOf(d.kind), owner: v.me, name: d.displayName || d.name, off: '已登出', out: true });
     }
     return ids;
   }
@@ -64,8 +70,11 @@ export function minePage(root: HTMLElement, ctx: Ctx, _route: Route): () => void
       DEVS[SELF] = { type: 'laptop', owner: v.me, name: '这台电脑', x: 0, y: 0, pending: true };
       ids.push(SELF);
     }
-    const at = rows(ids.length, centerX(), midY());
-    ids.forEach((id, i) => Object.assign(DEVS[id], at[i]));
+    // The logged out ones in a row of their own, under the others (M7).
+    const live = ids.filter((id) => !DEVS[id].out), out = ids.filter((id) => DEVS[id].out);
+    const gap = out.length && live.length ? 88 : 0;
+    const at = [...rows(live.length, centerX(), midY() - gap), ...rows(out.length, centerX(), midY() + gap)];
+    [...live, ...out].forEach((id, i) => Object.assign(DEVS[id], at[i]));
     for (const id of ids) mount(id);
   }
 
@@ -90,8 +99,8 @@ export function minePage(root: HTMLElement, ctx: Ctx, _route: Route): () => void
     if (app.selected !== id) forget();
     app.selected = id;
     app.select(id);
-    const st = d.off ? { c: '#a1a1aa', t: d.off, s: '它开机、连上网就会回来' } : { c: '#22C55E', t: '在线', s: '别人能用你开放的服务' };
-    const lans = lansFor();
+    const st = d.out ? { c: '#a1a1aa', t: '已登出', s: '在它上面登录，就会回到这里' } : d.off ? { c: '#a1a1aa', t: d.off, s: '它开机、连上网就会回来' } : { c: '#22C55E', t: '在线', s: '别人能用你开放的服务' };
+    const lans = d.out ? [] : lansFor();
     const chips = lans
       .map((l) =>
         dv.lans.includes(l.id)
@@ -107,13 +116,17 @@ export function minePage(root: HTMLElement, ctx: Ctx, _route: Route): () => void
         `<button class="icon-btn sheet-close" title="关闭" aria-label="关闭">${G.ui('close', 16)}</button></div>` +
         `<div class="status"><span class="badge" style="--c:${st.c}">${G.ui('online', 16)}</span><div>${esc(st.t)}<small>${esc(st.s)}</small></div></div>` +
         (lans.length ? `<div class="label">局域网</div><div class="people lan-chips">${chips}</div>` : '') +
-        shareSection(v, dv) +
-        `<div class="card-foot"><button class="more">更多${G.ui('chevron', 14)}</button></div><div class="detail"><p>${esc(addrs ? '地址 ' + addrs : '')}</p></div>`,
+        (d.out ? '' : shareSection(v, dv)) +
+        `<div class="card-foot"><button class="more">更多${G.ui('chevron', 14)}</button></div><div class="detail"><p>${esc(addrs ? '地址 ' + addrs : '')}</p>` +
+        // Deleting it, and how that differs from logging it out (M7).
+        `<div class="del-row"><button class="del-btn" type="button">${G.ui('trash', 14)}删除这台设备</button>` +
+        `<p>彻底删掉：${d.out ? '' : '马上登出，'}再登录是新设备、新地址。<br>${d.out ? '留着的话，在它上面再登录，地址不变。' : '只是暂时不用，在它上面登出就行，地址不变。'}</p></div></div>`,
       id,
     );
     for (const b of sh.querySelectorAll('.lan-in')) (b as HTMLElement).onclick = () => ctx.go('/lan/' + encodeURIComponent((b as HTMLElement).dataset.l as string));
     for (const b of sh.querySelectorAll('.lan-add')) (b as HTMLElement).onclick = () => addTo(id, (b as HTMLElement).dataset.l as string);
-    wireShare(app, ctx, () => v, sh, () => openCard(id), { parent: cv, x: centerX() });
+    (sh.querySelector('.del-btn') as HTMLElement).onclick = () => deleteDevice(id);
+    if (!d.out) wireShare(app, ctx, () => v, sh, () => openCard(id), { parent: cv, x: centerX() });
     const nb = sh.querySelector('.name-edit') as HTMLElement | null;
     if (nb) nb.onclick = () => rename(nb, d.name, (to) => ctx.op('device.rename', { device: id, name: to }), () => openCard(id));
   }
@@ -164,6 +177,50 @@ export function minePage(root: HTMLElement, ctx: Ctx, _route: Route): () => void
       dev: { type: d.type, owner: v.me },
       x: centerX(),
       undo: () => ctx.op('lan.removeDevice', { lan, device: id }).catch((e) => failed(e, '没能撤销，再试一次')),
+    });
+  }
+
+  // ---- Deleting a device (M7, DESIGN §6.15) -------------------------------------------------
+  // As 不要了: gone from here at once, with undo; the server hears of it
+  // (device.delete) when the undo is gone.
+  function vanish(id: string): void {
+    const n = app.dropNode(id);
+    if (!n) return;
+    n.el.animate([{ opacity: 1, transform: n.el.style.transform || 'none' }, { opacity: 0, transform: 'scale(0.6)' }], { duration: 260, easing: 'cubic-bezier(0.4, 0, 1, 1)', fill: 'forwards' });
+    D.after(270, () => n.el.remove());
+  }
+  function pop(n: { el: HTMLElement }): void {
+    n.el.animate([{ opacity: 0, transform: 'scale(0.6)' }, { opacity: 1, transform: 'scale(1.06)', offset: 0.6 }, { opacity: 1, transform: 'none' }], { duration: 420, easing: 'cubic-bezier(0.3, 1.2, 0.5, 1)' });
+  }
+  function deleteDevice(id: string): void {
+    const d = DEVS[id];
+    if (!d) return;
+    app.closeSheet();
+    deletingDevs.add(id);
+    vanish(id);
+    summary();
+    follow(v);
+    app.toast(spaced(`已删除${d.name}`), {
+      dev: { type: d.type, owner: v.me },
+      x: centerX(),
+      undo: () => {
+        deletingDevs.delete(id);
+        if (!app.nodes[id]) pop(mount(id, { keep: false }));
+        summary();
+        follow(v);
+      },
+      gone: () => {
+        if (!deletingDevs.has(id)) return;
+        ctx.op('device.delete', { device: id })
+          .then(() => deletingDevs.delete(id))
+          .catch((e) => {
+            deletingDevs.delete(id);
+            if (!app.nodes[id]) pop(mount(id, { keep: false }));
+            summary();
+            follow(v);
+            failed(e, '没能删掉，再试一次');
+          });
+      },
     });
   }
 
@@ -268,7 +325,9 @@ export function minePage(root: HTMLElement, ctx: Ctx, _route: Route): () => void
     // An open card follows (a LAN joined, a share taken back).
     if (app.selected && app.selected !== SELF) again(app.selected);
   });
-  if (D.recording) import('./rec-mine.ts').then(() => ((window as unknown as Record<string, unknown>).__ready = true));
+  // M7's recordings (rec-m7.ts) start on this page too.
+  const which = new URLSearchParams(location.search).get('record') || '';
+  if (D.recording) (which.startsWith('m7') ? import('./rec-m7.ts') : import('./rec-mine.ts')).then(() => ((window as unknown as Record<string, unknown>).__ready = true));
   return () => {
     off();
     note.remove();

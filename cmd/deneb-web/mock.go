@@ -38,14 +38,16 @@ type mock struct {
 	invites  map[string]*minvite
 	sessions map[string]proto.PersonID
 	done     map[string]*proto.OpResult // op id → its answer, for retries
+	seed     map[proto.PersonID]bool    // M7: accounts the deployment's seed names, which cannot be deleted
 	seq      int
 	now      func() time.Time
 }
 
 type mdev struct {
-	v        proto.DeviceView // the parts that do not depend on who looks
-	services []proto.Service
-	refused  map[proto.PersonID]bool
+	v         proto.DeviceView // the parts that do not depend on who looks
+	services  []proto.Service
+	refused   map[proto.PersonID]bool
+	loggedOut bool // M7: logged out: in no LAN, in its owner's UserView.LoggedOutDevices
 }
 
 type mlan struct {
@@ -119,6 +121,7 @@ func newMock() *mock {
 		invites:  map[string]*minvite{},
 		sessions: map[string]proto.PersonID{},
 		done:     map[string]*proto.OpResult{},
+		seed:     map[proto.PersonID]bool{},
 		now:      func() time.Time { return time.Now().UTC().Truncate(time.Second) },
 	}
 	person := func(id, name, display, initial string, emails ...string) {
@@ -156,6 +159,8 @@ func newMock() *mock {
 	dev("d_kgame", "p_kittors", "游戏主机", "console", "other", true, svcGame)
 	dev("d_kstudio", "p_kittors", "工作室主机", "mini", "macos", true, svcScreen, svcShell)
 	dev("d_knas", "p_kittors", "NAS", "nas", "linux", true, svcFiles, svcWeb)
+	// Logged out a while ago (M7): its owner may delete it.
+	dev("d_kold", "p_kittors", "旧笔记本", "laptop", "macos", false).loggedOut = true
 	dev("d_mia", "p_mia", "MacBook", "laptop", "macos", true, svcScreen, svcFiles)
 	dev("d_jdesk", "p_jie", "台式机", "desktop", "windows", true, svcScreen, svcWeb)
 	dev("d_jnas", "p_jie", "NAS", "nas", "linux", false, svcFiles, svcScreen, svcWeb)
@@ -380,6 +385,12 @@ func (m *mock) view(me proto.PersonID) *proto.UserView {
 	}
 	for _, id := range m.order {
 		d := m.devices[id]
+		if d.loggedOut {
+			if m.manages(me, d) {
+				v.LoggedOutDevices = append(v.LoggedOutDevices, m.deviceView(me, d))
+			}
+			continue
+		}
 		if d.v.Owner == me && d.v.PublicLAN == "" || m.manages(me, d) {
 			shown[id] = true
 		}
@@ -787,6 +798,19 @@ func (m *mock) apply(me proto.PersonID, op proto.Op) (*proto.OpOutput, *opError)
 		if !found {
 			return nil, fail(404, proto.ErrNotFound, "没有这次踢人")
 		}
+	case proto.OpDeviceDelete:
+		if e := m.deleteDevice(me, a.Device); e != nil {
+			return nil, e
+		}
+	case proto.OpAccountDelete:
+		acc, e := m.deleteAccount(me, a)
+		if e != nil {
+			return nil, e
+		}
+		out.Account = acc
+		if a.DryRun {
+			return out, nil // nothing changed
+		}
 	default:
 		return nil, fail(400, proto.ErrInvalid, "网页版的演示还没有这个操作："+string(op.Op))
 	}
@@ -836,6 +860,7 @@ func (m *mock) handler() http.Handler {
 	mux.Handle("POST /api/v1/_mock/device-up", post(m.authed(m.deviceUp)))
 	mux.Handle("POST /api/v1/_mock/relay-up", post(m.authed(m.relayUp)))
 	mux.Handle("POST /api/v1/_mock/share", post(m.authed(m.shareMe)))
+	mux.Handle("POST /api/v1/_mock/seed", post(m.authed(m.seedMe)))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fail(404, proto.ErrNotFound, "没有这个接口"))
 	})

@@ -91,6 +91,9 @@ type Snapshot struct {
 	// cable out), as its engine finds: the view says so, calmly, rather
 	// than that every device cannot be reached (DESIGN §6.10).
 	NoNetwork bool
+	// Email is mine, as I signed in with it: only I see it (M7: the account
+	// card, and what deleting the account asks to type again).
+	Email string
 	// Kernel: the engine has its network adapter, as the system service
 	// (or as root): the first time's step for the adapter is done (M6).
 	Kernel bool

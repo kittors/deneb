@@ -51,6 +51,10 @@
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/>',
     moon: '<path d="M19.5 14.5A8 8 0 1 1 9.5 4.5a6.5 6.5 0 0 0 10 10z"/>',
     bolt: '<path d="M13 3 5 13.5h6L10.5 21 19 10.5h-6z"/>',
+    // M7 (DESIGN §6.15): a link out of Deneb, deleting for good, a relay.
+    external: '<path d="M9.5 6.5h8v8M17.5 6.5 7 17"/>',
+    trash: '<path d="M5 7h14M10 7V5.5h4V7M7 7l.8 11.3A1.5 1.5 0 0 0 9.3 19.7h5.4a1.5 1.5 0 0 0 1.5-1.4L17 7M10.3 10.5v5.5M13.7 10.5v5.5"/>',
+    arrows: '<path d="M5 9h13.5l-3-3M19 15H5.5l3 3"/>',
   };
   G.ui = (k, size = 18) =>
     `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${UI[k]}</svg>`;

@@ -1,0 +1,506 @@
+/* The account (M7, DESIGN §6.15, §14.13): as the desktop's. */
+.side .me {
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.side .me:hover,
+.side .me.on {
+  background: var(--well-2);
+}
+.acct-card {
+  position: absolute;
+  z-index: 40;
+  width: 300px;
+  padding: 16px 16px 10px;
+  border-radius: 20px;
+  background: var(--bg);
+  box-shadow: var(--shadow-md);
+  transform-origin: 0 100%;
+}
+.acct-who {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.acct-who .ball {
+  width: 40px;
+  height: 40px;
+  font-size: 16px;
+}
+.acct-who b {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+}
+.acct-who span:not(.ball) {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.acct-rule {
+  height: 1px;
+  margin: 12px 0;
+  background: var(--line-2);
+}
+.acct-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: calc(100% + 16px);
+  margin: -6px -8px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: var(--ink);
+  text-align: left;
+  text-decoration: none;
+  font: inherit;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.acct-item:hover {
+  background: var(--well);
+}
+.acct-item svg {
+  color: var(--ink-3);
+  flex: none;
+}
+.acct-words {
+  flex: 1;
+  min-width: 0;
+}
+.acct-words b {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+}
+.acct-words span {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--ink-3);
+}
+.acct-item.danger b {
+  color: #ef4444;
+}
+
+/* 注销账号: the page over the window. */
+.acct-del {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  overflow-y: auto;
+  background: var(--bg);
+}
+.acct-back {
+  position: absolute;
+  top: 18px;
+  left: 20px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 30px;
+  padding: 0 10px 0 6px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.acct-back:hover {
+  background: var(--well);
+}
+.acct-col {
+  width: 420px;
+  margin: 84px auto 56px;
+}
+.acct-col h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+}
+.acct-wait {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 240px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.acct-wait.trouble {
+  color: #ef4444;
+}
+.spin {
+  width: 16px;
+  height: 16px;
+  border: 2px solid color-mix(in srgb, var(--ink-3) 25%, transparent);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: acct-spin 1s linear infinite;
+}
+.spin.white {
+  border-color: rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+}
+@keyframes acct-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.acct-sub {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.acct-goes {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 20px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: var(--well);
+}
+.acct-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.acct-ico {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink-2);
+}
+.acct-row > span:last-child {
+  padding-top: 4px;
+}
+.acct-row b {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+.acct-row b + span {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-2);
+}
+.acct-label {
+  display: block;
+  margin: 22px 0 10px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.acct-lan {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+.acct-lan .n {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.acct-choices {
+  display: flex;
+  gap: 12px;
+  margin-top: 12px;
+}
+.acct-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 204px;
+  padding: 14px;
+  border: 1.5px solid var(--line-2);
+  border-radius: 14px;
+  background: var(--bg);
+  color: var(--ink);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  transition: border-color 0.14s, background 0.14s, transform 0.18s cubic-bezier(0.3, 1.5, 0.5, 1);
+}
+.acct-choice:active {
+  transform: scale(0.98);
+}
+.acct-choice b {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+}
+.acct-choice b + span {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-2);
+}
+.acct-choice .radio {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  border: 1.5px solid color-mix(in srgb, var(--ink-3) 60%, transparent);
+  border-radius: 50%;
+}
+.acct-choice.on .radio::after {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.acct-choice.transfer.on {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 6%, var(--bg));
+}
+.acct-choice.transfer.on .radio {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.acct-choice.delete.on {
+  border-color: #ef4444;
+  background: color-mix(in srgb, #ef4444 6%, var(--bg));
+}
+.acct-choice.delete.on .radio {
+  border-color: #ef4444;
+  color: #ef4444;
+}
+.acct-owned-line {
+  min-height: 20px;
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.acct-inuse {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: color-mix(in srgb, #f59e0b 10%, var(--bg));
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.acct-inuse .dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: #f59e0b;
+}
+.acct-col .acct-label[for] {
+  margin-top: 26px;
+  margin-bottom: 8px;
+}
+.acct-email {
+  box-sizing: border-box;
+  width: 100%;
+  height: 46px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 12px;
+  outline: none;
+  background: var(--well);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+}
+.acct-email:focus {
+  box-shadow: 0 0 0 1.5px var(--primary);
+}
+.acct-email::placeholder {
+  color: var(--ink-3);
+}
+.acct-trouble {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: #ef4444;
+}
+.acct-go {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 44px;
+  margin-top: 14px;
+  border: 0;
+  border-radius: 999px;
+  background: #ef4444;
+  box-shadow: 0 1px 2px rgba(239, 68, 68, 0.3);
+  color: #fff;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.16s, color 0.16s, transform 0.18s cubic-bezier(0.3, 1.5, 0.5, 1);
+}
+.acct-go:hover:not(:disabled) {
+  background: #dc2626;
+}
+.acct-go:active:not(:disabled) {
+  transform: scale(0.98);
+}
+.acct-go:disabled:not(.sending) {
+  background: var(--well);
+  box-shadow: none;
+  color: var(--ink-3);
+  cursor: default;
+}
+.acct-go.sending {
+  background: color-mix(in srgb, #ef4444 85%, var(--bg));
+}
+.acct-note {
+  margin: 10px 0 0;
+  text-align: center;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+.acct-later {
+  display: block;
+  height: 32px;
+  margin: 8px auto 0;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.acct-later:hover {
+  background: var(--well);
+}
+.acct-refused {
+  margin: 18px 0 20px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: var(--well);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+.ghost-btn {
+  background: var(--well);
+  color: var(--ink);
+}
+.ghost-btn:hover {
+  background: var(--well-2);
+}
+
+/* 删除这台设备, in a card's 更多. */
+.del-row {
+  margin-top: 10px;
+}
+.del-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: #ef4444;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.del-btn:hover {
+  background: var(--well);
+}
+.del-row p {
+  margin: 2px 4px 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--ink-3);
+}
+
+/* The login page: the privacy notes; an account just deleted. */
+.join-privacy {
+  margin: 10px 0 0;
+  text-align: center;
+  font-size: 12px;
+}
+.join-privacy a {
+  color: var(--ink-3);
+  text-decoration: none;
+}
+.join-privacy a:hover {
+  color: var(--ink-2);
+  text-decoration: underline;
+}
+.join-gone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 0 0 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ok);
+}
+.join-gone-relays {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 400px;
+  margin: 20px auto 0;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: var(--well);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.join-gone-relays p {
+  margin: 0;
+}
+.join-gone-relays pre {
+  margin: 10px 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.join-gone-relays .r {
+  display: flex;
+  justify-content: flex-end;
+}
+.acct-lan .dots {
+  display: flex;
+  flex: none;
+  width: 26px;
+}
+.acct-lan .dots .ball {
+  width: 12px;
+  height: 12px;
+  margin-right: -4px;
+  box-shadow: 0 0 0 1.5px var(--bg);
+}

@@ -28,6 +28,7 @@ type Demo struct {
 	manual   bool // events play only as Simulate is called: for recordings
 	m3       demoM3
 	m4       demoM4
+	m7seed   bool // M7: the deployment's seed names my account ("m7-seed")
 }
 
 // Manual makes the demo's events play only as Simulate is called, never on
@@ -110,6 +111,11 @@ func (d *Demo) Do(_ context.Context, op model.Op) (model.Result, error) {
 			model.OpRelayJoin, model.OpRelayRevokeJoin:
 			// M4's (DESIGN §6.12).
 			return d.m4Op(s, op, &res)
+		case model.OpDeviceDelete, model.OpLogout, model.OpAccountDelete:
+			// M7's (DESIGN §6.15).
+			n, err := d.m7Op(s, op, &res)
+			opErr = err
+			return n
 		case model.OpLANInvite:
 			if op.Person != "" {
 				return s.With(op)
@@ -315,7 +321,10 @@ func (d *Demo) Simulate(event string) {
 			if n := d.m4Event(s, event, now); n != s {
 				return n
 			}
-			return d.m6Event(s, event, now)
+			if n := d.m6Event(s, event, now); n != s {
+				return n
+			}
+			return d.m7Event(s, event)
 		}
 		return &n
 	})

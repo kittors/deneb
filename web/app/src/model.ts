@@ -218,6 +218,9 @@ export interface UserView {
   features?: string[];
   sharedWithMe?: SharedDevice[];
   operator?: OperatorView;
+  // M7: my devices that were logged out (and my LANs' public ones): in no
+  // map, for 已登出 and a way to delete them (device.delete).
+  loggedOutDevices?: DeviceView[];
 }
 
 export interface StreamFrame {
@@ -310,7 +313,8 @@ export type OpType =
   | 'device.approve' | 'device.reject' | 'member.approve' | 'member.reject'
   | 'share.create' | 'share.revoke' | 'share.release' | 'share.leave' | 'lan.setMode' | 'device.setPublic'
   | 'relay.create' | 'relay.token' | 'relay.rename' | 'relay.delete' | 'relay.add' | 'relay.remove' | 'relay.join'
-  | 'relay.revokeJoin' | 'relay.setWeight' | 'relay.setCapacity' | 'relay.kick' | 'relay.unkick';
+  | 'relay.revokeJoin' | 'relay.setWeight' | 'relay.setCapacity' | 'relay.kick' | 'relay.unkick'
+  | 'device.delete' | 'account.delete';
 
 export interface OpArgs {
   lan?: LANID;
@@ -332,6 +336,11 @@ export interface OpArgs {
   capacity?: number;
   kick?: string;
   public?: boolean;
+  // account.delete (M7): only say what would go; what becomes of my LANs
+  // with others in them; my email again, to delete for real.
+  dryRun?: boolean;
+  ownedLANs?: 'transfer' | 'delete';
+  confirm?: string;
 }
 
 export interface Op {
@@ -348,6 +357,22 @@ export interface OpOutput {
   relayToken?: string;
   relayJoin?: RelayJoin;
   kick?: string;
+  account?: AccountDeletion; // account.delete (M7)
+}
+
+// AccountDeletion is what account.delete deletes, or would (dryRun):
+// design/plan/m7/account-delete.md §2.
+export interface AccountDeletion {
+  dryRun?: boolean;
+  devices: DeviceID[];
+  lans: LANID[];
+  transferred?: { lan: LANID; to: PersonID }[];
+  left: LANID[];
+  blocked?: LANID[];
+  relays: RelayID[];
+  relaysInUse?: RelayID[];
+  shares: number;
+  invites: number;
 }
 
 export interface OpResult {

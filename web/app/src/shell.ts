@@ -2,6 +2,7 @@
 // and header, drawn by the design's App (design/demos/v3/app.js, in
 // v3-app.ts), built from the user's view. One App for the visit; each page
 // fills its main area and gives it back when it goes.
+import { wireAccount } from './account.ts';
 import './v3-env.ts';
 import './v3-glyphs.ts';
 import './v3-links.ts';
@@ -160,6 +161,8 @@ export function frame(root: HTMLElement, ctx: Ctx, sel: string): Any {
   const foot = app.win.querySelector('.side .me');
   foot.querySelector('.ball').outerHTML = App.ball(v.me);
   foot.querySelector('span:not(.ball)').textContent = me ? me.displayName || me.name : '';
+  // The account card (M7, DESIGN §6.15).
+  wireAccount(app, ctx);
   app.layer.resize();
   return app;
 }
@@ -213,7 +216,7 @@ function side(v: UserView, sel: string, ctx: Ctx): void {
   const invs = (v.invitations || []).filter((i) => i.state === 'pending');
   const invRow = (i: InvitePreview) => row('invitation:' + i.invite, `${i.inviter.displayName || i.inviter.name}邀请你 · ${i.lanName}`, `<span class="dots">${App.dot(P[i.inviter.id]?.c || tokens.color.owners[1])}</span>`, '', 'wait');
   let html = lans.length || invs.length ? `<div class="group">局域网</div>` + lans.map(lanRow).join('') + invs.map(invRow).join('') + `<div class="gap"></div>` : '';
-  html += `<div class="group">设备</div>` + row('mine', '我的设备', G.ui('home', 18), count(v.devices.filter((d) => d.owner === v.me && !d.publicLAN).length));
+  html += `<div class="group">设备</div>` + row('mine', '我的设备', G.ui('home', 18), count(v.devices.filter((d) => d.owner === v.me && !d.publicLAN && !deletingDevs.has(d.id)).length));
   html += row('shared', '共享给我', G.ui('inbox', 18), count(shared)) + row('relays', '中转站', G.ui('relayLine', 18));
   for (const l of listedLANs(v).filter((x) => x.owner === v.me)) html += `<div class="gap"></div><div class="group">${esc(spaced('管理' + l.name))}</div>` + row('share:' + l.id, '设备共享', G.ui('share', 18));
   // The deployment's operators: its public relays, at the foot (§14.12 M4-13).
@@ -235,6 +238,10 @@ function side(v: UserView, sel: string, ctx: Ctx): void {
 // Shares I let go of (共享给我's 不要了) whose undo is still up: off the page
 // and out of the count already; the server hears of it when the undo goes.
 export const leaving = new Set<string>();
+// Devices of mine deleted while the undo is up (M7, DESIGN §6.15): off the
+// page and out of the count already; the server hears of it when the undo
+// goes.
+export const deletingDevs = new Set<string>();
 // People whose seat I am freeing (the seats' card) while the undo is up:
 // out of my seats already (DESIGN.md §6.11 位置).
 export const freeing = new Set<string>();

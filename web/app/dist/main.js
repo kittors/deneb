@@ -5,6 +5,7 @@
 // desktop's look; until one is registered, a plain stand-in shows the page's
 // contents so that every path works.
 import { api, ApiError, stream, whenLoggedOut } from './api.js';
+import { deletingAccount } from './account.js';
                                             
                                                                           
 import { listedLANs, sharedOnly } from './model.js';
@@ -106,6 +107,9 @@ whenLoggedOut(() => {
   stopStream?.();
   stopStream = null;
   view = null;
+  // The account just deleted: its page goes to the login itself, once it
+  // faded (account.ts, DESIGN §6.15).
+  if (deletingAccount()) return;
   const r = current();
   if (r.page !== 'join' && r.page !== 'login') go('/login?next=' + encodeURIComponent(location.pathname), true);
 });
