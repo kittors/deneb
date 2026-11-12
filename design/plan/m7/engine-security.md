@@ -1,6 +1,6 @@
 # M7 · 引擎安全审查（公测前）
 
-> 引擎线，2026-11-10 01:0x，01:1x 补了要定的三件。范围：`engine/`、`cmd/denebd/`、`deploy/`。引擎在 Windows 上以 SYSTEM 跑（系统服务），在 Linux 上以 root 跑（denebd 包），macOS 搁置。按主会话列的五块逐条过：查了什么、结论、改了什么。代码都在工作区，没提交；没碰线上，也没碰测试设备。
+> 引擎线，2026-11-10 01:0x，01:1x 补了要定的三件。范围：`engine/`、`cmd/denebd/`、`deploy/`。引擎在 Windows 上以 SYSTEM 跑（系统服务），在 Linux 上以 root 跑（denebd 包），macOS 搁置。按主会话列的五块逐条过：查了什么、结论、改了什么。代码都在工作区，没提交；没碰线上，也没碰测试设备。11-12 补了第 6 节：过滤器的模糊测试。
 
 ## 一句话结论
 
@@ -185,6 +185,63 @@
 
 **改了什么**：正式版拒绝明文 http 的控制服务器，回环地址除外（见下一节第 1 条）。
 
+## 6. 过滤器的模糊测试（11-12）
+
+**做了什么**：
+
+- `engine/filter/fuzz_test.go`，用 Go 自带的 `testing.F`，共五个目标。
+- 每个目标都拿一份另写的参考判断核对放不放，不只看崩不崩、读没读越界。参考判断自己读 IPv4 头，不用过滤器的 `Parse`。
+- `FuzzFragments`（IPv4 分片）：同一个包整着送进一个过滤器，切开送进另一个，两个方向都试。下面这些都由输入决定：
+  - 切多大、先后、重复；
+  - 往前重叠 8 字节；
+  - 加一片超过 65535 字节的；
+  - 让首片晚到 fragHold 以后。
+- `FuzzFragments` 的要求：
+  - 整包不放的，一片也不放：目的不是本机的、来自非对端的、端口没开的、没人发起的回复；
+  - TCP 落在头里（偏移小于 24）的片不放，超过 65535 字节的片也不放；
+  - 像协议栈那样切的，整包放，每一片就都放。"像协议栈那样切"指：首片带完整的 L4 头，都在 fragHold 以内；进来时先到的片能暂存，出去时首片先发。
+- `FuzzFragmentTable`（分片表满）：
+  - 最多三个对端，每个灌两千以内的 ping 首片（ping 谁都能发），再灌一百多片永远等不到首片的后片；然后 lin 发一个两片的包。
+  - 要求：没有哪个对端占到分片表的 1/4 以上，或暂存超过 64 片；lin 的包两片都进得来。
+- `FuzzIPv6ExtensionHeaders`：
+  - 逐跳、路由、分片、目的选项头随意串，最多 64 个；长度字段乱写，链在头中间截断，后面接 TCP、UDP、ICMPv6 或别的。
+  - 要求：两个方向都按 `ipv6` 丢；流表、分片表、暂存都不变；也不回 reset。
+  - 隧道里只走 IPv4，过滤器本来就丢所有 IPv6。这个目标确认不管怎么构造都一样。
+- `FuzzICMPErrors`：
+  - 两个方向。差错类型：不可达、超时、参数错误，另加重定向、时间戳。内层是 TCP、UDP、ICMP 或别的协议。来源、目的、端口、长度、IP 选项、分片位都由输入定。
+  - 要求和参考判断每次都一样：只有引用本机和这个对端之间还活着的流才放。
+  - 这些都不放：内层截断、内层是后片、差错套差错、引用别的对端的流、引用不存在的流、来自或发往非对端的。
+- `FuzzPackets`：
+  - 任意字节，两个方向。过滤器里先有几条流，还有 lin 一个刚开了头的分片包。
+  - 要求放过的每个包参考判断都认：进来的目的是本机、来自对端，出去的反过来；后片要有 5 s 内放过的首片；L4 头完整；不超过 65535 字节。
+  - 另外核对 `ResetFor` 造出的 reset 是回给这个包的。
+- 种子取自单元测试里的包：TestFragments、TestFragmentedPing、TestEarlyFragments、TestICMPErrorsNeedAFlow、TestInbound。
+- CI 照旧只跑 `go test`，也就是种子和 `testdata/fuzz/` 里的输入，不长跑。长跑的命令写在 `fuzz_test.go` 开头。
+
+**跑了多久**（11-12，这台 MacBook Air，`-parallel=2`，每个目标 5 分钟，共 25 分钟）：
+
+| 目标 | 时长 | 执行次数 | 结果 |
+| --- | --- | --- | --- |
+| FuzzFragments | 5 分钟，另有试跑几秒 | 1489 万 | 试跑时找到 1 处；改完再跑 5 分钟，没有 |
+| FuzzPackets | 5 分钟，另有试跑几秒 | 2704 万 | 试跑时找到 1 处；改完再跑 5 分钟，没有 |
+| FuzzICMPErrors | 5 分钟 | 2558 万 | 没有 |
+| FuzzIPv6ExtensionHeaders | 5 分钟 | 1653 万 | 没有 |
+| FuzzFragmentTable | 5 分钟 | 5.5 万（每次灌几千个包） | 没有 |
+
+**找到、改了的**（都在 `engine/filter/packet.go` 的 `parse`）：
+
+1. **超过 65535 字节的分片会放过去**：
+   - 一个包的首片放过以后，同一个包偏移 65528 的一片照样放，进来、出去都是；
+   - 拼起来就超过了 IP 包最大的 65535 字节，也就是老式的"死亡之 ping"。各系统的协议栈自己会丢，但过滤器不该放；
+   - 现在"偏移加总长"超过 65535 的片直接丢，原因记 `fragment-too-long`，界限和 Linux 一样。
+2. **不认识的协议的后片会被暂存**：
+   - 协议号 48 之类的后片，过滤器会存 2 s 等它的首片。可这种协议的首片永远进不来，白占了那个对端的 64 个暂存位；
+   - 这不算漏洞，是浪费；
+   - 现在不认识的协议连后片一起丢，原因记 `protocol`。
+- 两个触发输入留在 `engine/filter/testdata/fuzz/`（FuzzFragments、FuzzPackets 各一个），`go test` 每次都跑。`TestFragments` 也加了这两条。
+
+**没找到的**：ICMP 差错、IPv6、分片表这三类，和 11-10 人工审查的结论一致。
+
 ## 原先要定的几件（主会话 11-10 01:1x 替用户定了，原话"千万别想这么多"，按最简单稳妥的来）
 
 1. **正式版拒绝明文 http 的控制服务器，回环地址除外：已做**。
@@ -230,7 +287,8 @@
 - 新增：
   - `TestReleaseHasNoTestAPI`、`TestReleaseRefusesPlainHTTPControl`、`TestPlainHTTPOnlyForThisMachine`；
   - `TestPeerCannotFillTheFlowTable`、`TestPeerCannotFillTheFragmentTable`；
-  - `TestUndoRecordIsChecked`。
+  - `TestUndoRecordIsChecked`；
+  - 11-12：过滤器的五个模糊测试目标（第 6 节），`go test` 跑它们的种子和回归输入。
 - 改了：`TestUndoRecordRoundTrip`，解析文件目录在测试里可以换成临时目录。
 - 引擎、命令、客户端 16 个包的测试全过。
 - Windows、Linux、macOS 三个平台的 vet 都过。

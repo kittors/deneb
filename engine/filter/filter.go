@@ -794,13 +794,16 @@ func (f *Filter) expireEarlyLocked(now time.Time) {
 // unparsed says why Parse refused b: IPv6, which the systems send on the
 // interface (router solicitations and the like; there is only IPv4 inside
 // the tunnel), an IPv4 protocol the filter does not know (IGMP's
-// membership reports), or a malformed packet.
+// membership reports), a piece reaching past 65,535 bytes, or a malformed
+// packet.
 func unparsed(b []byte) string {
 	switch {
 	case len(b) > 0 && b[0]>>4 == 6:
 		return "ipv6"
 	case len(b) >= 20 && b[0]>>4 == 4 && b[9] != ProtoTCP && b[9] != ProtoUDP && b[9] != ProtoICMP:
 		return "protocol"
+	case len(b) >= 20 && b[0]>>4 == 4 && fragEnd(b) > 0xffff:
+		return "fragment-too-long"
 	}
 	return "malformed"
 }

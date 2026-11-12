@@ -1,0 +1,8 @@
+go test fuzz v1
+byte('\x00')
+byte('\f')
+uint16(22)
+uint16(3051)
+byte('\u009c')
+[]byte("0")
+byte('F')

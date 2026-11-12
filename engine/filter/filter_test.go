@@ -326,6 +326,18 @@ func TestFragments(t *testing.T) {
 	if ok, why := f.In(short); ok || why != "malformed" {
 		t.Fatalf("first fragment without the whole TCP header: (%v, %q)", ok, why)
 	}
+	// A piece of the datagram let in above that reaches past the 65,535
+	// bytes a datagram may have (FuzzFragments found it let through).
+	huge := pk{proto: ProtoUDP, src: lin, dst: self, id: 77, fragOff: 65528, payload: make([]byte, 8)}.bytes()
+	if ok, why := f.In(huge); ok || why != "fragment-too-long" {
+		t.Fatalf("a piece past 65535 bytes: (%v, %q)", ok, why)
+	}
+	// A later piece of a protocol never let in is dropped, not held for a
+	// first piece that cannot come (FuzzPackets found it held).
+	gre := pk{proto: 47, src: lin, dst: self, id: 77, fragOff: 1480}.bytes()
+	if ok, why := f.In(gre); ok || why != "protocol" {
+		t.Fatalf("a later piece of GRE: (%v, %q)", ok, why)
+	}
 }
 
 // TestFragmentedPing: a ping larger than the MTU goes out in pieces and

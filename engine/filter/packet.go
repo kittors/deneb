@@ -73,12 +73,25 @@ func parse(b []byte, quoted bool) (Packet, bool) {
 		b = b[:total]
 	}
 	h.Proto = b[9]
+	switch h.Proto {
+	case ProtoTCP, ProtoUDP, ProtoICMP:
+	default:
+		// Anything else is dropped, its later pieces too: held, they would
+		// only wait for a first piece that never gets in (FuzzPackets).
+		return h, false
+	}
 	h.ID = binary.BigEndian.Uint16(b[4:6])
 	h.Src = netip.AddrFrom4([4]byte(b[12:16]))
 	h.Dst = netip.AddrFrom4([4]byte(b[16:20]))
 	frag := binary.BigEndian.Uint16(b[6:8])
 	more := frag&0x2000 != 0
 	h.FragOffset = (frag & 0x1fff) * 8
+	if !quoted && fragEnd(b) > 0xffff {
+		// A piece reaching past the 65,535 bytes a datagram may have (RFC
+		// 791): reassembled, it overruns, the old ping of death. Linux drops
+		// such a piece the same way (FuzzFragments).
+		return h, false
+	}
 	if h.FragOffset > 0 {
 		h.Fragment = true
 		return h, true
@@ -140,10 +153,15 @@ func parse(b []byte, quoted bool) (Packet, bool) {
 			}
 			h.Inner = &inner
 		}
-	default:
-		return h, false
 	}
 	return h, true
+}
+
+// fragEnd is where IPv4 packet b, a piece of its datagram or the whole of
+// it, ends in the datagram, header included: its offset and total length.
+// b is at least a header long.
+func fragEnd(b []byte) int {
+	return int(binary.BigEndian.Uint16(b[6:8])&0x1fff)*8 + int(binary.BigEndian.Uint16(b[2:4]))
 }
 
 // ResetFor makes the TCP reset that answers b, an IPv4 TCP segment of a
