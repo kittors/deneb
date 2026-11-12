@@ -160,3 +160,78 @@
 - **Linux 托盘和 Ubuntu 窗口**（DESIGN §7.2）：按系统改。没有双击，窗口从菜单打开；Ubuntu 上是直角，MyGo 做不了圆角。细节在 `m5/client.md` 最后一节。M5-04 的演示跟着重录，交在 `M5-Windows和Linux/第2批-Linux按系统改/`。
 - **测过**：三个平台 vet、gofmt 干净；`client` 全部测试过了；M1 基线 50 帧都在容差里。`cmd/deneb` 全部测试只挂了 `TestAdapterNoticeLive`：卡片里锁框那句改短了，测试还在等旧的那句。改了以后，装网卡和引导的 8 个测试重跑都过了，整套没再跑一遍。M6 第 2 批的 07、M5-04 两种颜色共 4 段录像，用 `frame-check.py` 查过，没有单帧跳变，也没有突然跳变。
 
+
+## M7 · 打开自动更新（方案，11-12；私钥等用户点头）
+
+主会话 11-12 交的：打开自动更新，清单放 GitHub Releases。更新器 11-10 已经接好（`update.go`，见 i4），可 `mygo.json` 里没有 `updates`，发出去的版本不会查更新。
+
+**哪些平台会自己更新**
+- **Windows**：安装包按用户装在 `%LOCALAPPDATA%\Programs\Deneb`，窗口能自己换掉自己；引擎跟着换（`followEngine`，系统服务要弹一次 UAC，见 i4）。
+- **Linux**：deb 装在 `/opt/deneb`，MyGo 的更新器不管，要用户去下新的 deb。MyGo 另外打的 tar.gz、`install.sh`、PKGBUILD 和清单不发：它们装出来的窗口没有引擎（引擎在 `denebd` 的 deb 里）。
+- **macOS**：等 Apple 开发者账号（i1 搁置），先不发。
+
+**1. mygo.json 怎么配**（有了公钥那天再加）
+
+```json
+"updates": {
+  "publicKey": "<mygo-update.pub 的内容>",
+  "github": "kittors/deneb",
+  "changelog": "../../CHANGELOG.md"
+}
+```
+
+- 不设 `tagPrefix`：这个仓库只发 Deneb 这一种 Release，标签就是 `v<版本>`。装好的客户端直接读最新那个 Release 的清单（`releases/latest/download/update-windows-amd64.json`），不走 GitHub 的接口，也就没有每小时 60 次的限制。以后同一个仓库要是还发别的（比如单独的服务器版本），桌面版再换成 `desktop-v` 这样的前缀。
+- `changelog`：MyGo 默认在 `mygo.json` 旁边找 `CHANGELOG.md`，而我们的在仓库根目录，所以要写明。更新窗口里显示的发布说明就是本版本那一节（`## 0.2.0`）。11-12 在副本里试过：不写这一项，清单里就没有说明。
+- 增量更新：默认给最近 3 个版本各做一个增量包。第一个版本没有可比的，`mygo build` 会说明。
+
+**2. 怎么发：推荐 GitHub Actions，手动的作备用**
+
+- **推荐 GitHub Actions**（`.github/workflows/release.yml`，推 `v*` 标签时跑）：
+  - 怎么用：改好版本号和 CHANGELOG、提交，推一个标签（`git tag v0.2.0 && git push origin v0.2.0`）。工作流会自己打包、签名，传到这个标签的草稿 Release。人看过草稿，再点发布。发布以后，装好的客户端才会看到。
+  - 好处：私钥只在 GitHub 的密钥里，不落到哪台电脑上；Ubuntu 上装得上 NSIS，Windows 安装包编得出来；每次都在干净的环境里打。
+  - 一个 job 依次打 Windows 和 Linux，wintun 从官网下，`wintun.dll` 对着 M6 以来一直用的那份校验哈希。
+- **备用：手动跑 `deploy/release.sh`**（工作流跑的也是它）：
+  - 那台电脑上要有私钥、Docker（引擎的 deb）、gh；`mygo build` 在这台 Mac 上也能编出 Windows 安装包。
+  - 私钥会落在那台电脑上，不推荐当常规做法。
+- **`deploy/release.sh`**：
+  - 先查：标签和 `mygo.json` 的版本对得上；有 `updates`，公钥不空，`github` 是 `kittors/deneb`；有私钥；`CHANGELOG.md` 里有这个版本的一节。有一条不对，就停下说明原因，什么都不打、不传。
+  - 再调 `deploy/package.sh` 打包，`mygo build` 用私钥签名。
+  - 只传这些：
+    - Windows：安装包、更新包和增量包、清单 `update-windows-amd64.json`；
+    - Linux：两种架构各三个 deb；
+    - 只列这些文件的 `SHA256SUMS`。
+  - 清单最后传。MyGo 写的 `install.ps1` 也不传（一行命令安装，要的话以后再定）。
+  - 已经发布了的 Release 不改，装好的客户端可能正从它更新。要再发就升版本号。
+  - `-n`：打包、签名、检查，列出会传什么，不传。
+
+**3. 私钥（要用户点头）**
+
+- **推荐**：
+  - 用户在自己的电脑上跑一次 `go tool mygo keygen`，得到私钥 `mygo-update.key` 和公钥 `mygo-update.pub`。
+  - 私钥放两处：
+    1. GitHub 仓库的 Actions 密钥 `MYGO_UPDATER_PRIVATE_KEY`（`gh secret set MYGO_UPDATER_PRIVATE_KEY < mygo-update.key`），只有发版的工作流读得到；
+    2. 用户的密码管理器。丢了它，已经装上的客户端就再也收不到更新，只能让大家手动重装。
+  - 公钥的内容给我们，写进 `mygo.json`。公钥可以公开，进仓库。
+- **谁签**：发版的工作流签（`mygo build` 从环境变量读私钥），人不经手。
+- **别的做法**：私钥只放在用户自己的电脑上，每次由用户手动跑 `deploy/release.sh`。私钥不进 GitHub，但每次发版都要用户动手，电脑上还得有 Docker、gh。
+- 私钥不进仓库，也不经过 Claude 的会话：只由用户本人生成、放好。
+
+**4. 打开的那天**（用户点头以后）
+1. 用户生成密钥，私钥放进 GitHub 密钥和密码管理器，把公钥给我们。
+2. `mygo.json` 加上面的 `updates`，`TestUpdatesConfig` 会查它的格式。
+3. 升版本号，写 CHANGELOG 的这一节，提交，推标签。草稿出来，看过，发布。
+4. 带 `updates` 的版本装上以后，往后的版本才会自己更新上去。之前装的不查更新，要手动装一次。
+
+**5. 先做好的（11-12）**
+- `deploy/release.sh`、`.github/workflows/release.yml`、`CHANGELOG.md`（只有 0.1.0 一节），测试 `cmd/deneb/release_test.go`：
+  - `TestChangelog`：CHANGELOG 有 `mygo.json` 版本的那一节。
+  - `TestUpdatesConfig`：加了 `updates` 以后，仓库、标签前缀、changelog 的路径和公钥格式都对。
+  - `TestReleaseChecks`：发布脚本在六种情况下停下（没 `updates`、别的仓库、标签和版本不符、没私钥、CHANGELOG 没这个版本、没有 CHANGELOG），都在打包以前；对的时候只传该传的，清单最后，`SHA256SUMS` 只列传的文件。
+- **本机验过**（副本 `/tmp/deneb-rel`，`/tmp` 里临时生成的测试密钥，主树的 `mygo.json` 没加 `updates`）：
+  - `deploy/release.sh -n windows` 打出来了：安装包 `deneb-setup-0.1.0-amd64.exe`（这台 Mac 上也编出来了）、更新包 `deneb-0.1.0-windows-amd64.tar.gz`、清单 `update-windows-amd64.json`。
+  - 清单里的版本是 0.1.0，下载地址是 `https://github.com/kittors/deneb/releases/download/v0.1.0/deneb-0.1.0-windows-amd64.tar.gz`，带签名，说明是 CHANGELOG 里的"第一个公开测试版。"。
+  - 列出的上传文件只有那三个加 `SHA256SUMS`；`Deneb.exe`、`install.ps1` 没列。
+  - 还没有发布过的版本，所以没有增量包，`mygo build` 说明了。
+- **没做**：
+  - 没生成正式密钥，`mygo.json` 没加 `updates`，没推标签，GitHub 上没建 Release，工作流没在 GitHub 上跑过。
+  - Linux 部分（Docker 打引擎 deb）这次没在本机跑：`package.sh` 11-10 跑过，发布脚本只是多挑出它的 deb 来传，测试里用假的 `package.sh` 查过挑得对。

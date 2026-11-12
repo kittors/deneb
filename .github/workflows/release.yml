@@ -1,0 +1,57 @@
+# Deneb's release, for a tag v<version> pushed (design/plan/m6/client.md,
+# "M7 · 打开自动更新"): deploy/release.sh builds the Windows installer and the
+# Linux packages, signs the Windows app's update, and uploads them to the
+# draft release of the tag. A person looks at the draft and publishes it:
+# installed Windows apps then update to it.
+#
+# The key that signs updates is the repository's secret
+# MYGO_UPDATER_PRIVATE_KEY; without it, or without updates in
+# cmd/deneb/mygo.json, deploy/release.sh stops before building anything.
+#
+#   (bump version in cmd/deneb/mygo.json, add its section to CHANGELOG.md)
+#   git tag v0.2.0 && git push origin v0.2.0
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # the draft release, and the uploads to it
+
+concurrency:
+  # One run a tag; a second push of it waits rather than racing the first.
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CGO_ENABLED: "0"
+  WINTUN_VERSION: "0.14.1"
+
+jobs:
+  release:
+    name: Build, sign, upload to the draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false # gh uploads with GH_TOKEN; git pushes nothing
+      - uses: ./.github/actions/go
+        with:
+          cache: release
+      - name: NSIS, for the Windows installer
+        run: sudo apt-get update && sudo apt-get install -y nsis
+      - name: Wintun, the Windows adapter's driver
+        # From its makers, the dll checked against the one the packages
+        # have shipped since M6 (deploy/package.sh).
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/wintun.zip" "https://www.wintun.net/builds/wintun-$WINTUN_VERSION.zip"
+          unzip -q "$RUNNER_TEMP/wintun.zip" -d "$RUNNER_TEMP"
+          echo "e5da8447dc2c320edc0fc52fa01885c103de8c118481f683643cacc3220dafce  $RUNNER_TEMP/wintun/bin/amd64/wintun.dll" | sha256sum -c
+      - name: Build, sign and upload (deploy/release.sh)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+          WINTUN_DIR: ${{ runner.temp }}/wintun
+        run: sh deploy/release.sh
