@@ -23,6 +23,14 @@ func (s *Server) webAPIRoutes(m *http.ServeMux) {
 	// Cross-site posts are refused, and every post is JSON, so a form on
 	// another site cannot act with someone's cookie.
 	cop := http.NewCrossOriginProtection()
+	if s.cfg.WebURL != "" {
+		// deneb-web passes requests on with this server's Host: a browser
+		// that sends no Sec-Fetch-Site (Safari before 16.4) is checked by
+		// its Origin, the Web version's, which matches no Host here.
+		if err := cop.AddTrustedOrigin(s.cfg.WebURL); err != nil {
+			s.logf("web: %s is no origin: %v", s.cfg.WebURL, err)
+		}
+	}
 	post := func(h http.HandlerFunc) http.Handler { return cop.Handler(jsonOnly(h)) }
 	m.Handle("POST "+proto.PathWebLogin, post(s.handleWebLogin))
 	m.Handle("POST "+proto.PathWebLoginEmail, post(s.handleWebLoginStep(false)))

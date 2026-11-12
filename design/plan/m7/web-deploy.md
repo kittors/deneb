@@ -1,239 +1,215 @@
-# M7 · 网页后台正式上线（方案，没做）
+# M7 · 网页后台正式上线
 
-> 控制线，2026-11-12。用户 11-12 定了"给域名，正式上"。这份只是方案：代码没改，hk-155 上只读看了 80、443 被谁占着、有没有证书工具。下面的域名一律写成 `deneb.<你的域名>`：真的域名只放在服务器和不进仓库的配置里，和 `seed.hk155.json` 一样。
+> 控制线，2026-11-12。用户给了域名，说"你上线吧"。方案、脚本和代码都做好了，本机测过，上线由主会话来做。
+>
+> 本文里的域名一律写成 `deneb.<域名>`，脚本和模板里写成 `deneb.example.com`。真的域名只放在 `deploy/web/site.hk155.env` 里，这个文件不进仓库。
 
 ## 0. 一句话
 
-- **推荐做法**：在用户已有的域名下开一个子域名，比如 `deneb.<你的域名>`，只给网页用。
-- **443 端口**：借 hk-155 上用户自己的 nginx。新加一个站点文件，把这个子域名转给本机的 deneb-web。
-- **证书**：用机器上已经装好的 certbot 申请，走 80 端口验证，续期也交给它。
-- **控制服务器**：IP、端口、证书都不动，已经装好的客户端什么都不用改。
-- **邀请链接**：控制服务器加一个 `-web-url`，新链接指向网页，旧链接跳过去。
-
-要改用户的 nginx，所以每一步都要用户点头。要用户做的事列在 §7。
+- 网页用一个子域名 `deneb.<域名>`。
+- hk-155 上用户自己的 nginx 管 443：它的 `conf.d/` 里新加一个文件，把这个子域名转给本机的 deneb-web。
+- 证书：用 certbot 的 Cloudflare DNS 验证，和机器上别的子域名一样，凭证用服务器上已有的那份。
+- 控制服务器的 IP、端口、证书都不动，已经装好的客户端什么都不用改。
+- 控制服务器加 `-web-url`：新的邀请链接打开网页版，旧链接跳过去。
 
 ## 1. 现在的样子
 
-- **网页后台 deneb-web**：只在主会话那台 Mac 上跑（127.0.0.1:47621）。它做三件事：
-  - 发网页的文件；
-  - 把 `/api/` 转给控制服务器，按指纹认它；
-  - 浏览器只跟它打交道，所以 cookie 和同源检查都按同源算。
+- **deneb-web**：只在主会话那台 Mac 上跑。
+  - 它做三件事：发网页的文件；把 `/api/` 按指纹转给控制服务器；让 cookie 和同源检查按同源算。
+  - 它只会明文 HTTP。
+- **控制服务器**：在 hk-155 的 47443 端口，用自签证书。设备、中转站、正式版客户端都按"IP 加指纹"连它。
+- **邀请链接**：是 `https://103.42.31.155:47443/i/<码>`。浏览器先报证书不受信任，打开以后没装客户端的人也接受不了。
+- **hk-155**：80、443 由宿主机上的 nginx（systemd 服务）占着，它的 `conf.d/` 里一个站一个文件，是用户另一个项目的，一个都不动。certbot 已经装好，用户的几个子域名都是用 Cloudflare 的 DNS 验证拿的证书。
 
-  它只会明文 HTTP，自己不管 TLS。
-- **控制服务器**：在 hk-155 的 47443 端口，用自签证书。设备、中转站、正式版客户端都按"IP 加指纹"连它。正式版里写死的是 `https://103.42.31.155:47443` 和指纹。
-- **邀请链接**：现在是 `https://103.42.31.155:47443/i/<码>`，打开的是控制服务器的旧落地页。
-  - 浏览器先报"证书不受信任"；
-  - 打开以后只能"在 Deneb 里打开"，没装客户端的人接受不了。
+## 2. 域名和解析
 
-  网页版自己有 `/i/<码>` 页面，能登录、能接受，可是没有链接指过去。
-- **hk-155**：80、443 由宿主机上的 nginx（systemd 服务）占着，机器上已经装了 certbot，也有自动续期。控制服务器在 47443，公共中转站在 47445。
-
-## 2. 域名
-
-- **用一个子域名**：`deneb.<你的域名>`，只给网页用，网页的文件和 `/api/` 都在这个地址下。
-- **控制服务器现在不换域名**。
-  - 已经装好的客户端认的是 IP 和自签证书的指纹。控制服务器换地址或者换证书，这些客户端就连不上了。
+- **一个子域名，只给网页**：网页的文件和 `/api/` 都在 `https://deneb.<域名>` 下。
+- **控制服务器不换域名**。
+  - 已经装好的客户端认的是 IP 和自签证书的指纹，控制服务器一换地址或者证书，它们就连不上了。
   - 网页上线用不着动它。
-  - [control-ops.md](control-ops.md) §5 第 1 条说的 `control.<域名>`，是为了以后备机接替时只改 DNS。到时候再加第二个子域名，指向同一台机器。客户端仍然按指纹认证书，不需要正式证书。
-  - 这件跟备机方案一起做，要引擎线、客户端线改连接的地址，还要过渡：新版先试域名，不通再回 IP；旧版一直用 IP。
-- **域名不进仓库**。
-  - 部署脚本从一个不进仓库的文件里读，比如 `deploy/control/site.hk155.env`，里面一行 `WEB_URL=https://deneb.<你的域名>`。在 `deploy/control/.gitignore` 里加 `/site.*.env`，和 `seed.*.json` 一样。
-  - nginx 的站点文件只放在 hk-155 上。仓库里只放一份模板，域名写成 `deneb.example.com`。
-- **但域名本身会公开**，上线以后就藏不住了：
-  - 邀请链接里有它，发给谁谁就看得到；
-  - 正式证书会被记进公开的证书透明日志，谁都查得到这个子域名。
-
-  如果打算用的域名下面还放着别的私人服务，建议另买一个便宜的域名专给 Deneb，免得被人顺藤摸瓜。
+  - 以后做备机（[control-ops.md](control-ops.md) §5 第 1 条）再加 `control.<域名>`，指向同一台机器。客户端仍然按指纹认证书，不需要正式证书。到时候新版先试域名、不通再回 IP，旧版一直用 IP，要引擎线和客户端线一起改。
+- **解析，用户在 Cloudflare 做**：
+  - 这个域名有一条通配符记录，指向别的机器，所以 `deneb.<域名>` 现在解析不到 hk-155。
+  - 要加一条记录：类型 A，名称 `deneb`，内容 `103.42.31.155`，代理状态"仅 DNS"（灰色云朵），TTL 自动。
+  - 有了这条明确的记录，这个名字的所有类型都不再落到通配符上，也不会因为通配符有 AAAA 就解析到别处。
+  - 证书走 DNS 验证，不等这条记录；可是浏览器要连得上，得先有它。
+- **域名不进仓库**：
+  - 脚本从 `deploy/web/site.hk155.env` 里读，这个文件被 `deploy/web/.gitignore` 挡在仓库外，写法见 `site.example.env`；
+  - nginx 的站点文件只在 hk-155 上；
+  - 提交说明里也不写。
+- **但域名本身会公开**：邀请链接里有它，证书会被记进公开的证书透明日志。
 
 ## 3. 部署：deneb-web 单独一个容器
 
-推荐**单独一个容器**，不让控制服务器顺带发网页的文件。
+为什么不让控制服务器顺带发网页的文件：
 
-- 网页线改网页、发新版，不用重启控制服务器，设备不会断一下。
-- deneb-web 已经把同源、gzip、CSP、单页路由、按指纹转 `/api/` 都做好了，不用重做。
-- 让控制服务器顺带发网页，看上去少一个容器。可它的 47443 端口和自签证书是给设备用的，浏览器要正式证书和 443，前面照样要 nginx，省不了什么。
+- 网页线发新版，不用重启控制服务器，设备不会断一下。
+- 控制服务器的 47443 和自签证书是给设备用的，浏览器要正式证书和 443，前面照样要 nginx。
+- deneb-web 已经把同源、gzip、CSP、单页路由、按指纹转 `/api/` 都做好了。
 
-做法照 `deploy-hk155.sh`：
+`deploy/web/` 下的脚本，写法照 `deploy/control/`：
+
+| 脚本 | 做什么 |
+| --- | --- |
+| `build.sh` | 把 deneb-web 编成 Linux 的静态程序；从 `web/app/src` 构建网页，在临时目录里构建，仓库里的 `web/app/dist` 不动 |
+| `Dockerfile` | 空镜像，只有 deneb-web 和网页文件，以 nobody 运行 |
+| `deploy-hk155.sh` | 构建、上传、起容器；上一版镜像留作 `deneb-web:prev`；最后在 hk-155 上自查：网页 200，`/api/` 经它到控制服务器得到 401 |
+| `rollback-hk155.sh` | 换回上一版；带 `-remove` 是整个拿掉 |
+| `cert-hk155.sh` | 用 certbot 拿证书（§4） |
+| `nginx-hk155.sh` | `show` 在本机打出站点文件；`install` 放进 nginx 并平滑 reload；`remove` 拿出来（§4） |
+| `check-local.sh` | 在本机把 nginx、deneb-web、控制服务器整条链跑一遍（§8） |
+
+容器：
 
 ```
-docker run -d --name deneb-web --network host --restart unless-stopped \
-  --cpus 0.5 --memory 128m --memory-swap 128m --pids-limit 128 --read-only \
+docker run -d --name deneb-web --network host --restart unless-stopped --read-only \
+  --cpus 0.5 --memory 128m --memory-swap 128m --pids-limit 128 \
   --log-opt max-size=10m --log-opt max-file=3 \
-  deneb-web:v0 -listen 127.0.0.1:47447 -static /app \
-  -control https://127.0.0.1:47443 -control-pin <data/tls/pin.txt 里的指纹>
+  deneb-web:v0 -static /app -listen 127.0.0.1:47447 \
+  -control https://127.0.0.1:47443 -control-pin <控制服务器 data/tls/pin.txt 里的指纹>
 ```
 
-- host 网络，只听本机的 127.0.0.1:47447，外面连不到，只有 nginx 能转进来。不开新的对外端口，不动防火墙，不动别的容器。
-- 网页的文件在本机构建（`node web/app/build.mjs`），打进镜像，容器只读。
-- 回滚：上一版镜像留作 `deneb-web:prev`，一个 `rollback` 脚本换回去，和控制服务器一样。
-- 新脚本 `deploy/web/deploy-hk155.sh`，写法照控制服务器的那个；谁来写由主会话定（控制线可以写）。
+- 只听 127.0.0.1:47447，外面连不到，只有 nginx 转得进来。
+- 不开新的对外端口，不动防火墙，不动别的容器。
+- deneb-web 不存任何东西；重新部署只会让浏览器的推送流断一下，马上自己连回来。
 
-## 4. 正式证书和 443
+## 4. 证书和 nginx
 
-hk-155 的 80、443 被用户自己的 nginx 占着。几种做法：
+### 证书
 
-### A. 借用户的 nginx 反向代理，certbot 走 80 端口验证（推荐）
-
-**要动的东西**：
-
-- 新加一个站点文件 `/etc/nginx/sites-available/deneb-web.conf`，链接到 `sites-enabled/`。别的文件一个都不改。
-- 用 certbot 给这个子域名申请证书：
-  - `certbot certonly --nginx -d deneb.<你的域名>`；
-  - 或者 `--webroot`，再加 `--deploy-hook "systemctl reload nginx"`。
-
-  续期交给机器上已经有的 certbot 定时任务。
-
-**站点文件要点**（模板进仓库，域名写成 example.com）：
+`cert-hk155.sh` 在 hk-155 上跑：
 
 ```
-server {
-    listen 443 ssl http2;
-    server_name deneb.example.com;
-    ssl_certificate     /etc/letsencrypt/live/deneb.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/deneb.example.com/privkey.pem;
-
-    # 不记路径：邀请页 /i/<码> 和 /api/v1/invites/<码> 的路径里就是邀请令牌
-    log_format deneb_nopath '$remote_addr [$time_local] $request_method $status $body_bytes_sent';
-    access_log /var/log/nginx/deneb-web.log deneb_nopath;
-
-    location / {
-        proxy_pass http://127.0.0.1:47447;
-        proxy_http_version 1.1;
-        proxy_set_header Connection "";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;     # 覆盖，不追加
-        proxy_buffering off;                        # 推送流一帧一帧地到
-        proxy_read_timeout 1h;
-    }
-}
-server {
-    listen 80;
-    server_name deneb.example.com;
-    location /.well-known/acme-challenge/ { root /var/www/letsencrypt; }
-    location / { return 301 https://$host$request_uri; }
-}
+certbot certonly --dns-cloudflare --dns-cloudflare-credentials <CF_CREDENTIALS> \
+  --dns-cloudflare-propagation-seconds 30 -d deneb.<域名> \
+  --non-interactive --keep-until-expiring --deploy-hook 'nginx -t && systemctl reload nginx'
 ```
 
-`log_format` 只能写在 `http` 块里。真用的时候，要么放进 `conf.d/` 下单独一个文件，要么去掉它、直接 `access_log off;`。站点文件里 `listen` 写什么，要照 nginx 现有站点的写法来：它现在只听 hk-155 的公网 IP。
+- 和这台机器上别的子域名一样，走 Cloudflare 的 DNS 验证，用服务器上已有的凭证文件。
+  - 凭证文件的路径写在 `site.hk155.env` 里。
+  - 脚本只把路径交给 certbot，不读、不打印、不拷它的内容。
+  - 不需要新的令牌。
+- 不用 80 端口验证：别的子域名都不是这么拿的；用 DNS 验证，nginx 在 80 上现有的配置一点都不用碰。
+- 续期跟着现有的 certbot 定时任务走。每次续期以后，先 `nginx -t`，过了才 reload。
 
-**做的顺序**：
+### nginx
 
-1. DNS 指过来；
-2. 只放 80 的那个 server，`nginx -t`，`systemctl reload nginx`；
-3. 申请证书；
-4. 再加 443 的 server，`nginx -t`，`systemctl reload nginx`。
+`nginx-hk155.sh install` 只加一个文件 `/etc/nginx/conf.d/deneb.<域名>.conf`，由 `nginx.conf.template` 生成，要点：
 
-`nginx -t` 不过就不 reload；reload 是平滑的，正在连着的别的站点不断。
+- **监听地址**：和 nginx 现有站点一样，是 hk-155 的公网 IP 上的 80 和 443，所以 nginx 不新绑任何端口。
+- **不写 http2**：http2 一开，同一个端口上的别的站点也会跟着变。
+- **80**：只做一件事，跳到 https。
+- **443**：
+  - 用上面的证书，整站反向代理到 127.0.0.1:47447；
+  - `proxy_buffering off`，推送流一帧一帧地到；超时 1 小时，推送流每 15 秒有一次心跳；
+  - `X-Real-IP` 设成 nginx 看到的地址，覆盖浏览器自己带的；
+  - `proxy_cookie_flags ~ secure`：deneb-web 为了本机明文调试会去掉 cookie 的 Secure，这里是 HTTPS，补回去。
+- **日志**：`access_log off`，因为 `/i/<码>`、`/api/v1/invites/<码>` 的路径里就是邀请码；错误日志只记 crit 级，因为 error 级的每一行都带着请求的路径。
 
-**回滚**：
+脚本的保护：
 
-- 删掉 `sites-enabled/deneb-web.conf`，`nginx -t`，`systemctl reload nginx`。
-- 证书可以留着，也可以 `certbot delete --cert-name deneb.<你的域名>`。
-- DNS 记录可留可删。
+- 同名文件已经在、又不是这个脚本做的（第一行有标记）：什么都不做。
+- 证书还没拿到：什么都不做。
+- 先 `nginx -t`，过了才 `systemctl reload nginx`。reload 是平滑的，别的站点正在连着的不断。
+- `nginx -t` 不过：文件放回原样，不 reload。
+- `remove` 也一样：先拿出来，`nginx -t` 过了才 reload，不过就放回去。
 
-**要用户做**：加一条 DNS 记录；同意我们在 nginx 里加这一个文件、跑 certbot、reload nginx，或者用户照这几步自己做。
+## 5. 代码改动（做了，提交了）
 
-**好处**：
+**控制服务器**
 
-- 标准的 443，链接里没有端口号；
-- 不多出第三方；
-- 服务器上不放任何能改域名的令牌；
-- 只加一个文件，回滚一步到位；
-- certbot 和续期都是现成的。
+- **`-web-url https://deneb.<域名>`**：
+  - 邀请链接都改成网页上的 `/i/<码>`。链接是看的时候现算的，所以还没用的邀请也会马上换成新链接。
+  - 控制服务器自己的 `GET /i/<码>` 改成 302 跳过去，带 `Referrer-Policy: no-referrer`。用 302 不用 301：回滚以后，浏览器不会记着旧的跳转。
+  - 网页接口的同源检查，把这个地址算作受信的来源。新浏览器带 `Sec-Fetch-Site`，本来就过；不带这个头的旧浏览器（比如 iOS 16.4 以前的 Safari），控制服务器只能拿 Origin 去比 Host，而 deneb-web 转过来时 Host 换成了控制服务器的，比不上，以前会被挡掉。
+  - `-public-url` 不动。设备登录链接、中转站加入码里的控制服务器地址、cookie 的 Secure，都还按它来。
+- **`-trust-local-proxy`**：
+  - 只有从本机（127.0.0.1、::1）来的请求，才拿 `X-Real-IP` 当它的来源地址，也就是 nginx 看到的、deneb-web 原样转过来的那个。
+  - 从外面直连 47443 的请求，这个头写什么都不认。
+  - 不加这一条的话，网页上所有人在控制服务器看来都是 127.0.0.1，按地址限验证码就成了大家共用一份额度，日志里也分不出谁是谁。
+- **部署脚本**：`site.hk155.env` 里 `WEB_LIVE=yes` 时，`deploy/control/deploy-hk155.sh` 起控制服务器就带上面两个参数。
+  - 回滚脚本也带上；回滚到的旧镜像要是不认 `-web-url`，就不带了，并说一声。
+- **测试**：
+  - `TestWebURL`：邀请链接、旧链接 302、旧浏览器的同源检查、会话记下的来源地址；
+  - `TestLocalProxy`：只认本机来的、只认地址。
 
-**风险**：
+**deneb-web：不用改**
 
-- 改的是用户自己的 nginx。靠"只加不改、先 `nginx -t` 再 reload"压住。
-- 如果 443 前面还有别的分流（比如按域名把连接转给别的程序），要用户确认这个新子域名最后落到上面这个 server 块。不是的话，在那一层加一条。
-
-### B. DNS 验证，用户在域名服务商那里配令牌
-
-- **要用户做**：在域名服务商那里建一个 API 令牌，尽量只给这个域名（区），自己放到 hk-155 上一个只有 root 读得了的文件里。令牌不经过我们的会话。
-- **要装的**：certbot 对应服务商的 DNS 插件，或者 acme.sh。要下载新软件，得用户同意。
-- **它只解决"怎么验证"，不解决 443**：
-  - 证书拿到了，网页要么还是借 nginx 的 443（那就和 A 一样要改 nginx）；
-  - 要么开一个高端口，链接变成 `https://deneb.<你的域名>:47447`。带端口号的链接看着不像正式的，有些公司和学校的网络还会挡高端口，收到邀请的人可能打不开。
-- **风险**：很多服务商的 DNS 令牌能改整个域名。hk-155 要是被人拿下，域名下的别的服务也会被劫持。
-- **回滚**：删掉令牌和插件。
-- **适合**：80 端口用不了，或者要通配符证书。这里都不是。
-
-### C. 别的做法，不推荐
-
-- **CDN 或 Cloudflare 挡在前面**：nginx 不用改，但网页的全部流量（包括 cookie、邀请令牌）都会被第三方解开来看，从国内访问也不一定稳。
-- **nginx 按 SNI 原样转发，由我们自己的程序终止 TLS**：要把用户 nginx 的 443 改成分流，动得最大。
-- **控制服务器自己出正式证书**：它的私钥被客户端按指纹认着，换证书就要所有客户端一起换，不值得。
-
-**推荐 A。**
-
-## 5. 要改的代码（都还没做）
-
-**控制服务器（控制线）**
-
-- **新参数 `-web-url`**：网页后台的地址。设了以后：
-  - 邀请链接都用它，卡片上、网页的邀请预览里都是 `https://deneb.<你的域名>/i/<码>`。链接是看的时候现算的，不存在库里，所以还没用的邀请也会马上换成新链接。
-  - 控制服务器自己的 `GET /i/<码>` 改成 302 跳到网页上的同一个邀请。用 302 不用 301，回滚时浏览器不会记住旧的跳转。
-  - `-public-url` 不动。它管的东西不能换地址：
-    - 设备登录链接；
-    - 中转站加入码里的控制服务器地址，中转站按它找控制服务器；
-    - cookie 要不要 Secure。
-  - 同源检查把 `-web-url` 加成受信的来源（Go 的 `CrossOriginProtection.AddTrustedOrigin`）。
-    - deneb-web 转发时把 Host 换成了控制服务器的，新浏览器带 `Sec-Fetch-Site` 不受影响。
-    - 可是不带这个头的旧浏览器（比如 iOS 16.4 以前的 Safari），控制服务器只能拿 Origin 去比 Host，比不上，网页上的操作会被挡掉。
-- **认真实的来源地址**：经过 nginx 和 deneb-web，所有网页请求在控制服务器看来都来自 127.0.0.1。按地址限验证码就成了全体网页用户共用一个额度，日志里也看不出谁是谁，上线前一定要改：
-  - 加一个参数，比如 `-trust-local-proxy`。设了以后，只有从本机（127.0.0.1）来的请求，才认 deneb-web 带上的来源地址头。
-  - 从外面直连 47443 的请求，头写什么都不认。
-
-**deneb-web（网页线）**
-
-- **cookie 的 Secure**：现在不管什么情况都去掉 Secure，原意是本机明文 HTTP 调试用。放在 TLS 后面时要留着：加参数，或者只在听 127.0.0.1、又没有前置代理时才去掉。
-- **来源地址**：现在会删掉 X-Forwarded-For，不往后传。要改成：只有请求来自本机的 nginx 时，读 nginx 给的 `X-Real-IP`，用自己的头传给控制服务器。
-
-**部署（谁写由主会话定）**
-
-- `deploy/web/deploy-hk155.sh` 和回滚脚本；
-- nginx 站点模板；
-- `site.hk155.env` 的读法；
-- 控制服务器的部署脚本加上 `-web-url`。
-
-**以后再说**：设备登录链接（`/login?c=…`，命令行登录时用）还在控制服务器上，浏览器打开会先报证书不受信任。要挪到网页上，网页线得加一个"同意这台设备登录"的页面。桌面客户端是在窗口里登录的，不走这个链接，所以不急。
+- nginx 设的 `X-Real-IP`，deneb-web 原样转给控制服务器：Go 的反向代理只去掉 X-Forwarded-* 这几个头。
+- cookie 的 Secure 由 nginx 补回。
 
 ## 6. 邀请链接和客户端怎么过渡
 
-**旧链接**（`https://103.42.31.155:47443/i/<码>`）
+- **新链接**（`https://deneb.<域名>/i/<码>`）：
+  - 浏览器直接打开网页版，没有警告，没装客户端的人也能登录、接受；
+  - 粘到客户端里也认：客户端只看路径里的 `/i/<码>`，不管主机是哪个。
+- **旧链接**（`https://103.42.31.155:47443/i/<码>`）：
+  - 照样能用：浏览器先报一次证书警告（和现在一样），继续以后跳到网页上的邀请页；
+  - 邀请 7 天过期，上线一周后旧链接就都没了。
+- **已经装好的客户端**：什么都不用改，也不用升级。卡片上显示的邀请链接是服务器给的，会自己换成新的。
 
-- 照样能用：浏览器先报一次证书警告（和现在一样），点继续以后，跳到网页上的邀请页，能登录、能接受。
-- 邀请 7 天就过期，上线一周后旧链接就都没了。
-- 粘到客户端里的旧链接也照样认：客户端只看路径里的 `/i/<码>`，不管主机是哪个。
+## 7. 上线：主会话按顺序做
 
-**新链接**（`https://deneb.<你的域名>/i/<码>`）
+动 hk-155 的每一步，主会话都先问过用户。
 
-- 浏览器直接打开网页版，没有警告，没装客户端也能登录、接受。
-- 已装的客户端粘新链接也认，理由同上。
+0. **写站点设置**：在本机写 `deploy/web/site.hk155.env`，照 `site.example.env`。
+   - `WEB_HOST=deneb.<域名>`
+   - `WEB_PORT=47447`
+   - `NGINX_IP=103.42.31.155`
+   - `CF_CREDENTIALS=<那份凭证文件的路径>`
+   - `WEB_LIVE=no`
+1. **加 DNS 记录**：用户在 Cloudflare 加 §2 那条 A 记录。在本机用 `dig +short deneb.<域名> @1.1.1.1` 看到 103.42.31.155 再往下。绕开本机代理的假 IP，所以指定解析服务器。
+2. **起 deneb-web**：`deploy/web/deploy-hk155.sh`。最后一行要看到网页 200、API 401。这时外面还连不到它。
+3. **拿证书**：`deploy/web/cert-hk155.sh`。最后列出 `/etc/letsencrypt/live/deneb.<域名>/`。
+4. **放进 nginx**：
+   - `deploy/web/nginx-hk155.sh show`，看一眼要放进去的文件；
+   - `deploy/web/nginx-hk155.sh install`，要看到 nginx -t 通过、"nginx reloaded"。
+5. **从外面验**：
+   - `curl -sI https://deneb.<域名>/` 得到 200，证书正常；
+   - 浏览器打开，用测试账号登录，看得到局域网；
+   - 打开一个邀请链接，能看到邀请；
+   - 用户自己的别的站点照常打开。
+6. **切邀请链接**：
+   - `site.hk155.env` 改成 `WEB_LIVE=yes`，跑 `deploy/control/deploy-hk155.sh`。设备几秒内连回来。
+   - 验：
+     - `curl -sk -o /dev/null -w '%{redirect_url}' https://103.42.31.155:47443/i/x` 得到 `https://deneb.<域名>/i/x`；
+     - 新邀请的链接是新域名的；
+     - `deneb-control logs -grep 'web login'` 里，网页登录的地址不再是 127.0.0.1。
+7. **以后**：
+   - 看门狗加一项，探 `https://deneb.<域名>/`，证书还剩 14 天就提醒。域名写在服务器上的看门狗配置里。
+   - 稳定一周后再定要不要加 HSTS。
 
-**已经装好的客户端**
+## 8. 回滚
 
-- 什么都不用改，也不用升级：控制服务器的 IP、端口、证书都没变。
-- 卡片上显示的邀请链接是服务器给的，会自己变成新的。
+倒着来，哪一步出问题就从哪一步往回退：
 
-**回滚时**：撤掉 `-web-url`，新发的链接变回 IP 的。已经发出去的新链接要等网页恢复才能打开，最多影响 7 天里发出的邀请。
+- **邀请链接**：`WEB_LIVE=no`，再跑 `deploy/control/deploy-hk155.sh`，链接变回 IP 的。
+  - 已经发出去的新链接要等网页恢复才能打开，最多影响 7 天里发出的邀请。
+  - 控制服务器本身要回滚：`deploy/control/rollback-hk155.sh`。它会看旧镜像认不认 `-web-url`。
+- **nginx**：`deploy/web/nginx-hk155.sh remove`，拿掉那个文件，`nginx -t` 通过后平滑 reload。别的文件从头到尾没动过。
+- **deneb-web**：`deploy/web/rollback-hk155.sh` 换回上一版，或者带 `-remove` 整个拿掉。
+- **证书**（可选）：`certbot delete --cert-name deneb.<域名>`。
+- **DNS**（可选）：用户删掉那条 A 记录，这个名字回到通配符。
 
-## 7. 要用户提供或去做的
+## 9. 本机测过的
 
-1. **定域名**：用哪个域名下的哪个子域名，比如 `deneb.<你的域名>`。这个名字上线后会公开（§2），域名下面还有私人服务的话，建议另买一个。
-2. **加 DNS 记录**：在域名服务商那里加一条 A 记录，子域名指向 103.42.31.155，TTL 先设短一点（比如 10 分钟）。
-3. **同意改 nginx**：在 hk-155 上新加一个站点文件，`nginx -t` 通过后 `systemctl reload nginx`，别的文件不改；也可以照 §4 的步骤自己做。
-4. **同意申请证书**：用机器上的 certbot 给这个子域名申请，续期跟现有的一样自动。
-5. **确认 443 上的走向**：如果 nginx 在 443 前面还有按域名分流的一层，确认新子域名会落到新的 server 块，或者告诉我们在那一层加一条。
-6. **同意上线**：上 deneb-web 容器，控制服务器带 `-web-url` 重启一次（设备几秒内连回来），照常由主会话问过再做。
-7. **以后再定**：
-   - 稳定一周以后要不要加 HSTS；
-   - 控制服务器什么时候换域名（备机方案）。
+- **控制服务器**：`TestWebURL`、`TestLocalProxy`；control、deneb-web、deneb-relay 的 `-race` 测试；`go vet`，也按 Linux 编译查过。
+- **站点文件**：`nginx-hk155.sh show` 打出来的文件，在 nginx 1.27 和 stable 的镜像里 `nginx -t` 都通过。监听地址换成了容器里有的地址；在 hk-155 上，那个地址的端口已经被 nginx 自己占着，`nginx -t` 本来就容许这种情况。
+- **镜像**：`build.sh` 和 `docker build` 都通过，镜像里的程序起得来。从源码构建出来的网页，和仓库里的 `web/app/dist` 一样。
+- **整条链**（`check-local.sh`）：nginx（用生成的站点文件和自签证书）→ deneb-web → 控制服务器（`-web-url`、`-trust-local-proxy`）：
+  - 网页 200；
+  - 邀请页 200；
+  - API 没登录时 401；
+  - 不带 `Sec-Fetch-Site` 的登录 200；
+  - cookie 带 Secure、HttpOnly、SameSite=Lax；
+  - 登录后视图 200；
+  - 推送流的第一帧马上到；
+  - 控制服务器看到的是 nginx 看到的地址，不是浏览器自己编的 `X-Real-IP`，也不是 127.0.0.1；
+  - 控制服务器自己的邀请链接 302 到网页上。
+- **没测的**：真的证书和真的 DNS（要上线时才有），以及 hk-155 上真的 nginx。脚本已经用 `nginx -t` 把住了这一关。
 
-## 8. 上线以后要跟着改的
+## 10. 以后再说
 
-- **PRIVACY.md**：
-  - 第 1 节：网页在哪；
-  - 第 2 节：nginx 给这个子域名记的访问日志，只有地址、时间、状态，不记路径，留多久跟用户的 nginx 日志轮换走；
-  - 第 6 节：网页仍然不从别的网站加载任何东西。
-- **看门狗**：加一项探 `https://deneb.<你的域名>/`。域名写在服务器上的配置里，不进仓库。
-- **证书快到期**：certbot 自己会续，看门狗再兜一层，比如还剩 14 天就提醒。
+- **设备登录链接**（`/login?c=…`，命令行登录时用）：还在控制服务器上，浏览器打开会报证书不受信任。要挪到网页上，网页线得加一个"同意这台设备登录"的页面。桌面客户端在窗口里登录，不走这个链接。
+- **控制服务器换域名**：跟备机方案一起做（§2）。
+- **HSTS、看门狗**：见 §7 第 7 步。

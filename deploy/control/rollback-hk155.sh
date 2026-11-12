@@ -19,10 +19,28 @@ NAME=deneb-control
 REMOTE=/opt/deneb-control
 RESTORE=no
 [ "${1:-}" = "-restore" ] && RESTORE=yes
+# As deploy-hk155.sh: the Web version's flags, if it is live (dropped below
+# for an image from before them).
+cd "$(dirname "$0")/../.."
+WEB_SITE=${WEB_SITE:-deploy/web/site.hk155.env}
+WEB_FLAGS=
+if [ -f "$WEB_SITE" ]; then
+	case $WEB_SITE in /*) ;; *) WEB_SITE=./$WEB_SITE ;; esac
+	. "$WEB_SITE"
+	if [ "${WEB_LIVE:-no}" = yes ]; then
+		WEB_FLAGS="-web-url https://${WEB_HOST:?in $WEB_SITE} -trust-local-proxy"
+	fi
+fi
 
 ssh "$HOST" "
 	set -e
 	docker inspect deneb-control:prev >/dev/null
+	# An image from before the Web version would not start with its flags.
+	web='$WEB_FLAGS'
+	if [ -n \"\$web\" ] && ! docker run --rm deneb-control:prev -h 2>&1 | grep -q -- -web-url; then
+		echo 'deneb-control:prev knows no -web-url: it runs without, and invite links name this server again'
+		web=
+	fi
 	stamp=\$(date -u +%Y%m%d-%H%M%S)
 	mkdir -p $REMOTE/logs
 	docker logs $NAME > $REMOTE/logs/$NAME-\$stamp-rolled-back.log 2>&1 || true
@@ -52,7 +70,7 @@ ssh "$HOST" "
 		--log-opt max-size=10m --log-opt max-file=3 \
 		-v $REMOTE/data:/data \
 		-v /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro \
-		deneb-control:prev -listen :$PORT -data /data -seed /data/seed.json -public-url $PUBLIC_URL
+		deneb-control:prev -listen :$PORT -data /data -seed /data/seed.json -public-url $PUBLIC_URL \$web
 	sleep 3
 	docker ps --filter name=^$NAME\$ --format '{{.Names}} {{.Status}}'
 	docker logs --tail 10 $NAME"

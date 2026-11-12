@@ -1,0 +1,7 @@
+# Built by build.sh: deneb-web for Linux, and the browser app. And the
+# real site settings: the name the Web version is served under is not in
+# the repository (site.example.env says what goes in them).
+/bin/
+/app/
+/site.*.env
+!/site.example.env

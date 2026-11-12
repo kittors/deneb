@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"strconv"
@@ -34,6 +35,17 @@ type Config struct {
 	// PublicURL is how devices and browsers reach the server, such as
 	// https://103.42.31.155:47443. Login and invite links start with it.
 	PublicURL string
+	// WebURL is the Web version's address (deneb-web behind a certificate
+	// browsers trust, design/plan/m7/web-deploy.md), such as
+	// https://deneb.example.com. Set, invite links open it rather than this
+	// server, this server's own invite links redirect there, and its
+	// browser API takes requests from it as its own. Empty, as before.
+	WebURL string
+	// TrustLocalProxy takes a request's address from X-Real-IP when it
+	// comes from this machine: the address nginx saw, passed on by
+	// deneb-web. Without it every browser behind them looks like
+	// 127.0.0.1, and shares the per-address limits on login codes.
+	TrustLocalProxy bool
 	// Dev turns on what only a development server may have: POST
 	// /dev/approve, which completes a device login without a browser.
 	Dev bool
@@ -171,6 +183,13 @@ func New(cfg Config) (*Server, error) {
 	if cfg.PublicURL == "" {
 		return nil, errors.New("control: PublicURL is required")
 	}
+	cfg.WebURL = strings.TrimRight(cfg.WebURL, "/")
+	if cfg.WebURL != "" {
+		u, err := url.Parse(cfg.WebURL)
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.Path != "" || u.RawQuery != "" {
+			return nil, fmt.Errorf("control: WebURL %q: want https://host, with no path", cfg.WebURL)
+		}
+	}
 	db, err := openDB(cfg.DataDir)
 	if err != nil {
 		return nil, err
@@ -284,7 +303,7 @@ func (s *Server) init() error {
 
 // load reads the world at the server's now.
 func (s *Server) load(q querier, network proto.Network) (*World, error) {
-	w, err := loadWorld(q, network, s.cfg.PublicURL, s.now())
+	w, err := loadWorld(q, network, s.inviteBase(), s.now())
 	if err != nil {
 		return nil, err
 	}
@@ -447,4 +466,36 @@ func (s *Server) routes() {
 }
 
 // Handler serves the device interface, the two web pages and /healthz.
-func (s *Server) Handler() http.Handler { return s.mux }
+func (s *Server) Handler() http.Handler {
+	if s.cfg.TrustLocalProxy {
+		return localProxy(s.mux)
+	}
+	return s.mux
+}
+
+// inviteBase is where invite links point: the Web version, if there is
+// one, else this server.
+func (s *Server) inviteBase() string {
+	if s.cfg.WebURL != "" {
+		return s.cfg.WebURL
+	}
+	return s.cfg.PublicURL
+}
+
+// localProxy takes a request's address from X-Real-IP when the request
+// comes from this machine: deneb-web, passing on what nginx saw. From
+// anywhere else the header counts for nothing, so no one outside can
+// choose the address the limits and the log see.
+func localProxy(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if v := r.Header.Get("X-Real-IP"); v != "" {
+			peer, err := netip.ParseAddrPort(r.RemoteAddr)
+			from, err2 := netip.ParseAddr(strings.TrimSpace(v))
+			if err == nil && err2 == nil && peer.Addr().Unmap().IsLoopback() {
+				r = r.WithContext(r.Context())
+				r.RemoteAddr = netip.AddrPortFrom(from.Unmap(), 0).String()
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}

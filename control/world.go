@@ -20,7 +20,7 @@ import (
 // millisecond; deltas can come when there are thousands of devices.
 type World struct {
 	Network   proto.Network
-	publicURL string // how devices and browsers reach the server, for links
+	publicURL string // where invite links point: the Web version, or the server
 	// renewWindow is how long before a login runs out the interface starts
 	// to ask for it to be renewed.
 	renewWindow time.Duration

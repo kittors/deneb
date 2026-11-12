@@ -29,6 +29,20 @@ func (s *Server) webRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET "+proto.InvitePath+"{token}", s.handleInvitePage)
 }
 
+// redirectInvite sends an invite link of this server's to the Web
+// version's page for it, where someone with no Deneb can log in and accept
+// (design/plan/m7/web-deploy.md). Links sent before the Web version went
+// up keep working; 302, not 301, so that taking it down again needs
+// nothing of the browsers that followed one.
+func (s *Server) redirectInvite(w http.ResponseWriter, r *http.Request) bool {
+	if s.cfg.WebURL == "" {
+		return false
+	}
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	http.Redirect(w, r, proto.InviteURL(s.cfg.WebURL, r.PathValue("token")), http.StatusFound)
+	return true
+}
+
 // Every device login asks for an email and its code, even in a browser that
 // logged in a device before. The browser is often not the device's owner's:
 // in testing one person logs in everyone's devices from one Mac, and a
@@ -217,6 +231,9 @@ type invitePage struct {
 }
 
 func (s *Server) handleInvitePage(w http.ResponseWriter, r *http.Request) {
+	if s.redirectInvite(w, r) {
+		return
+	}
 	token := r.PathValue("token")
 	var page invitePage
 	if p, err := s.invitePreview(s.state.Load().w, token, ""); err == nil {
@@ -227,7 +244,7 @@ func (s *Server) handleInvitePage(w http.ResponseWriter, r *http.Request) {
 			Initial:  p.Inviter.Initial,
 			Color:    template.CSS(ballColor(p.Inviter.ID)),
 			JoinLink: template.URL(proto.JoinLink(token)),
-			URL:      proto.InviteURL(s.cfg.PublicURL, token),
+			URL:      proto.InviteURL(s.inviteBase(), token),
 		}
 		switch p.State {
 		case proto.InvitePending:

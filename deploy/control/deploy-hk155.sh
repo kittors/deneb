@@ -36,6 +36,17 @@ REMOTE=/opt/deneb-control
 
 cd "$(dirname "$0")/../.."
 test -f "$SEED" || { echo "no seed at $SEED" >&2; exit 1; }
+# The Web version, once it is up (deploy/web/, WEB_LIVE=yes in its site
+# settings): invite links open it, and browsers' addresses come through it.
+WEB_SITE=${WEB_SITE:-deploy/web/site.hk155.env}
+WEB_FLAGS=
+if [ -f "$WEB_SITE" ]; then
+	case $WEB_SITE in /*) ;; *) WEB_SITE=./$WEB_SITE ;; esac
+	. "$WEB_SITE"
+	if [ "${WEB_LIVE:-no}" = yes ]; then
+		WEB_FLAGS="-web-url https://${WEB_HOST:?in $WEB_SITE} -trust-local-proxy"
+	fi
+fi
 ARCHES=amd64 deploy/control/build.sh
 
 # The port must be free, unless our own container is the one holding it.
@@ -96,7 +107,7 @@ ssh "$HOST" "
 		--log-opt max-size=10m --log-opt max-file=3 \
 		-v $REMOTE/data:/data \
 		-v /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro \
-		$TAG -listen :$PORT -data /data -seed /data/seed.json -public-url $PUBLIC_URL
+		$TAG -listen :$PORT -data /data -seed /data/seed.json -public-url $PUBLIC_URL $WEB_FLAGS
 	sleep 3
 	docker ps --filter name=^$NAME\$ --format '{{.Names}} {{.Status}}'
 	docker logs --tail 5 $NAME
