@@ -636,7 +636,9 @@ func (a *app) allHeader(c *ui.Context, p *palette) {
 			})
 		})
 		ui.Spacer(c)
-		a.noticePill(c, p)
+		// As high as a LAN's balls and "邀请朋友": the pill on the line it
+		// has there, not lower.
+		ui.Row(c).Height(inviteHeight).AlignItems(ui.Center).Children(func() { a.noticePill(c, p) })
 	})
 }
 

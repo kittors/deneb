@@ -354,47 +354,57 @@ func (a *app) header(c *ui.Context, p *palette) {
 			})
 		})
 		ui.Spacer(c)
-		a.noticePill(c, p)
-		a.ballRects = map[string]ui.Rect{}
-		ui.Row(c).Gap(14).Children(func() {
-			ui.Row(c).Children(func() {
-				// Everyone in the stack keeps one ball: a member's solid, one
-				// who waits for me, or for my invite's answer, dashed (DESIGN
-				// §6.7). Letting someone in fills theirs where it is. On the
-				// canvas of the devices given to me, they are who gave them.
-				i := 0
-				for _, id := range a.members {
-					if a.shared() && id == a.me {
-						continue
+		// The engine's notice and the balls with "邀请朋友" share one middle
+		// line: the header's row keeps its things at the top, and a pill
+		// centered on all of it sat lower than the button (the user's
+		// report, 2026-11-13).
+		ui.Row(c).Gap(16).AlignItems(ui.Center).Children(func() {
+			a.noticePill(c, p)
+			a.ballRects = map[string]ui.Rect{}
+			ui.Row(c).Gap(14).Children(func() {
+				ui.Row(c).Children(func() {
+					// Everyone in the stack keeps one ball: a member's solid, one
+					// who waits for me, or for my invite's answer, dashed (DESIGN
+					// §6.7). Letting someone in fills theirs where it is. On the
+					// canvas of the devices given to me, they are who gave them.
+					i := 0
+					for _, id := range a.members {
+						if a.shared() && id == a.me {
+							continue
+						}
+						a.stackBall(c, p, l, id, member, i > 0, model.Invited{})
+						i++
 					}
-					a.stackBall(c, p, l, id, member, i > 0, model.Invited{})
-					i++
+					for _, id := range l.PendingMembers {
+						a.stackBall(c, p, l, string(id), waitsForMe, i > 0, model.Invited{})
+						i++
+					}
+					for _, v := range l.Invited {
+						a.stackBall(c, p, l, string(v.Person), invitedByMe, i > 0, v)
+						i++
+					}
+				})
+				if l.Waiting || a.shared() {
+					// Not in yet: there is no one to invite into it. Nor into
+					// the devices given to me.
+					return
 				}
-				for _, id := range l.PendingMembers {
-					a.stackBall(c, p, l, string(id), waitsForMe, i > 0, model.Invited{})
-					i++
-				}
-				for _, v := range l.Invited {
-					a.stackBall(c, p, l, string(v.Person), invitedByMe, i > 0, v)
-					i++
-				}
+				a.inviteButton(c, p)
 			})
-			if l.Waiting || a.shared() {
-				// Not in yet: there is no one to invite into it. Nor into
-				// the devices given to me.
-				return
-			}
-			a.inviteButton(c, p)
 		})
 		a.headerLine(c, p)
 	})
 }
 
+// inviteHeight is how high "邀请朋友" is: the header's right side, whose
+// middle line the notice's pill keeps, in 全部's header too.
+const inviteHeight = 34
+
 // inviteButton is "邀请朋友". My seats full, it is a dashed outline, grey,
 // and a click shows the seats instead (pricing-and-relays §1.5 item 2).
 func (a *app) inviteButton(c *ui.Context, p *palette) {
 	full := a.seatsFull()
-	btn := ui.ButtonBase(c.Key("invite")).Height(34).Padding(0, 14).Gap(6).Radius(999).FocusRing(false)
+	btn := ui.ButtonBase(c.Key("invite")).Height(inviteHeight).Padding(0, 14).Gap(6).Radius(999).FocusRing(false)
 	k := btn.AnimateTo("full", map[bool]float32{false: 0, true: 1}[full], ui.Animation{Duration: 200 * time.Millisecond})
 	fill := p.primary
 	if btn.Hovered() {
