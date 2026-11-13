@@ -35,6 +35,8 @@ func (s *Server) webAPIRoutes(m *http.ServeMux) {
 	m.Handle("POST "+proto.PathWebLogin, post(s.handleWebLogin))
 	m.Handle("POST "+proto.PathWebLoginEmail, post(s.handleWebLoginStep(false)))
 	m.Handle("POST "+proto.PathWebLoginCode, post(s.handleWebLoginStep(true)))
+	m.Handle("POST "+proto.PathWebLoginLinkInfo, post(s.handleWebLoginLinkInfo))
+	m.Handle("POST "+proto.PathWebLoginLink, post(s.handleWebLoginLink))
 	m.Handle("POST "+proto.PathWebLogout, post(s.handleWebLogout))
 	m.HandleFunc("GET "+proto.PathWebUserView, s.web(s.handleWebUserView))
 	m.HandleFunc("GET "+proto.PathWebStream, s.web(s.handleWebStream))
@@ -139,7 +141,7 @@ func (s *Server) handleWebLoginStep(withCode bool) http.HandlerFunc {
 func (s *Server) webLogin(w http.ResponseWriter, r *http.Request, req proto.WebLoginRequest) {
 	email := normEmail(req.Email)
 	code := strings.TrimSpace(req.Code)
-	from := loginFrom{what: "web login", ip: remoteIP(r)}
+	from := loginFrom{what: "web login", ip: remoteIP(r), web: true}
 	if code == "" {
 		if err := s.askCode(email, from); err != nil {
 			s.writeErr(w, r, err)
@@ -154,15 +156,60 @@ func (s *Server) webLogin(w http.ResponseWriter, r *http.Request, req proto.WebL
 		s.writeErr(w, r, err)
 		return
 	}
+	if err := s.startSession(w, r, p, email, ""); err != nil {
+		s.writeErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, proto.WebLoginResult{Step: "done", Account: email, Person: p})
+}
+
+// startSession logs the browser in as p: a new session, and its cookie.
+func (s *Server) startSession(w http.ResponseWriter, r *http.Request, p proto.PersonID, email, how string) error {
 	now := s.now()
 	token := newRelaySecret() // 256 random bits
 	if _, err := s.db.Exec(`INSERT INTO web_sessions (id, person, created_at, expires_at, from_ip) VALUES (?, ?, ?, ?, ?)`,
 		hashSecret(token), p, ms(now), ms(now.Add(webSessionLife)), remoteIP(r)); err != nil {
+		return err
+	}
+	s.logf("web login: %s in a browser at %s%s", email, remoteIP(r), how)
+	http.SetCookie(w, s.sessionCookie(token, int(webSessionLife.Seconds())))
+	return nil
+}
+
+// handleWebLoginLinkInfo says what a login link would log in as, for the
+// page that asks before it does; it uses nothing up.
+func (s *Server) handleWebLoginLinkInfo(w http.ResponseWriter, r *http.Request) {
+	var req proto.WebLoginLinkRequest
+	if err := readJSON(w, r, &req); err != nil {
 		s.writeErr(w, r, err)
 		return
 	}
-	s.logf("web login: %s in a browser at %s", email, remoteIP(r))
-	http.SetCookie(w, s.sessionCookie(token, int(webSessionLife.Seconds())))
+	email, expires, err := s.peekLink(strings.TrimSpace(req.Token), loginFrom{what: "web login", ip: remoteIP(r), web: true})
+	if err != nil {
+		s.writeErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, proto.WebLoginLinkInfo{Account: email, ExpiresAt: expires.UTC()})
+}
+
+// handleWebLoginLink logs in with a login link, once its page asked and
+// the person said yes: the session, as with the code, and the code and the
+// link used up.
+func (s *Server) handleWebLoginLink(w http.ResponseWriter, r *http.Request) {
+	var req proto.WebLoginLinkRequest
+	if err := readJSON(w, r, &req); err != nil {
+		s.writeErr(w, r, err)
+		return
+	}
+	p, email, err := s.useLink(strings.TrimSpace(req.Token), loginFrom{what: "web login", ip: remoteIP(r), web: true})
+	if err != nil {
+		s.writeErr(w, r, err)
+		return
+	}
+	if err := s.startSession(w, r, p, email, " (with the mail's link)"); err != nil {
+		s.writeErr(w, r, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, proto.WebLoginResult{Step: "done", Account: email, Person: p})
 }
 

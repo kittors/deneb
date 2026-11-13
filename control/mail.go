@@ -1,22 +1,30 @@
 package control
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	_ "embed"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	htmltemplate "html/template"
+	"io"
 	"mime"
+	"mime/multipart"
 	"net"
 	"net/mail"
 	"net/smtp"
+	"net/textproto"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	texttemplate "text/template"
 	"time"
 )
 
@@ -25,21 +33,27 @@ import (
 // Which service and which account are the deployment's: they never go
 // into the repository.
 
-// Mailer sends a login code to an email.
+// Mailer sends a login code to an email; link, when not empty, is a login
+// link that works instead of the code (proto.LoginLinkURL), for a login
+// begun in a browser.
 type Mailer interface {
-	SendCode(ctx context.Context, to, code string) error
+	SendCode(ctx context.Context, to, code, link string) error
 }
 
 // LogMailer writes the codes into the log instead of mailing them: for a
 // development server only, since anyone who reads the log could log in
-// as anyone (cmd/deneb-control allows it with -dev alone).
+// as anyone (cmd/deneb-control allows it with -dev alone). The login link
+// goes there too, for the same reason; a production log has neither.
 type LogMailer struct {
 	Logf func(format string, args ...any)
 }
 
-// SendCode logs the code.
-func (m LogMailer) SendCode(_ context.Context, to, code string) error {
+// SendCode logs the code, and the link.
+func (m LogMailer) SendCode(_ context.Context, to, code, link string) error {
 	m.Logf("mail (development, not sent): the login code for %s is %s", to, code)
+	if link != "" {
+		m.Logf("mail (development, not sent): its login link is %s", link)
+	}
 	return nil
 }
 
@@ -100,6 +114,10 @@ func LoadSMTPConfig(dir string, getenv func(string) string) (SMTPConfig, error) 
 // SMTPMailer mails the codes through an SMTP server, encrypted, with the
 // deployment's account.
 type SMTPMailer struct {
+	// Site is the Web version's address (-web-url), named at the foot of
+	// the mail; empty, the mail names none.
+	Site string
+
 	cfg  SMTPConfig
 	from *mail.Address
 	// roots are the CAs to trust instead of the system's: tests only.
@@ -149,12 +167,16 @@ func (m *SMTPMailer) String() string {
 // mailTimeout bounds one mail's whole conversation with the server.
 const mailTimeout = 30 * time.Second
 
-// SendCode mails code to to.
-func (m *SMTPMailer) SendCode(ctx context.Context, to, code string) error {
+// SendCode mails code, and link if there is one, to to.
+func (m *SMTPMailer) SendCode(ctx context.Context, to, code, link string) error {
 	if !validEmail(to) {
 		return fmt.Errorf("mail: %q is not an address", to)
 	}
-	return m.send(ctx, to, codeMail(m.from, to, code, time.Now()))
+	msg, err := codeMail(m.from, to, codeLetter{Code: code, Link: link, Site: m.Site}, time.Now())
+	if err != nil {
+		return err
+	}
+	return m.send(ctx, to, msg)
 }
 
 func (m *SMTPMailer) tlsConfig() *tls.Config {
@@ -275,30 +297,124 @@ func loopbackHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// The login code's mail (DESIGN.md §14.14): HTML and plain text in one
+// message, the icon going with it, so no mail program fetches anything
+// from the web.
+var (
+	//go:embed mailtmpl/code.html
+	codeHTMLSource string
+	//go:embed mailtmpl/code.txt
+	codeTextSource string
+	// mailIcon is the 64 px app icon of design/brand/final
+	// (macos/AppIcon.iconset/icon_32x32@2x.png), the mail's one picture.
+	//go:embed mailtmpl/icon.png
+	mailIcon []byte
+
+	codeHTML = htmltemplate.Must(htmltemplate.New("code.html").Parse(codeHTMLSource))
+	codeText = texttemplate.Must(texttemplate.New("code.txt").Parse(codeTextSource))
+)
+
+// mailIconID is the icon's Content-ID, which the HTML names as cid:.
+const mailIconID = "deneb-icon@deneb.mail"
+
+// codeLetter is what one login code's mail says.
+type codeLetter struct {
+	Code string
+	// Link is a login link for a login begun in a browser (the button);
+	// empty for a device's.
+	Link string
+	// Site is the Web version's address for the foot of the mail; empty,
+	// the link's site, if there is a link.
+	Site string
+}
+
 // codeMail is the mail with a login code: the code in the subject too, so
-// it shows in a phone's notification.
-func codeMail(from *mail.Address, to, code string, now time.Time) []byte {
-	subject := "Deneb 验证码 " + code
-	body := fmt.Sprintf("你的 Deneb 验证码是 %s，%d 分钟内有效，只能用一次。\r\n\r\n如果不是你在登录 Deneb，不用理会这封邮件。\r\n",
-		code, int(codeLife/time.Minute))
-	var b strings.Builder
+// it shows in a phone's notification. It is multipart/alternative, the
+// plain text first, then the HTML with its icon (multipart/related), which
+// is what a program that shows HTML takes.
+func codeMail(from *mail.Address, to string, l codeLetter, now time.Time) ([]byte, error) {
+	site, siteName := l.Site, ""
+	if site == "" && l.Link != "" {
+		if u, err := url.Parse(l.Link); err == nil {
+			site = u.Scheme + "://" + u.Host
+		}
+	}
+	if u, err := url.Parse(site); site != "" && err == nil {
+		siteName = u.Host
+	}
+	data := struct {
+		Code, Link, Site, SiteName string
+		Icon                       htmltemplate.URL
+		Minutes                    int
+	}{l.Code, l.Link, site, siteName, htmltemplate.URL("cid:" + mailIconID), int(codeLife / time.Minute)}
+	var text, html bytes.Buffer
+	if err := codeText.Execute(&text, data); err != nil {
+		return nil, err
+	}
+	if err := codeHTML.Execute(&html, data); err != nil {
+		return nil, err
+	}
+
+	var body bytes.Buffer
+	alt := multipart.NewWriter(&body)
+	if err := mailPart(alt, `text/plain; charset="utf-8"`, crlf(text.Bytes()), nil); err != nil {
+		return nil, err
+	}
+	var related bytes.Buffer
+	rel := multipart.NewWriter(&related)
+	if err := mailPart(rel, `text/html; charset="utf-8"`, crlf(html.Bytes()), nil); err != nil {
+		return nil, err
+	}
+	if err := mailPart(rel, `image/png; name="deneb.png"`, mailIcon, textproto.MIMEHeader{
+		"Content-Id":          {"<" + mailIconID + ">"},
+		"Content-Disposition": {`inline; filename="deneb.png"`},
+	}); err != nil {
+		return nil, err
+	}
+	rel.Close()
+	rp, err := alt.CreatePart(textproto.MIMEHeader{"Content-Type": {`multipart/related; type="text/html"; boundary="` + rel.Boundary() + `"`}})
+	if err != nil {
+		return nil, err
+	}
+	rp.Write(related.Bytes())
+	alt.Close()
+
+	var b bytes.Buffer
 	header := func(k, v string) { b.WriteString(k + ": " + v + "\r\n") }
 	header("From", from.String())
 	header("To", "<"+to+">")
-	header("Subject", mime.BEncoding.Encode("utf-8", subject))
+	header("Subject", mime.BEncoding.Encode("utf-8", "Deneb 验证码 "+l.Code))
 	header("Date", now.Format(time.RFC1123Z))
 	header("Message-ID", "<"+strings.ToLower(randomCode(20))+"@"+from.Address[strings.LastIndexByte(from.Address, '@')+1:]+">")
 	header("MIME-Version", "1.0")
-	header("Content-Type", `text/plain; charset="utf-8"`)
-	header("Content-Transfer-Encoding", "base64")
+	header("Content-Type", `multipart/alternative; boundary="`+alt.Boundary()+`"`)
 	// No vacation replies to it (RFC 3834).
 	header("Auto-Submitted", "auto-generated")
 	b.WriteString("\r\n")
-	enc := base64.StdEncoding.EncodeToString([]byte(body))
+	b.Write(body.Bytes())
+	return b.Bytes(), nil
+}
+
+// mailPart adds a part of type ct, its content in base64 in lines of 76.
+func mailPart(w *multipart.Writer, ct string, content []byte, more textproto.MIMEHeader) error {
+	h := textproto.MIMEHeader{"Content-Type": {ct}, "Content-Transfer-Encoding": {"base64"}}
+	for k, v := range more {
+		h[k] = v
+	}
+	p, err := w.CreatePart(h)
+	if err != nil {
+		return err
+	}
+	enc := base64.StdEncoding.EncodeToString(content)
 	for len(enc) > 76 {
-		b.WriteString(enc[:76] + "\r\n")
+		io.WriteString(p, enc[:76]+"\r\n")
 		enc = enc[76:]
 	}
-	b.WriteString(enc + "\r\n")
-	return []byte(b.String())
+	_, err = io.WriteString(p, enc+"\r\n")
+	return err
+}
+
+// crlf ends every line with CRLF, as mail's text does.
+func crlf(b []byte) []byte {
+	return bytes.ReplaceAll(bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n")), []byte("\n"), []byte("\r\n"))
 }

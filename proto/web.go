@@ -1,5 +1,7 @@
 package proto
 
+import "time"
+
 // The Web API (/api/v1, M3–M4): what the browser app, the Web client and
 // the admin pages, asks the control server. The JSON is the device API's
 // (UserView, Op, OpResult, StreamFrame, RelayUsage); a session cookie
@@ -18,7 +20,25 @@ const (
 	// PathWebOperatorUsage is the ops page's numbers, for the deployment's
 	// operators only (UserView.Operator); anyone else gets 403.
 	PathWebOperatorUsage = "/api/v1/operator/relay-usage" // GET → OperatorUsage
+	// Logging in by the link in the code's mail (M7, LoginLinkURL;
+	// design/plan/m7/login-link.md). The token goes in the body, never in
+	// a URL.
+	PathWebLoginLinkInfo = "/api/v1/login/link/info" // POST WebLoginLinkRequest → WebLoginLinkInfo; uses nothing up
+	PathWebLoginLink     = "/api/v1/login/link"      // POST WebLoginLinkRequest → WebLoginResult, step "done"; sets the cookie
 )
+
+// WebLoginLinkRequest names a login link by its token: what follows the #
+// of LoginLinkURL.
+type WebLoginLinkRequest struct {
+	Token string `json:"token"`
+}
+
+// WebLoginLinkInfo is what a login link would log in as, for the page that
+// asks before it does: the email, and until when the link works.
+type WebLoginLinkInfo struct {
+	Account   string    `json:"account"`
+	ExpiresAt time.Time `json:"expiresAt"`
+}
 
 // WebSessionCookie is the session cookie: HttpOnly, SameSite=Lax, Secure
 // over HTTPS, for 30 days. The server keeps only its hash.

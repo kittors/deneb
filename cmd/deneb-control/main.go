@@ -227,7 +227,7 @@ func main() {
 		seed.Relays = relays
 	}
 
-	mailer, err := setUpMail(*mailMode, *dataDir, *dev, control.SMTPConfig{
+	mailer, err := setUpMail(*mailMode, *dataDir, *dev, *webURL, control.SMTPConfig{
 		Host: *smtpHost, Port: *smtpPort, Username: *smtpUser, From: *smtpFrom, TLS: *smtpTLS,
 	})
 	if err != nil {
@@ -502,7 +502,7 @@ func runAlerts(args []string) int {
 // setUpMail picks how the login codes go out. The SMTP settings come from
 // <data>/mail.json, the environment over it, and the flags over both; the
 // password never from a flag, which ps and docker inspect show.
-func setUpMail(mode, dataDir string, dev bool, flags control.SMTPConfig) (control.Mailer, error) {
+func setUpMail(mode, dataDir string, dev bool, site string, flags control.SMTPConfig) (control.Mailer, error) {
 	c, err := control.LoadSMTPConfig(dataDir, os.Getenv)
 	if err != nil {
 		return nil, err
@@ -538,6 +538,9 @@ func setUpMail(mode, dataDir string, dev bool, flags control.SMTPConfig) (contro
 		if err != nil {
 			return nil, err
 		}
+		// The Web version, named at the foot of the mail; with it, a
+		// browser's login gets a login link too.
+		m.Site = strings.TrimRight(site, "/")
 		log.Printf("mail: login codes go out through %s", m)
 		return m, nil
 	case "log":

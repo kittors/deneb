@@ -1,6 +1,7 @@
 package control
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -12,6 +13,7 @@ import (
 	"io"
 	"math/big"
 	"mime"
+	"mime/multipart"
 	"net"
 	"net/mail"
 	"net/textproto"
@@ -237,29 +239,89 @@ var sixDigits = regexp.MustCompile(`\b[0-9]{6}\b`)
 // both its subject and its text.
 func codeIn(t *testing.T, m fakeMail) string {
 	t.Helper()
-	msg, err := mail.ReadMessage(strings.NewReader(m.Data))
-	if err != nil {
-		t.Fatalf("the mail does not parse: %v\n%s", err, m.Data)
-	}
+	msg, l := readLetter(t, m.Data)
 	if to := msg.Header.Get("To"); to != "<"+m.To+">" {
 		t.Fatalf("the mail is to %q, sent to %q", to, m.To)
 	}
 	if from, err := mail.ParseAddress(msg.Header.Get("From")); err != nil || from.Address != "noreply@example.com" || from.Name != "Deneb" {
 		t.Fatalf("the mail is from %q", msg.Header.Get("From"))
 	}
-	subject, err := new(mime.WordDecoder).DecodeHeader(msg.Header.Get("Subject"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, err := io.ReadAll(base64.NewDecoder(base64.StdEncoding, msg.Body))
-	if err != nil {
-		t.Fatalf("the mail's text: %v", err)
-	}
-	code := sixDigits.FindString(subject)
-	if code == "" || !strings.Contains(string(body), "你的 Deneb 验证码是 "+code+"，10 分钟内有效") || msg.Header.Get("Message-ID") == "" {
-		t.Fatalf("the mail: subject %q\n%s", subject, body)
+	code := sixDigits.FindString(l.Subject)
+	if code == "" || !strings.Contains(l.Text, "你的 Deneb 登录验证码："+code) || !strings.Contains(l.Text, "10 分钟内有效，只能用一次") ||
+		!strings.Contains(l.HTML, ">"+code+"</span>") || msg.Header.Get("Message-ID") == "" {
+		t.Fatalf("the mail: subject %q\n%s", l.Subject, l.Text)
 	}
 	return code
+}
+
+// letter is a code mail taken apart.
+type letter struct {
+	Subject, Text, HTML, Link string
+	Icon                      []byte
+	IconID                    string
+}
+
+// loginLink finds a login link in a mail's text.
+var loginLink = regexp.MustCompile(`https?://\S+/login/link#[A-Za-z0-9_-]+`)
+
+// readLetter takes a code mail apart, checking its shape on the way:
+// multipart/alternative of the plain text, then multipart/related of the
+// HTML and its icon, each part in base64.
+func readLetter(t *testing.T, raw string) (*mail.Message, letter) {
+	t.Helper()
+	msg, err := mail.ReadMessage(strings.NewReader(raw))
+	if err != nil {
+		t.Fatalf("the mail does not parse: %v\n%s", err, raw)
+	}
+	var l letter
+	if l.Subject, err = new(mime.WordDecoder).DecodeHeader(msg.Header.Get("Subject")); err != nil {
+		t.Fatal(err)
+	}
+	parts := func(r io.Reader, ct, want string) *multipart.Reader {
+		t.Helper()
+		mt, params, err := mime.ParseMediaType(ct)
+		if err != nil || mt != want || params["boundary"] == "" {
+			t.Fatalf("a part is %q, want %s", ct, want)
+		}
+		return multipart.NewReader(r, params["boundary"])
+	}
+	next := func(r *multipart.Reader, want string) ([]byte, textproto.MIMEHeader) {
+		t.Helper()
+		p, err := r.NextPart()
+		if err != nil {
+			t.Fatalf("no %s part: %v", want, err)
+		}
+		if mt, _, _ := mime.ParseMediaType(p.Header.Get("Content-Type")); mt != want {
+			t.Fatalf("a %s part, want %s", mt, want)
+		}
+		if p.Header.Get("Content-Transfer-Encoding") != "base64" {
+			t.Fatalf("the %s part is not in base64", want)
+		}
+		b, err := io.ReadAll(base64.NewDecoder(base64.StdEncoding, p))
+		if err != nil {
+			t.Fatalf("the %s part: %v", want, err)
+		}
+		return b, p.Header
+	}
+	alt := parts(msg.Body, msg.Header.Get("Content-Type"), "multipart/alternative")
+	text, _ := next(alt, "text/plain")
+	p, err := alt.NextPart()
+	if err != nil {
+		t.Fatalf("no HTML: %v", err)
+	}
+	rel := parts(p, p.Header.Get("Content-Type"), "multipart/related")
+	html, _ := next(rel, "text/html")
+	icon, h := next(rel, "image/png")
+	if _, err := rel.NextPart(); err != io.EOF {
+		t.Fatalf("more than the HTML and its icon: %v", err)
+	}
+	if _, err := alt.NextPart(); err != io.EOF {
+		t.Fatalf("more than the text and the HTML: %v", err)
+	}
+	l.Text, l.HTML, l.Icon = string(text), string(html), icon
+	l.IconID = strings.Trim(h.Get("Content-Id"), "<>")
+	l.Link = loginLink.FindString(l.Text)
+	return msg, l
 }
 
 // testCert is a certificate for 127.0.0.1 and the pool that trusts it.
@@ -301,7 +363,8 @@ func TestSMTPMailer(t *testing.T) {
 		{"this machine, no tls", nil, false},
 	} {
 		f := newFakeSMTP(t, tc.opts...)
-		if err := f.mailer(t).SendCode(ctx, "lin@example.net", "042137"); err != nil {
+		link := "https://deneb.example.com/login/link#" + tc.name[:4]
+		if err := f.mailer(t).SendCode(ctx, "lin@example.net", "042137", link); err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
 		}
 		m := f.next(t)
@@ -311,22 +374,25 @@ func TestSMTPMailer(t *testing.T) {
 		if code := codeIn(t, m); code != "042137" {
 			t.Fatalf("%s: the mail carries %q", tc.name, code)
 		}
+		if _, l := readLetter(t, m.Data); l.Link != link {
+			t.Fatalf("%s: the mail's link is %q", tc.name, l.Link)
+		}
 	}
 
 	f := newFakeSMTP(t, withStartTLS, withAuth("PLAIN"))
 	m := f.mailer(t)
 	m.cfg.Password = "wrong"
-	if err := m.SendCode(ctx, "lin@example.net", "042137"); err == nil || !strings.Contains(err.Error(), "auth") {
+	if err := m.SendCode(ctx, "lin@example.net", "042137", ""); err == nil || !strings.Contains(err.Error(), "auth") {
 		t.Fatalf("a wrong password: %v", err)
 	}
 	// A certificate it does not trust is no server to send to.
 	m = f.mailer(t)
 	m.roots = nil
-	if err := m.SendCode(ctx, "lin@example.net", "042137"); err == nil {
+	if err := m.SendCode(ctx, "lin@example.net", "042137", ""); err == nil {
 		t.Fatal("sent over TLS to a certificate no one trusts")
 	}
 	f.none(t, 100*time.Millisecond)
-	if err := f.mailer(t).SendCode(ctx, "lin@example.net\r\nBcc: x@example.net", "042137"); err == nil {
+	if err := f.mailer(t).SendCode(ctx, "lin@example.net\r\nBcc: x@example.net", "042137", ""); err == nil {
 		t.Fatal("sent to an address with a header in it")
 	}
 
@@ -407,32 +473,68 @@ func TestLoadSMTPConfig(t *testing.T) {
 	}
 }
 
-// TestCodeMail: the mail's headers are well formed whatever the sender's
-// name, and its text says the code and how long it works.
+// TestCodeMail: the mail (DESIGN.md §14.14) is HTML and plain text in one,
+// its headers well formed whatever the sender's name, every line ASCII and
+// short; the code is in the subject, the text and the HTML; the icon goes
+// with it, the brand's own, which the HTML names by its Content-ID and,
+// blocked, shows as ✦. A browser's login gets the link button, a
+// device's none.
 func TestCodeMail(t *testing.T) {
 	from, _ := mail.ParseAddress(`"Deneb 组网" <noreply@example.com>`)
-	raw := codeMail(from, "lin@example.net", "000123", time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC))
-	msg, err := mail.ReadMessage(strings.NewReader(string(raw)))
+	brand, err := os.ReadFile(filepath.Join("..", "design", "brand", "final", "macos", "AppIcon.iconset", "icon_32x32@2x.png"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f, err := mail.ParseAddress(msg.Header.Get("From")); err != nil || f.Name != "Deneb 组网" {
-		t.Fatalf("From: %q", msg.Header.Get("From"))
-	}
-	for _, line := range strings.Split(string(raw), "\r\n") {
-		if len(line) > 998 {
-			t.Fatalf("a line of %d bytes", len(line))
+	for _, link := range []string{"", "https://deneb.example.com/login/link#AbC-12_x"} {
+		raw, err := codeMail(from, "lin@example.net", codeLetter{Code: "000123", Link: link}, time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC))
+		if err != nil {
+			t.Fatal(err)
 		}
-		for _, r := range line {
-			if r >= 0x80 {
-				t.Fatalf("a raw non-ASCII header or line: %q", line)
+		for _, line := range strings.Split(string(raw), "\r\n") {
+			if len(line) > 998 {
+				t.Fatalf("a line of %d bytes", len(line))
+			}
+			for _, r := range line {
+				if r >= 0x80 {
+					t.Fatalf("a raw non-ASCII header or line: %q", line)
+				}
 			}
 		}
-	}
-	subject, _ := new(mime.WordDecoder).DecodeHeader(msg.Header.Get("Subject"))
-	body, _ := io.ReadAll(base64.NewDecoder(base64.StdEncoding, msg.Body))
-	if subject != "Deneb 验证码 000123" || !strings.Contains(string(body), "你的 Deneb 验证码是 000123，10 分钟内有效，只能用一次。") ||
-		msg.Header.Get("Auto-Submitted") != "auto-generated" || !strings.HasSuffix(msg.Header.Get("Message-ID"), "@example.com>") {
-		t.Fatalf("the mail: %q\n%s", subject, body)
+		msg, l := readLetter(t, string(raw))
+		if f, err := mail.ParseAddress(msg.Header.Get("From")); err != nil || f.Name != "Deneb 组网" {
+			t.Fatalf("From: %q", msg.Header.Get("From"))
+		}
+		switch {
+		case l.Subject != "Deneb 验证码 000123", msg.Header.Get("Auto-Submitted") != "auto-generated",
+			!strings.HasSuffix(msg.Header.Get("Message-ID"), "@example.com>"):
+			t.Fatalf("the headers: %q, %v", l.Subject, msg.Header)
+		case !strings.Contains(l.Text, "你的 Deneb 登录验证码：000123"), !strings.Contains(l.Text, "10 分钟内有效，只能用一次"),
+			!strings.Contains(l.Text, "如果不是你在登录 Deneb，不用理会这封邮件"):
+			t.Fatalf("the text:\n%s", l.Text)
+		case !strings.Contains(l.HTML, ">000123</span>"), !strings.Contains(l.HTML, `src="cid:`+l.IconID+`"`), l.IconID != mailIconID,
+			!strings.Contains(l.HTML, `alt="&#10022;"`), !strings.Contains(l.HTML, "<title>Deneb 验证码 000123</title>"):
+			t.Fatalf("the HTML:\n%s", l.HTML)
+		case !bytes.Equal(l.Icon, brand):
+			t.Fatal("the icon is not the brand's 64 px app icon")
+		}
+		// DENEB_MAIL_PREVIEW=<dir> writes the two mails there, to open in a
+		// browser (the icon inlined, as no browser loads cid:).
+		if dir := os.Getenv("DENEB_MAIL_PREVIEW"); dir != "" {
+			name := map[bool]string{false: "code-device", true: "code-browser"}[link != ""]
+			html := strings.ReplaceAll(l.HTML, "cid:"+l.IconID, "data:image/png;base64,"+base64.StdEncoding.EncodeToString(l.Icon))
+			os.WriteFile(filepath.Join(dir, name+".html"), []byte(html), 0o644)
+			os.WriteFile(filepath.Join(dir, name+".txt"), []byte(l.Text), 0o644)
+		}
+		button := strings.Contains(l.HTML, "在这台电脑上登录")
+		if link == "" {
+			if l.Link != "" || button || strings.Contains(l.HTML, "/login/link") {
+				t.Fatalf("a device's mail with a link:\n%s", l.Text)
+			}
+			continue
+		}
+		if l.Link != link || !button || !strings.Contains(l.HTML, `href="`+link+`"`) ||
+			!strings.Contains(l.HTML, `>deneb.example.com</a>`) || !strings.Contains(l.Text, "\r\nhttps://deneb.example.com\r\n") {
+			t.Fatalf("a browser's mail: link %q, button %v\n%s", l.Link, button, l.Text)
+		}
 	}
 }

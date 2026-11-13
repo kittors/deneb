@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/mail"
 	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -127,6 +128,10 @@ type mailedCode struct {
 	created time.Time
 	sent    time.Time // when it last went out
 	wrong   int       // wrong codes tried against it
+	// links are the hashes of the login links mailed with it (a new one
+	// with each mail, as only hashes are kept): each logs in instead of
+	// the code, and using any of them or the code uses up all.
+	links []string
 }
 
 func (c *mailedCode) live(now time.Time) bool { return now.Before(c.created.Add(codeLife)) }
@@ -136,24 +141,36 @@ func (c *mailedCode) live(now time.Time) bool { return now.Before(c.created.Add(
 type loginCodes struct {
 	mu    sync.Mutex
 	codes map[string]*mailedCode
+	links map[string]string      // a login link's hash → its email
 	sends map[string][]time.Time // per email, the sends within the hour
 	swept time.Time
 }
 
 func newLoginCodes() *loginCodes {
-	return &loginCodes{codes: map[string]*mailedCode{}, sends: map[string][]time.Time{}}
+	return &loginCodes{codes: map[string]*mailedCode{}, links: map[string]string{}, sends: map[string][]time.Time{}}
 }
 
-// issue returns the code to mail to email now, or "" and why none goes
-// out: one went out less than codeResend ago, the hour's sends are used
-// up, or too many codes are waiting.
-func (t *loginCodes) issue(email string, now time.Time) (code, why string) {
+// drop forgets email's code and its links; t.mu is held.
+func (t *loginCodes) drop(email string) {
+	if c := t.codes[email]; c != nil {
+		for _, h := range c.links {
+			delete(t.links, h)
+		}
+		delete(t.codes, email)
+	}
+}
+
+// issue returns the code to mail to email now, and with withLink a new
+// login link's token for it, or "" and why none goes out: one went out
+// less than codeResend ago, the hour's sends are used up, or too many
+// codes are waiting.
+func (t *loginCodes) issue(email string, now time.Time, withLink bool) (code, link, why string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.gc(now)
 	c := t.codes[email]
 	if c != nil && c.live(now) && now.Sub(c.sent) < codeResend {
-		return "", "one went out less than a minute ago"
+		return "", "", "one went out less than a minute ago"
 	}
 	var sends []time.Time
 	for _, s := range t.sends[email] {
@@ -162,21 +179,70 @@ func (t *loginCodes) issue(email string, now time.Time) (code, why string) {
 		}
 	}
 	if len(sends) >= maxSendsPerEmail {
-		return "", "the hour's sends are used up"
+		return "", "", "the hour's sends are used up"
 	}
 	switch {
 	case c != nil && c.live(now) && now.Sub(c.created) < codeLife/2:
 		why = "sent again"
 	case c == nil && len(t.codes) >= maxLoginCodes:
-		return "", "too many codes are waiting"
+		return "", "", "too many codes are waiting"
 	default:
+		// A new code: the old one's links go with it.
+		t.drop(email)
 		c = &mailedCode{code: newLoginCode(), created: now}
 		t.codes[email] = c
 		why = "sent"
 	}
+	if withLink {
+		link = newRelaySecret() // 256 random bits, as a session's token
+		h := hashSecret(link)
+		c.links = append(c.links, h)
+		t.links[h] = email
+	}
 	c.sent = now
 	t.sends[email] = append(sends, now)
-	return c.code, why
+	return c.code, link, why
+}
+
+// link finds the live code a login link is for, by its token; t.mu is
+// held.
+func (t *loginCodes) link(token string, now time.Time) (string, *mailedCode) {
+	h := hashSecret(token)
+	email, ok := t.links[h]
+	if !ok {
+		return "", nil
+	}
+	c := t.codes[email]
+	if c == nil || !c.live(now) || !slices.Contains(c.links, h) {
+		delete(t.links, h)
+		return "", nil
+	}
+	return email, c
+}
+
+// peekLink is the email a login link logs in as, and until when, using
+// nothing up; ok false for one that does not work.
+func (t *loginCodes) peekLink(token string, now time.Time) (email string, expires time.Time, ok bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	email, c := t.link(token, now)
+	if c == nil {
+		return "", time.Time{}, false
+	}
+	return email, c.created.Add(codeLife), true
+}
+
+// useLink is the email a login link logs in as, using it up, and with it
+// the code and the other links; ok false for one that does not work.
+func (t *loginCodes) useLink(token string, now time.Time) (email string, ok bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	email, c := t.link(token, now)
+	if c == nil {
+		return "", false
+	}
+	t.drop(email)
+	return email, true
 }
 
 // noCode is what a code is compared with when the email has none, so the
@@ -195,12 +261,12 @@ func (t *loginCodes) check(email, code string, now time.Time) bool {
 		want = c.code
 	}
 	if subtle.ConstantTimeCompare([]byte(code), []byte(want)) == 1 && want != noCode {
-		delete(t.codes, email)
+		t.drop(email) // its links too
 		return true
 	}
 	if c != nil {
 		if c.wrong++; c.wrong >= maxAttempts || !c.live(now) {
-			delete(t.codes, email)
+			t.drop(email)
 		}
 	}
 	return false
@@ -215,7 +281,7 @@ func (t *loginCodes) gc(now time.Time) {
 	t.swept = now
 	for e, c := range t.codes {
 		if !c.live(now) {
-			delete(t.codes, e)
+			t.drop(e)
 		}
 	}
 	for e, ss := range t.sends {
@@ -230,6 +296,10 @@ type loginFrom struct {
 	what string // "login" (a device's login page) or "web login"
 	ip   string
 	link string // the device's login code, shortened; empty on the Web
+	// web: a login begun in a browser, for the Web version, whose mail
+	// may carry a login link. A device's waits for its code: a link
+	// would log a browser in, not it.
+	web bool
 }
 
 func (f loginFrom) String() string {
@@ -259,9 +329,15 @@ func (s *Server) askCode(email string, from loginFrom) error {
 	case p == nil && !s.cfg.OpenSignup:
 		s.logf("%s: code asked for %s %s: no account, nothing sent", from.what, s.logEmail(email), from)
 	default:
-		code, why := s.mailed.issue(email, now)
+		// A login link goes along when the login is a browser's and the
+		// Web version, which opens it, is up (-web-url).
+		withLink := from.web && s.cfg.WebURL != ""
+		code, link, why := s.mailed.issue(email, now, withLink)
 		if code != "" {
-			why = s.mailCode(email, code, why)
+			if link != "" {
+				link = proto.LoginLinkURL(s.cfg.WebURL, link)
+			}
+			why = s.mailCode(email, code, link, why)
 		}
 		account := "new"
 		if p != nil {
@@ -370,7 +446,7 @@ func (s *Server) signUp(email string) (proto.PersonID, error) {
 // The mail goes out in the background, so a step that mails a code takes
 // as long as one that does not.
 
-type mailJob struct{ to, code string }
+type mailJob struct{ to, code, link string }
 
 // startMail starts the mail queue, if the server has a mailer.
 func (s *Server) startMail() {
@@ -389,7 +465,7 @@ func (s *Server) startMail() {
 				return
 			case j := <-s.mailQ:
 				sctx, done := context.WithTimeout(ctx, mailTimeout)
-				err := s.cfg.Mailer.SendCode(sctx, j.to, j.code)
+				err := s.cfg.Mailer.SendCode(sctx, j.to, j.code, j.link)
 				done()
 				if err != nil {
 					s.logf("mail: the login code for %s did not go out: %v", j.to, err)
@@ -409,15 +485,70 @@ func (s *Server) stopMail() {
 	}
 }
 
-// mailCode queues the code for email and says what became of it.
-func (s *Server) mailCode(email, code, why string) string {
+// mailCode queues the code (and link) for email and says what became of it.
+func (s *Server) mailCode(email, code, link, why string) string {
 	if s.mailQ == nil {
 		return "no mailer is set up, nothing sent"
 	}
 	select {
-	case s.mailQ <- mailJob{email, code}:
+	case s.mailQ <- mailJob{email, code, link}:
+		if link != "" {
+			why += ", with a login link"
+		}
 		return why
 	default:
 		return "the mail queue is full, nothing sent"
 	}
+}
+
+// Logging in by the link in the mail (design/plan/m7/login-link.md): the
+// link's page asks first (peekLink), then logs in (useLink). Both count a
+// link that does not work against the address, as a wrong code is.
+
+// errDeadLink is the answer for any link that does not work: used, run
+// out, made old by a newer code, or never made.
+var errDeadLink = errNotFound("这个登录链接用不了了：已经用过、过期了，或者后来又发了新的验证码。回到登录页再发一封就行。")
+
+// peekLink is what a login link would log in as.
+func (s *Server) peekLink(token string, from loginFrom) (string, time.Time, error) {
+	now := s.now()
+	addr := addressKey(from.ip)
+	if !s.wrongs.take(addr, now) {
+		s.logf("%s: too many wrong codes or links %s", from.what, from)
+		return "", time.Time{}, errTooManyTries
+	}
+	email, expires, ok := s.mailed.peekLink(token, now)
+	if !ok {
+		s.logf("%s: a login link that does not work, looked at %s", from.what, from)
+		return "", time.Time{}, errDeadLink
+	}
+	s.wrongs.refund(addr)
+	return email, expires, nil
+}
+
+// useLink logs in with a login link, as checkCode with the code: it
+// returns whom the link logs in, making their account if sign-up is open
+// and the email has none.
+func (s *Server) useLink(token string, from loginFrom) (proto.PersonID, string, error) {
+	now := s.now()
+	addr := addressKey(from.ip)
+	if !s.wrongs.take(addr, now) {
+		s.logf("%s: too many wrong codes or links %s", from.what, from)
+		return "", "", errTooManyTries
+	}
+	email, ok := s.mailed.useLink(token, now)
+	if !ok {
+		s.logf("%s: a login link that does not work, used %s", from.what, from)
+		return "", "", errDeadLink
+	}
+	s.wrongs.refund(addr)
+	s.tries.reset(email)
+	if p := s.state.Load().w.byEmail[email]; p != nil {
+		return p.ID, email, nil
+	}
+	if !s.cfg.OpenSignup {
+		return "", "", errDeadLink // sign-up closed since the mail went out
+	}
+	id, err := s.signUp(email)
+	return id, email, err
 }

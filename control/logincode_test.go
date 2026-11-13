@@ -191,9 +191,9 @@ func TestLoginCodeLife(t *testing.T) {
 func TestLoginCodeDropped(t *testing.T) {
 	lc := newLoginCodes()
 	now := time.Now()
-	code, why := lc.issue("lin@example.net", now)
-	if code == "" || why != "sent" {
-		t.Fatalf("issue: %q %q", code, why)
+	code, link, why := lc.issue("lin@example.net", now, true)
+	if code == "" || link == "" || why != "sent" {
+		t.Fatalf("issue: %q %q %q", code, link, why)
 	}
 	wrong := fmt.Sprintf("%06d", (mustAtoi(code)+1)%1_000_000)
 	for range maxAttempts {
@@ -204,8 +204,11 @@ func TestLoginCodeDropped(t *testing.T) {
 	if lc.check("lin@example.net", code, now) {
 		t.Fatal("the code still works after five wrong ones")
 	}
+	if _, ok := lc.useLink(link, now); ok {
+		t.Fatal("its link still works after five wrong codes")
+	}
 	// Used once: no more.
-	code, _ = lc.issue("lin@example.net", now.Add(2*time.Minute))
+	code, _, _ = lc.issue("lin@example.net", now.Add(2*time.Minute), false)
 	if !lc.check("lin@example.net", code, now.Add(2*time.Minute)) || lc.check("lin@example.net", code, now.Add(2*time.Minute)) {
 		t.Fatal("a code works once")
 	}

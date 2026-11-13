@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="supported-color-schemes" content="light dark">
+<title>Deneb 验证码 {{.Code}}</title>
+<!--
+  The login code's mail (DESIGN.md §14.14; the client line's sample in the
+  M7 batch 2 delivery, 08-验证码邮件). Laid out in tables with the styles on
+  every tag, as the mail programs want (Gmail drops part of a <style>;
+  Outlook lays mail out with Word). The one picture, the icon, goes with the
+  mail (cid:, a 64 px PNG shown at 32: icon.png, the macOS app icon of
+  design/brand/final); blocked, its words are the star, next to "Deneb".
+  The <style> below only adds the dark version (Apple Mail) and the phone's
+  sizes; without it the mail reads the same. The button, for a login begun
+  in a browser, logs in with the link instead of the code (login-link.md).
+-->
+<style>
+  @media (prefers-color-scheme: dark) {
+    .bg { background-color: #0f0f12 !important; }
+    .card { background-color: #1b1b20 !important; border-color: #2c2c33 !important; }
+    .ink { color: #f4f4f5 !important; }
+    .ink2 { color: #b9b9c2 !important; }
+    .ink3 { color: #8b8b95 !important; }
+    .codebox { background-color: #222a40 !important; }
+    .code { color: #ffffff !important; }
+    .rule { border-color: #2c2c33 !important; }
+  }
+  @media (max-width: 520px) {
+    .outer { padding: 24px 12px !important; }
+    .card { padding: 28px 20px !important; }
+    .code { font-size: 30px !important; letter-spacing: 6px !important; padding-left: 6px !important; }
+  }
+</style>
+</head>
+<body class="bg" style="margin:0;padding:0;background-color:#f4f4f6;">
+<div style="display:none;max-height:0;max-width:0;overflow:hidden;opacity:0;color:transparent;mso-hide:all;font-size:1px;line-height:1px;">{{.Minutes}} 分钟内有效，只能用一次&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;</div>
+<table role="presentation" class="bg" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f4f4f6;">
+<tr><td class="outer" align="center" style="padding:44px 16px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:480px;">
+<tr><td style="padding:0 6px 18px;">
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+    <td width="32" height="32" valign="middle" style="width:32px;height:32px;"><img src="{{.Icon}}" width="32" height="32" alt="&#10022;" style="display:block;width:32px;height:32px;border:0;outline:none;text-decoration:none;color:#2f6bff;font-size:20px;line-height:32px;font-family:'PingFang SC','Microsoft YaHei',sans-serif;"></td>
+    <td class="ink" style="padding-left:9px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Helvetica Neue',Arial,sans-serif;font-size:17px;font-weight:600;color:#18181b;">Deneb</td>
+  </tr></table>
+</td></tr>
+<tr><td class="card" style="background-color:#ffffff;border:1px solid #e6e6ea;border-radius:16px;padding:34px 32px 30px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Helvetica Neue',Arial,sans-serif;">
+  <p class="ink2" style="margin:0;font-size:14px;line-height:1.5;color:#52525b;">你的登录验证码</p>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:12px;"><tr>
+    <td class="codebox" align="center" style="background-color:#eef2fb;border-radius:12px;padding:20px 8px;">
+      <span class="code" style="display:inline-block;padding-left:9px;font-family:'SF Mono',SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace;font-size:34px;line-height:40px;font-weight:700;letter-spacing:9px;color:#18181b;">{{.Code}}</span>
+    </td>
+  </tr></table>
+{{- if .Link}}
+  <p class="ink" style="margin:22px 0 0;font-size:15px;line-height:1.65;color:#18181b;">{{.Minutes}} 分钟内有效，只能用一次。回到 Deneb 的登录页填进去，或者点下面的按钮直接登录。</p>
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:18px;"><tr>
+    <td align="center" bgcolor="#2f6bff" style="border-radius:10px;background-color:#2f6bff;">
+      <a href="{{.Link}}" target="_blank" style="display:inline-block;padding:12px 22px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Helvetica Neue',Arial,sans-serif;font-size:15px;font-weight:600;line-height:20px;color:#ffffff;text-decoration:none;border-radius:10px;">在这台电脑上登录</a>
+    </td>
+  </tr></table>
+{{- else}}
+  <p class="ink" style="margin:22px 0 0;font-size:15px;line-height:1.65;color:#18181b;">{{.Minutes}} 分钟内有效，只能用一次。回到 Deneb 的登录页，把它填进去就行。</p>
+{{- end}}
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:24px;"><tr>
+    <td class="rule ink3" style="border-top:1px solid #ececef;padding-top:18px;font-size:13px;line-height:1.65;color:#71717a;">如果不是你在登录 Deneb，不用理会这封邮件，你的账号不会有任何变化。</td>
+  </tr></table>
+</td></tr>
+<tr><td class="ink3" style="padding:18px 6px 0;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Helvetica Neue',Arial,sans-serif;font-size:12px;line-height:1.75;color:#8b8b95;">
+  这封邮件由 Deneb 自动发出，请不要直接回复。<br>
+  {{- if .Site}}
+  <a class="ink3" href="{{.Site}}" style="color:#8b8b95;text-decoration:underline;">{{.SiteName}}</a>&nbsp;&nbsp;·&nbsp;&nbsp;
+  {{- end}}
+  <a class="ink3" href="https://github.com/kittors/deneb/blob/main/PRIVACY.md" style="color:#8b8b95;text-decoration:underline;">隐私说明</a>
+</td></tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>

@@ -28,6 +28,19 @@ func InviteURL(publicURL, token string) string {
 	return strings.TrimRight(publicURL, "/") + InvitePath + token
 }
 
+// A login link (M7) is https://<the Web version>/login/link#<token>, in the
+// mail with a login code, for a login begun in a browser. The token is
+// after the #, which a browser never sends, so opening the link tells the
+// server nothing and uses nothing up: a mail scanner that opens it first
+// does no harm. The page asks before it logs in, and posts the token to
+// PathWebLoginLink.
+const LoginLinkPath = "/login/link"
+
+// LoginLinkURL is the link to mail for a login link's token.
+func LoginLinkURL(webURL, token string) string {
+	return strings.TrimRight(webURL, "/") + LoginLinkPath + "#" + token
+}
+
 // JoinLink is the deneb:// link that opens an invite in the app.
 func JoinLink(token string) string { return JoinLinkBase + token }
 
