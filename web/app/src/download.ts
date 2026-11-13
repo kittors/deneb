@@ -14,10 +14,10 @@ const UI: Record<string, string> = {
 export function icon(k: string, size = 18): string {
   return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${UI[k] ?? ''}</svg>`;
 }
-// The Deneb mark: a bright star, four rays with concave sides, the
-// vertical pair the longer (DESIGN §15; the desktop's starGlyph).
+// The Deneb mark, the little star (DESIGN §15; the desktop's starGlyph):
+// the star, its vertical pair the longer, its eyes cut out, on 18 units.
 export function star(size = 18, color = 'currentColor'): string {
-  return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" aria-hidden="true"><path fill="${color}" d="M12,1.5 C12.21,4.07 12.27,6.03 13.3,8.03 C14.03,9.46 15.11,10.54 16.56,11.2 C17.94,11.83 19.09,11.87 20.67,12 C19.09,12.13 17.94,12.17 16.56,12.8 C15.11,13.46 14.03,14.54 13.3,15.97 C12.27,17.97 12.21,19.93 12,22.5 C11.79,19.93 11.73,17.97 10.7,15.97 C9.97,14.54 8.89,13.46 7.44,12.8 C6.06,12.17 4.91,12.13 3.33,12 C4.91,11.87 6.06,11.83 7.44,11.2 C8.89,10.54 9.97,9.46 10.7,8.03 C11.73,6.03 11.79,4.07 12,1.5Z"/></svg>`;
+  return `<svg viewBox="0 0 18 18" width="${size}" height="${size}" aria-hidden="true"><path fill="${color}" fill-rule="evenodd" d="M7.23,2.5A1.77,1.77 0 0 1 10.77,2.5A5.2,5.2 0 0 0 14.56,7.29A1.77,1.77 0 0 1 14.56,10.71A5.2,5.2 0 0 0 10.77,15.5A1.77,1.77 0 0 1 7.23,15.5A5.2,5.2 0 0 0 3.44,10.71A1.77,1.77 0 0 1 3.44,7.29A5.2,5.2 0 0 0 7.23,2.5ZM7,8H7A1,1 0 0 1 8,9V10A1,1 0 0 1 7,11H7A1,1 0 0 1 6,10V9A1,1 0 0 1 7,8ZM11,8H11A1,1 0 0 1 12,9V10A1,1 0 0 1 11,11H11A1,1 0 0 1 10,10V9A1,1 0 0 1 11,8Z"/></svg>`;
 }
 
 export function esc(s: string): string {

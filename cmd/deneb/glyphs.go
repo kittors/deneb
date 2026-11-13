@@ -43,12 +43,11 @@ var uiGlyphs = map[string]*ui.SVG{
 	"arrows":   ui.MustParseSVG([]byte("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#000\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M5 9h13.5l-3-3M19 15H5.5l3 3\"/></svg>")),
 }
 
-// starGlyph is the Deneb mark: a bright star, four rays with concave
-// sides, the vertical pair the longer (DESIGN §15), drawn for 16 to 32
-// points (design/brand/final/glyphs.txt).
-var starGlyph = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#000" d="M12,1.5 C12.21,4.07 12.27,6.03 13.3,8.03 C14.03,9.46 15.11,10.54 16.56,11.2 C17.94,11.83 19.09,11.87 20.67,12 C19.09,12.13 17.94,12.17 16.56,12.8 C15.11,13.46 14.03,14.54 13.3,15.97 C12.27,17.97 12.21,19.93 12,22.5 C11.79,19.93 11.73,17.97 10.7,15.97 C9.97,14.54 8.89,13.46 7.44,12.8 C6.06,12.17 4.91,12.13 3.33,12 C4.91,11.87 6.06,11.83 7.44,11.2 C8.89,10.54 9.97,9.46 10.7,8.03 C11.73,6.03 11.79,4.07 12,1.5Z"/></svg>`))
+// starGlyph is the Deneb mark, the little star (DESIGN §15): the star, its
+// vertical pair the longer, and its eyes cut out, drawn on 18 units with the
+// eyes on whole points, for 16 to 40 points (design/brand/final/glyphs.txt).
+var starGlyph = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18"><path fill="#000" fill-rule="evenodd" d="M7.23,2.5A1.77,1.77 0 0 1 10.77,2.5A5.2,5.2 0 0 0 14.56,7.29A1.77,1.77 0 0 1 14.56,10.71A5.2,5.2 0 0 0 10.77,15.5A1.77,1.77 0 0 1 7.23,15.5A5.2,5.2 0 0 0 3.44,10.71A1.77,1.77 0 0 1 3.44,7.29A5.2,5.2 0 0 0 7.23,2.5ZM7,8H7A1,1 0 0 1 8,9V10A1,1 0 0 1 7,11H7A1,1 0 0 1 6,10V9A1,1 0 0 1 7,8ZM11,8H11A1,1 0 0 1 12,9V10A1,1 0 0 1 11,11H11A1,1 0 0 1 10,10V9A1,1 0 0 1 11,8Z"/></svg>`))
 
-// markGlyph is the same mark drawn for 40 points and up: slenderer rays,
-// as in the app icon. Below that they would fade, so starGlyph keeps
-// them bolder.
-var markGlyph = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#000" d="M12,1.5 C12.21,6.31 12.11,8.99 13.95,10.62 C15.37,11.89 17.1,11.85 20.45,12 C17.1,12.15 15.37,12.11 13.95,13.38 C12.11,15.01 12.21,17.69 12,22.5 C11.79,17.69 11.89,15.01 10.05,13.38 C8.63,12.11 6.9,12.15 3.55,12 C6.9,11.85 8.63,11.89 10.05,10.62 C11.89,8.99 11.79,6.31 12,1.5Z"/></svg>`))
+// markGlyph is the same mark's full cut, for 48 points and up (the login and
+// starting screens): its eyes ovals, as in the app icon.
+var markGlyph = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path fill="#000" fill-rule="evenodd" d="M39.75,11.1A10.26,10.26 0 0 1 60.25,11.1A30.29,30.29 0 0 0 83.24,40.05A10.26,10.26 0 0 1 83.24,59.95A30.29,30.29 0 0 0 60.25,88.9A10.26,10.26 0 0 1 39.75,88.9A30.29,30.29 0 0 0 16.76,59.95A10.26,10.26 0 0 1 16.76,40.05A30.29,30.29 0 0 0 39.75,11.1ZM36.67,54.79A4.44,6.5 0 1 0 45.56,54.79A4.44,6.5 0 1 0 36.67,54.79ZM54.44,54.79A4.44,6.5 0 1 0 63.33,54.79A4.44,6.5 0 1 0 54.44,54.79Z"/></svg>`))

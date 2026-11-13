@@ -1,10 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"image"
-	"image/color"
-	"image/png"
 	"os"
 	"path/filepath"
 	"slices"
@@ -192,65 +188,6 @@ func TestTaskbarGap(t *testing.T) {
 	top := []mygo.Display{{Bounds: mygo.Rectangle{Width: 1536, Height: 864}, WorkArea: mygo.Rectangle{Y: 48, Width: 1536, Height: 816}}}
 	if got := taskbarGap(mygo.Rectangle{X: 1310, Y: 4, Width: 24, Height: 40}, top, 12); got != 16 {
 		t.Errorf("a taskbar at the top: gap %d, want 16", got)
-	}
-}
-
-// Windows' marks: the menu bar's, cut to the 16 points the star is drawn
-// in, near black for a light taskbar and white for a dark one, each pixel
-// keeping its alpha.
-func TestTrayIconsWindows(t *testing.T) {
-	for _, st := range []string{"solid", "dot", "hollow"} {
-		tmpl, err := png.Decode(bytes.NewReader(trayIcons[st]))
-		if err != nil {
-			t.Fatal(err)
-		}
-		// The cut takes nothing of the mark: the menu bar's marks keep
-		// their star in the middle 16 points (a new logo's too).
-		b := tmpl.Bounds()
-		for y := b.Min.Y; y < b.Max.Y; y++ {
-			for x := b.Min.X; x < b.Max.X; x++ {
-				if (image.Point{X: x, Y: y}).In(b.Inset(trayInset)) {
-					continue
-				}
-				if a := color.NRGBAModel.Convert(tmpl.At(x, y)).(color.NRGBA).A; a != 0 {
-					t.Fatalf("%s (%d,%d): alpha %d in the margin the 16 points are cut from", st, x, y, a)
-				}
-			}
-		}
-		for _, tc := range []struct {
-			dark bool
-			ink  color.NRGBA
-		}{{false, color.NRGBA{0x1b, 0x1b, 0x1b, 0}}, {true, color.NRGBA{255, 255, 255, 0}}} {
-			img, err := png.Decode(bytes.NewReader(trayIconFor("windows", st, tc.dark)))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if b := img.Bounds(); b.Dx() != 32 || b.Dy() != 32 {
-				t.Fatalf("%s: %v, want 32×32", st, b)
-			}
-			shown := 0
-			for y := 0; y < 32; y++ {
-				for x := 0; x < 32; x++ {
-					want := color.NRGBAModel.Convert(tmpl.At(x+2, y+2)).(color.NRGBA).A
-					got := color.NRGBAModel.Convert(img.At(x, y)).(color.NRGBA)
-					if got.A != want {
-						t.Fatalf("%s dark=%v (%d,%d): alpha %d, want %d", st, tc.dark, x, y, got.A, want)
-					}
-					if got.A > 0 {
-						shown++
-						if got.R != tc.ink.R || got.G != tc.ink.G || got.B != tc.ink.B {
-							t.Fatalf("%s dark=%v (%d,%d): %v", st, tc.dark, x, y, got)
-						}
-					}
-				}
-			}
-			if shown == 0 {
-				t.Fatalf("%s: nothing shows", st)
-			}
-		}
-		if !bytes.Equal(trayIconFor("darwin", st, false), trayIcons[st]) || !bytes.Equal(trayIconFor("linux", st, false), trayIconFor("windows", st, true)) {
-			t.Errorf("%s: macOS's mark changed, or Linux's is not the white one of 16 points", st)
-		}
 	}
 }
 

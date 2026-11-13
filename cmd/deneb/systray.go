@@ -1,11 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"embed"
-	"image"
-	"image/color"
-	"image/png"
+	"fmt"
 	"log"
 	"runtime"
 	"sync/atomic"
@@ -60,7 +57,7 @@ type menuBar struct {
 // the system has none to put it in.
 func newMenuBar(a *app) *menuBar {
 	goos := runtime.GOOS
-	tray, err := mygo.NewTray(mygo.TrayOptions{ID: "deneb", Icon: trayIconFor(goos, "solid", false), IconIsTemplate: goos == "darwin", ToolTip: "Deneb"})
+	tray, err := mygo.NewTray(mygo.TrayOptions{ID: "deneb", Icon: trayIconFor(goos, "solid", false, 1), IconIsTemplate: goos == "darwin", ToolTip: "Deneb"})
 	if err != nil {
 		log.Printf("deneb: no mark in the system's bar: %v", err)
 		return nil
@@ -91,10 +88,12 @@ func newMenuBar(a *app) *menuBar {
 		tray.OnRightClick(m.toggle)
 	}
 	if goos == "windows" {
-		// In the taskbar's ink: near black on a light taskbar, white on a
-		// dark one, turning as the system's mode does.
+		// In colour, one for a light taskbar and one for a dark, at the
+		// pixels of the display the icon is on: turning as the system's
+		// mode does, or the display's scale.
 		m.setIcon()
 		tray.OnAppearanceChange(m.setIcon)
+		mygo.Screen.OnDisplaysChanged(m.setIcon)
 	}
 	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) { m.quitting = true })
 	return m
@@ -205,13 +204,18 @@ func (m *menuBar) follow(s *model.Snapshot, now time.Time) {
 	}
 }
 
-// setIcon shows the mark m.mark in the bar's ink.
+// setIcon shows the mark m.mark: on Windows the one for the taskbar's mode
+// and for the scale of the display the icon is on.
 func (m *menuBar) setIcon() {
 	if m.tray == nil {
 		return // a test's
 	}
-	dark := m.os == "windows" && m.tray.Dark()
-	m.tray.SetIcon(trayIconFor(m.os, m.mark, dark), m.os == "darwin")
+	dark, scale := false, 1.0
+	if m.os == "windows" {
+		dark = m.tray.Dark()
+		scale = mygo.Screen.DisplayMatching(m.tray.Bounds()).ScaleFactor
+	}
+	m.tray.SetIcon(trayIconFor(m.os, m.mark, dark, scale), m.os == "darwin")
 }
 
 // update asks the open panel for a frame built anew.
@@ -397,96 +401,68 @@ func taskbarGap(icon mygo.Rectangle, displays []mygo.Display, want int) int {
 	return want
 }
 
-// trayIcons are the menu bar's marks, drawn by TestTrayIcons.
-var trayIcons = func() map[string][]byte {
-	out := map[string][]byte{}
-	for _, st := range []string{"solid", "dot", "hollow"} {
-		b, err := trayIconFiles.ReadFile("trayicons/" + st + ".png")
-		if err != nil {
-			panic(err)
-		}
-		out[st] = b
-	}
-	return out
-}()
-
-//go:embed trayicons/*.png
+// The bar's marks (DESIGN §7.1, §7.2, §15), from design/brand/final,
+// which build-final.sh copies here:
+//
+//   - macOS: trayicons/<state>.tiff, a template of 18 points holding two
+//     images, 18 and 36 pixels, each drawn on its own grid: macOS tints it
+//     to its menu bar and takes the one for the display's scale.
+//   - Windows: trayicons/color/<state>-<dark|light>-<pixels>.png, in colour,
+//     for a dark taskbar or a light one, at 16, 20, 24 and 32 pixels, the 16
+//     points of a notification area icon at 100, 125, 150 and 200 %. MyGo
+//     makes the icon of one image at its own size and leaves the rest to
+//     Windows, so the image is the display's own size, or the next larger
+//     one there is, which Windows shrinks.
+//   - Linux: the dark taskbar's, 32 pixels: GNOME's top bar is dark in its
+//     light style and in its dark one, and shows indicators at 16 points.
+//
+//go:embed trayicons/*.tiff trayicons/color/*.png
 var trayIconFiles embed.FS
 
-// trayIconFor returns the mark of state st as the bar of system goos shows
-// it, dark telling whether a Windows taskbar is.
-//
-//   - macOS: the marks are templates, black on transparent, which macOS
-//     tints to its menu bar.
-//   - Windows: the taskbar's ink, near black on a light taskbar and white
-//     on a dark one (DESIGN §7.2), 16 points: the 18 of the menu bar's
-//     marks cut to the 16 the star is drawn in, so that the system, which
-//     shows the icon at 16, keeps the star the size it is on the Mac.
-//   - Linux: a panel shows an AppIndicator's icon as it is, with no
-//     template, and MyGo gives it no icon of the theme's to follow either.
-//     The mark is white, for GNOME's top bar, dark in the light style and in
-//     the dark one; cut to 16 points as Windows', which GNOME shows its
-//     indicators at.
-func trayIconFor(goos, st string, dark bool) []byte {
-	switch goos {
-	case "linux":
-		return trayIconsWhite[st]
-	case "windows":
-		if dark {
-			return trayIconsWhite[st]
-		}
-		return trayIconsInk[st]
-	}
-	return trayIcons[st]
-}
+// trayStates are the marks' states: connected, something waits for me,
+// nothing connects here.
+var trayStates = []string{"solid", "dot", "hollow"}
 
-// taskbarInk is the ink of a light Windows taskbar's icons and text.
-var taskbarInk = color.NRGBA{R: 0x1b, G: 0x1b, B: 0x1b}
+// trayPixels are the sizes the colour marks come in.
+var trayPixels = []int{16, 20, 24, 32}
 
-// trayIconsWhite and trayIconsInk are trayIcons in white and in a light
-// taskbar's ink: the same marks, the user's (design/brand/final/tray), with
-// the same transparency, cut to the 16 points the star is drawn in.
-var (
-	trayIconsWhite = tinted(trayIcons, color.NRGBA{R: 255, G: 255, B: 255}, trayInset)
-	trayIconsInk   = tinted(trayIcons, taskbarInk, trayInset)
-)
-
-// trayInset is what the menu bar's marks, 18 points of 2 pixels, have
-// around the 16 the star is drawn in.
-const trayInset = 2
-
-// tinted returns the marks in col, each cut by inset pixels on every side.
-func tinted(marks map[string][]byte, col color.NRGBA, inset int) map[string][]byte {
-	out := map[string][]byte{}
-	for st, b := range marks {
-		w, err := tint(b, col, inset)
-		if err != nil {
-			panic(err)
-		}
-		out[st] = w
-	}
-	return out
-}
-
-// tint returns the PNG image b in col, each pixel keeping its alpha, cut
-// by inset pixels on every side.
-func tint(b []byte, col color.NRGBA, inset int) ([]byte, error) {
-	img, err := png.Decode(bytes.NewReader(b))
+// trayIconFile returns the embedded file trayicons/name.
+func trayIconFile(name string) []byte {
+	b, err := trayIconFiles.ReadFile("trayicons/" + name)
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
-	r := img.Bounds().Inset(inset)
-	out := image.NewNRGBA(image.Rect(0, 0, r.Dx(), r.Dy()))
-	for y := r.Min.Y; y < r.Max.Y; y++ {
-		for x := r.Min.X; x < r.Max.X; x++ {
-			c := col
-			c.A = color.NRGBAModel.Convert(img.At(x, y)).(color.NRGBA).A
-			out.SetNRGBA(x-r.Min.X, y-r.Min.Y, c)
+	return b
+}
+
+// trayIconFor returns the mark of state st as the bar of system goos shows
+// it: dark tells whether a Windows taskbar is, scale is the scale of the
+// display a Windows icon is on.
+func trayIconFor(goos, st string, dark bool, scale float64) []byte {
+	switch goos {
+	case "darwin":
+		return trayIconFile(st + ".tiff")
+	case "linux":
+		return trayIconFile("color/" + st + "-dark-32.png")
+	}
+	mode := "light"
+	if dark {
+		mode = "dark"
+	}
+	return trayIconFile(fmt.Sprintf("color/%s-%s-%d.png", st, mode, trayPixelsFor(scale)))
+}
+
+// trayPixelsFor returns the size of the colour marks for a display's
+// scale: the size it shows them at, or the next larger there is.
+func trayPixelsFor(scale float64) int {
+	if scale <= 0 {
+		scale = 1
+	}
+	want := 16 * scale
+	for _, px := range trayPixels {
+		if float64(px) >= want-0.01 {
+			return px
 		}
 	}
-	var buf bytes.Buffer
-	if err := png.Encode(&buf, out); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
+	return trayPixels[len(trayPixels)-1]
 }

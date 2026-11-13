@@ -2,12 +2,15 @@ package main
 
 import "github.com/egoist/mygo/ui"
 
-// The menu bar's marks (DESIGN §7.1): the star, the star with a dot at its
-// bottom right when something waits for me, and the star's outline when
-// nothing connects here.
+// The menu bar's marks (DESIGN §7.1) in one colour, for the tray's tip and
+// any view of the bar: the star with its eyes; the dot at its lower right
+// when something waits for me, the star cut away around it; asleep, eyes
+// closed and faded, when nothing connects here. The bar itself shows the
+// images of design/brand/final (systray.go), the same shapes drawn on each
+// size's own grid.
 var (
-	trayStarDot    = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#000" d="M12,1.5 C12.21,4.07 12.27,6.03 13.3,8.03 C14.03,9.46 15.11,10.54 16.56,11.2 C17.94,11.83 19.09,11.87 20.67,12 C19.09,12.13 17.94,12.17 16.56,12.8 C15.11,13.46 14.03,14.54 13.3,15.97 C12.27,17.97 12.21,19.93 12,22.5 C11.79,19.93 11.73,17.97 10.7,15.97 C9.97,14.54 8.89,13.46 7.44,12.8 C6.06,12.17 4.91,12.13 3.33,12 C4.91,11.87 6.06,11.83 7.44,11.2 C8.89,10.54 9.97,9.46 10.7,8.03 C11.73,6.03 11.79,4.07 12,1.5Z"/><circle fill="#000" cx="20" cy="20" r="3.2"/></svg>`))
-	trayStarHollow = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="none" stroke="#000" stroke-width="1.6" stroke-linejoin="round" d="M12,2.3 C12.4,5.14 13.13,6.98 14.72,8.86 C16.14,10.54 17.84,11.67 20.2,12 C17.84,12.33 16.14,13.46 14.72,15.14 C13.13,17.02 12.4,18.86 12,21.7 C11.6,18.86 10.87,17.02 9.28,15.14 C7.86,13.46 6.16,12.33 3.8,12 C6.16,11.67 7.86,10.54 9.28,8.86 C10.87,6.98 11.6,5.14 12,2.3Z"/></svg>`))
+	trayStarDot    = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18"><defs><mask id="m" maskUnits="userSpaceOnUse" x="0" y="0" width="18" height="18"><rect width="18" height="18" fill="#fff"/><circle cx="15" cy="15" r="3.5" fill="#000"/></mask></defs><path fill="#000" fill-rule="evenodd" mask="url(#m)" d="M7.23,2.5A1.77,1.77 0 0 1 10.77,2.5A5.2,5.2 0 0 0 14.56,7.29A1.77,1.77 0 0 1 14.56,10.71A5.2,5.2 0 0 0 10.77,15.5A1.77,1.77 0 0 1 7.23,15.5A5.2,5.2 0 0 0 3.44,10.71A1.77,1.77 0 0 1 3.44,7.29A5.2,5.2 0 0 0 7.23,2.5ZM7,8H7A1,1 0 0 1 8,9V10A1,1 0 0 1 7,11H7A1,1 0 0 1 6,10V9A1,1 0 0 1 7,8ZM11,8H11A1,1 0 0 1 12,9V10A1,1 0 0 1 11,11H11A1,1 0 0 1 10,10V9A1,1 0 0 1 11,8Z"/><circle fill="#000" cx="15" cy="15" r="2.5"/></svg>`))
+	trayStarHollow = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18"><path fill="#000" fill-opacity="0.5" fill-rule="evenodd" d="M7.23,2.5A1.77,1.77 0 0 1 10.77,2.5A5.2,5.2 0 0 0 14.56,7.29A1.77,1.77 0 0 1 14.56,10.71A5.2,5.2 0 0 0 10.77,15.5A1.77,1.77 0 0 1 7.23,15.5A5.2,5.2 0 0 0 3.44,10.71A1.77,1.77 0 0 1 3.44,7.29A5.2,5.2 0 0 0 7.23,2.5ZM6,10H8V11H6ZM10,10H12V11H10Z"/></svg>`))
 )
 
 // trayGlyph draws the menu bar's mark for state ("solid", "dot" or

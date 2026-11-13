@@ -147,6 +147,24 @@ func (s *deskScreen) screenInk(p *palette) ui.Color {
 	return white
 }
 
+// trayMarkImages are the bar's colour marks, decoded once.
+var trayMarkImages = map[string]ui.ImageSource{}
+
+// trayMarkImage returns the colour mark of state st as system goos shows it
+// on a dark or light bar, at 2x.
+func trayMarkImage(goos, st string, dark bool) ui.ImageSource {
+	k := fmt.Sprint(goos, st, dark)
+	if img, ok := trayMarkImages[k]; ok {
+		return img
+	}
+	img, err := ui.DecodeImage(trayIconFor(goos, st, dark, 2))
+	if err != nil {
+		panic(err)
+	}
+	trayMarkImages[k] = img
+	return img
+}
+
 func (s *deskScreen) view(c *ui.Context) {
 	a := s.a
 	a.drain(c)
@@ -200,7 +218,9 @@ func (s *deskScreen) view(c *ui.Context) {
 }
 
 // star is Deneb's mark in the bar, a button: the pointer on it lights it
-// up; a click does what the system lets it.
+// up; a click does what the system lets it. The mark is the one the system
+// gets (trayIconFor): in colour, the taskbar's mode's, the 32 pixels of a
+// 2x display at 16 points, as the frames are drawn.
 func (s *deskScreen) star(c *ui.Context, p *palette, size float32) {
 	ink := s.screenInk(p)
 	b := ui.ButtonBase(c.Key("star")).Size(size, size).Radius(4).Center().FocusRing(false).Label("Deneb")
@@ -208,7 +228,8 @@ func (s *deskScreen) star(c *ui.Context, p *palette, size float32) {
 		b.Background(ink.Alpha(0.1))
 	}
 	b.Transition(ui.ElementTransition{Duration: 100 * time.Millisecond, Colors: true})
-	b.Children(func() { trayGlyph(c, trayState(s.a.snap, c.Now()), ink) })
+	mark := trayMarkImage(s.os, trayState(s.a.snap, c.Now()), p.dark)
+	b.Children(func() { ui.Image(c, mark).Size(16, 16) })
 	if r := b.Bounds(); r.W > 0 {
 		s.icon = r
 	}
