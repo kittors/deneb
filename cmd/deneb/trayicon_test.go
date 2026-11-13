@@ -76,7 +76,9 @@ func TestTrayGlyphs(t *testing.T) {
 	}
 	for _, st := range trayStates {
 		tt := ui.NewTester(func(c *ui.Context) {
-			ui.Box(c).Fill().Center().Children(func() { ui.Icon(c, map[string]*ui.SVG{"solid": starGlyph, "dot": trayStarDot, "hollow": trayStarHollow}[st]).Size(18, 18).TextColor(black) })
+			ui.Box(c).Fill().Center().Children(func() {
+				ui.Icon(c, map[string]*ui.SVG{"solid": starGlyph, "dot": trayStarDot, "hollow": trayStarHollow}[st]).Size(18, 18).TextColor(black)
+			})
 		}, 18, 18)
 		tt.SetScale(2)
 		tt.Frame()
