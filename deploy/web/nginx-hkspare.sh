@@ -1,8 +1,9 @@
 #!/bin/sh
 # Puts the Web version's site into hk-spare's nginx, or takes it out: one
 # file in /etc/nginx/conf.d/ (NGINX_CONF, by default zz-<WEB_HOST>.conf),
-# made from nginx.conf.template. No other file is touched, and a file of
-# that name that this script did not make is left alone. nginx -t must pass
+# made from nginx.conf.template, and the directory its /download/ serves
+# (DOWNLOAD_DIR), made empty if it is not there. No other file is touched,
+# and a file of that name that this script did not make is left alone. nginx -t must pass
 # before nginx reloads, which is graceful: no connection to any other site
 # drops. If it fails, the file goes back to what it was and nginx is not
 # reloaded.
@@ -25,6 +26,9 @@ case $SITE in /*) ;; *) SITE=./$SITE ;; esac
 : "${WEB_HOST:?in $SITE}" "${WEB_PORT:?in $SITE}" "${NGINX_LISTEN_80:?in $SITE}" "${NGINX_LISTEN_443:?in $SITE}"
 NGINX_CONF=${NGINX_CONF:-zz-$WEB_HOST.conf}
 CONF=/etc/nginx/conf.d/$NGINX_CONF
+# Where the installers are, the site's /download/ (publish-downloads.sh puts
+# them there); install makes the directory if it is not there yet.
+DOWNLOAD_DIR=${DOWNLOAD_DIR:-/srv/deneb-web/download}
 MARK='# deneb-web: made by deploy/web/nginx-hkspare.sh'
 
 # listens turns a ;-separated list into one "listen …;" line each.
@@ -36,10 +40,10 @@ listens() {
 }
 
 render() {
-	L80=$(listens "$NGINX_LISTEN_80") L443=$(listens "$NGINX_LISTEN_443") H=$WEB_HOST P=$WEB_PORT awk '
+	L80=$(listens "$NGINX_LISTEN_80") L443=$(listens "$NGINX_LISTEN_443") H=$WEB_HOST P=$WEB_PORT D=$DOWNLOAD_DIR awk '
 		/@LISTEN_80@/ { print ENVIRON["L80"]; next }
 		/@LISTEN_443@/ { print ENVIRON["L443"]; next }
-		{ gsub(/@WEB_HOST@/, ENVIRON["H"]); gsub(/@WEB_PORT@/, ENVIRON["P"]); print }' deploy/web/nginx.conf.template
+		{ gsub(/@WEB_HOST@/, ENVIRON["H"]); gsub(/@WEB_PORT@/, ENVIRON["P"]); gsub(/@DOWNLOAD_DIR@/, ENVIRON["D"]); print }' deploy/web/nginx.conf.template
 }
 
 case "${1:-}" in
@@ -54,9 +58,9 @@ install)
 	scp -q "$tmp" "$HOST:$new"
 	# ssh hands the remote shell one line to parse again: the mark, with its
 	# spaces and #, goes in single quotes or it is a comment there.
-	ssh "$HOST" sh -s -- "$new" "$CONF" "$WEB_HOST" "'$MARK'" "${NGINX_ORDER_CHECKED:-no}" <<'EOF'
+	ssh "$HOST" sh -s -- "$new" "$CONF" "$WEB_HOST" "'$MARK'" "${NGINX_ORDER_CHECKED:-no}" "$DOWNLOAD_DIR" <<'EOF'
 set -eu
-new=$1 conf=$2 host=$3 mark=$4 checked=$5
+new=$1 conf=$2 host=$3 mark=$4 checked=$5 downloads=$6
 trap 'rm -f "$new"' EXIT
 if [ -e "$conf" ] && ! grep -qF "$mark" "$conf"; then
 	echo "$conf is there and not ours: nothing done"; exit 1
@@ -82,6 +86,7 @@ if [ "$checked" != yes ]; then
 		echo "a site in sites-enabled listens without default_server: $conf, read before it, could become its default. Look, then NGINX_ORDER_CHECKED=yes"; exit 1
 	fi
 fi
+[ -d "$downloads" ] || install -d -m 0755 "$downloads"
 old=
 if [ -e "$conf" ]; then old=$(mktemp); cp -p "$conf" "$old"; fi
 install -m 0644 "$new" "$conf"

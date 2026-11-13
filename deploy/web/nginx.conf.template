@@ -25,6 +25,17 @@ server {
 	error_log /var/log/nginx/deneb-web.error.log crit;
 	client_max_body_size 1m;
 
+	# The installers, which deploy/web/publish-downloads.sh puts in
+	# @DOWNLOAD_DIR@: nginx sends them itself, ranges and all, so a
+	# download that breaks can go on. The names stay the same from version
+	# to version (Deneb.dmg, …), so a browser asks again each time.
+	location /download/ {
+		alias @DOWNLOAD_DIR@/;
+		default_type application/octet-stream;
+		add_header Cache-Control "no-cache" always;
+		add_header X-Content-Type-Options "nosniff" always;
+	}
+
 	location / {
 		proxy_pass http://127.0.0.1:@WEB_PORT@;
 		proxy_http_version 1.1;
