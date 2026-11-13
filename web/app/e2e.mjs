@@ -52,9 +52,9 @@ const click = (b, sel) => b.ev(`document.querySelector(${JSON.stringify(sel)}).c
   await click(b, '.jc-form button');
 
   check(await until(b, `document.querySelectorAll('input.cb').length === 6`), 'six code boxes');
-  check((await text(b, '.jc-sub')).includes('l***@gmail.com'), 'masked email');
+  check((await text(b, '.jc-sub')).includes('leo.chen@gmail.com'), 'the code step names the email');
   await type(b, 'input.cb', '123456');
-  check(await until(b, `(document.querySelector('.jc-error') || {}).textContent === '不对，再看看邮件'`), 'a wrong code says so');
+  check(await until(b, `(document.querySelector('.jc-error') || {}).textContent === '验证码不对，再看一眼'`), 'a wrong code says so');
   check(await b.ev(`[...document.querySelectorAll('input.cb')].every((x) => !x.value)`), 'the boxes empty');
   await sleep(500);
   await b.shot(`${out}/3-wrong-code-${theme}.png`);
@@ -73,7 +73,7 @@ const click = (b, sel) => b.ev(`document.querySelector(${JSON.stringify(sel)}).c
   await b.ev(`document.querySelector('a.dl-btn').addEventListener('click', (e) => e.preventDefault())`);
   await click(b, 'a.dl-btn');
   check(await until(b, `!!document.querySelector('.dl-after')`), 'after the download: where to look');
-  check((await text(b, '.dl-after')).includes('l***@gmail.com'), 'with the email to log in with');
+  check((await text(b, '.dl-after')).includes('l•••@gmail.com'), 'with the email to log in with');
   await b.shot(`${out}/6-downloading-${theme}.png`);
 
   // Deneb installed and logged in on this computer: the stream brings it.

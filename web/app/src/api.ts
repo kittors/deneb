@@ -2,7 +2,7 @@
 // origin (deneb-web passes it on). The session is a cookie the browser
 // keeps; every write is JSON, which the server's cross-site check expects.
 import { Paths } from './model.ts';
-import type { ErrorBody, ErrorCode, InvitePreview, OpArgs, OpResult, OpType, RelayUsage, StreamFrame, UserView, WebLoginResult, OperatorUsage } from './model.ts';
+import type { ErrorBody, ErrorCode, InvitePreview, OpArgs, OpResult, OpType, RelayUsage, StreamFrame, UserView, WebLoginLinkInfo, WebLoginResult, OperatorUsage } from './model.ts';
 
 // ApiError is an answer the server refused, with its code and its words
 // for people ("已经有了", "6 个位置都用上了").
@@ -62,6 +62,10 @@ function opID(): string {
 export const api = {
   loginEmail: (email: string) => call<WebLoginResult>('POST', Paths.loginEmail, { email }),
   loginCode: (email: string, code: string) => call<WebLoginResult>('POST', Paths.loginCode, { email, code }),
+  // The link in the code's mail (login-link.md): what it logs in as, using
+  // nothing up; then the login, which uses it and the code.
+  loginLinkInfo: (token: string) => call<WebLoginLinkInfo>('POST', Paths.loginLinkInfo, { token }),
+  loginLink: (token: string) => call<WebLoginResult>('POST', Paths.loginLink, { token }),
   logout: () => call<unknown>('POST', Paths.logout),
   // invite tells what a link is for, logged in or not.
   invite: (token: string) => call<InvitePreview>('GET', Paths.invites + encodeURIComponent(token)),

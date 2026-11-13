@@ -350,7 +350,10 @@ func (m *mock) view(me proto.PersonID) *proto.UserView {
 		if !l.joined(me) {
 			continue
 		}
-		lv := proto.LANView{ID: l.id, Name: l.name, Owner: l.owner, CreatedAt: l.created, Mode: l.mode, Relays: m.relayList(l), AddedRelays: slices.Clone(l.added)}
+		lv := proto.LANView{ID: l.id, Name: l.name, Owner: l.owner, CreatedAt: l.created, Mode: l.mode, Relays: m.relayList(l), AddedRelays: slices.Clone(l.added),
+			// Empty lists, never null, as the control server sends them (a LAN
+			// made in a browser has no device yet).
+			Members: []proto.Member{}, Devices: []proto.LANDevice{}}
 		if l.mode == proto.LANModeShare && l.owner != me {
 			// A member of a device-sharing LAN sees its name, its owner
 			// and themself; the devices come as shares.
@@ -798,6 +801,12 @@ func (m *mock) apply(me proto.PersonID, op proto.Op) (*proto.OpOutput, *opError)
 		if !found {
 			return nil, fail(404, proto.ErrNotFound, "没有这次踢人")
 		}
+	case proto.OpLANCreate:
+		id, e := m.createLAN(me, a.Name)
+		if e != nil {
+			return nil, e
+		}
+		out.LAN = id
 	case proto.OpDeviceDelete:
 		if e := m.deleteDevice(me, a.Device); e != nil {
 			return nil, e

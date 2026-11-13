@@ -2,7 +2,7 @@
 // origin (deneb-web passes it on). The session is a cookie the browser
 // keeps; every write is JSON, which the server's cross-site check expects.
 import { Paths } from './model.js';
-                                                                                                                                                                  
+                                                                                                                                                                                    
 
 // ApiError is an answer the server refused, with its code and its words
 // for people ("已经有了", "6 个位置都用上了").
@@ -62,6 +62,10 @@ function opID()         {
 export const api = {
   loginEmail: (email        ) => call                ('POST', Paths.loginEmail, { email }),
   loginCode: (email        , code        ) => call                ('POST', Paths.loginCode, { email, code }),
+  // The link in the code's mail (login-link.md): what it logs in as, using
+  // nothing up; then the login, which uses it and the code.
+  loginLinkInfo: (token        ) => call                  ('POST', Paths.loginLinkInfo, { token }),
+  loginLink: (token        ) => call                ('POST', Paths.loginLink, { token }),
   logout: () => call         ('POST', Paths.logout),
   // invite tells what a link is for, logged in or not.
   invite: (token        ) => call               ('GET', Paths.invites + encodeURIComponent(token)),

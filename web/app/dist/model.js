@@ -395,6 +395,15 @@
                         
                    
                     
+                                                            
+                                                                    
+ 
+
+// What a login link would log in as (proto.WebLoginLinkInfo): the email,
+// and until when the link works.
+                                   
+                  
+                    
  
 
 // The Web API's paths (proto/web.go).
@@ -407,6 +416,8 @@ export const Paths = {
   login: '/api/v1/login',
   loginEmail: '/api/v1/login/email',
   loginCode: '/api/v1/login/code',
+  loginLinkInfo: '/api/v1/login/link/info',
+  loginLink: '/api/v1/login/link',
   invites: '/api/v1/invites/',
   logout: '/api/v1/logout',
   userView: '/api/v1/userview',

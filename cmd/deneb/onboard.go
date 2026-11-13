@@ -225,7 +225,9 @@ func (a *app) onboardSignIn(c *ui.Context, p *palette, now time.Time) {
 // under them.
 func (a *app) onboardCode(c *ui.Context, p *palette, now time.Time) {
 	o := a.onboard
-	ui.Text(c, "验证码发到了 "+maskEmail(o.email)).FontSize(13).FontWeight(500)
+	// The whole email (DESIGN §14.14): the one who typed it sees where the
+	// code went, and a letter typed wrong.
+	ui.Text(c, "验证码发到了 "+o.email).FontSize(13).FontWeight(500)
 	// The six boxes show the code; a field out of sight takes the keys.
 	digits := []rune(o.code)
 	if len(digits) > 6 {
@@ -574,17 +576,6 @@ func checkMark(c *ui.Context, col ui.Color, size float32) ui.Element {
 		pt.StrokePath(&path, max(1.6, r.W*0.13), col)
 	})
 	return b
-}
-
-// maskEmail shows an email as the code went to it, its name but the first
-// letter hidden: k•••@gmail.com.
-func maskEmail(email string) string {
-	at := strings.Index(email, "@")
-	if at < 1 {
-		return email
-	}
-	r := []rune(email[:at])
-	return string(r[0]) + "•••" + email[at:]
 }
 
 // onlyDigits keeps the digits of s, at most n.

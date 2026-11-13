@@ -9,6 +9,7 @@ import { lanPage } from './lan.ts';
 import { minePage } from './mine.ts';
 import { sharedPage } from './shared.ts';
 import { operatePage } from './operate.ts';
+import { welcomePage } from './welcome.ts';
 
 registerPage('share', sharePage);
 registerPage('relays', relaysPage);
@@ -16,3 +17,4 @@ registerPage('lan', lanPage);
 registerPage('mine', minePage);
 registerPage('shared', sharedPage);
 registerPage('ops', operatePage);
+registerPage('home', welcomePage);

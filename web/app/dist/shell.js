@@ -215,7 +215,10 @@ function side(v          , sel        , ctx     )       {
   // the invite again (§6.7 "收到的邀请").
   const invs = (v.invitations || []).filter((i) => i.state === 'pending');
   const invRow = (i               ) => row('invitation:' + i.invite, `${i.inviter.displayName || i.inviter.name}邀请你 · ${i.lanName}`, `<span class="dots">${App.dot(P[i.inviter.id]?.c || tokens.color.owners[1])}</span>`, '', 'wait');
-  let html = lans.length || invs.length ? `<div class="group">局域网</div>` + lans.map(lanRow).join('') + invs.map(invRow).join('') + `<div class="gap"></div>` : '';
+  // 新建局域网 (§14.14), as the desktop's: the row turns into a field for
+  // the name in place; Enter makes it.
+  const newRow = `<div class="nav new-lan" role="button" tabindex="0">${G.ui('plus', 18)}<span class="nav-label">新建局域网</span></div>`;
+  let html = `<div class="group">局域网</div>` + lans.map(lanRow).join('') + invs.map(invRow).join('') + newRow + `<div class="gap"></div>`;
   html += `<div class="group">设备</div>` + row('mine', '我的设备', G.ui('home', 18), count(v.devices.filter((d) => d.owner === v.me && !d.publicLAN && !deletingDevs.has(d.id)).length));
   html += row('shared', '共享给我', G.ui('inbox', 18), count(shared)) + row('relays', '中转站', G.ui('relayLine', 18));
   for (const l of listedLANs(v).filter((x) => x.owner === v.me)) html += `<div class="gap"></div><div class="group">${esc(spaced('管理' + l.name))}</div>` + row('share:' + l.id, '设备共享', G.ui('share', 18));
@@ -223,6 +226,9 @@ function side(v          , sel        , ctx     )       {
   if (v.operator) html += `<div class="gap"></div><div class="group">部署</div>` + row('ops', '运营', G.ui('ops', 18));
   const list = app.win.querySelector('.side-list');
   list.innerHTML = html;
+  const nl = list.querySelector('.new-lan')               ;
+  nl.addEventListener('click', () => naming(nl, ctx));
+  nl.addEventListener('keydown', (e       ) => ((e                 ).key === 'Enter' && !nl.classList.contains('naming') ? naming(nl, ctx) : undefined));
   for (const nav of list.querySelectorAll('.nav[data-id]')) {
     const go = () => {
       const id = (nav               ).dataset.id          ;
@@ -233,6 +239,64 @@ function side(v          , sel        , ctx     )       {
     nav.addEventListener('click', go);
     nav.addEventListener('keydown', (e       ) => ((e                 ).key === 'Enter' ? go() : undefined));
   }
+}
+
+// naming is 新建局域网's row as a field for the name (§14.14, the desktop's
+// views.go): Enter, or leaving it with a name, makes the LAN, which the
+// canvas shows as soon as the view has it; Esc, or leaving it empty, puts
+// the row back.
+function naming(row             , ctx     )       {
+  if (row.classList.contains('naming')) return;
+  row.classList.add('naming');
+  row.removeAttribute('role');
+  row.innerHTML = `${G.ui('plus', 18)}<input class="nl-input" type="text" maxlength="40" placeholder="给局域网起个名字" aria-label="给局域网起个名字" />`;
+  const input = row.querySelector('input')                    ;
+  input.focus();
+  let busy = false;
+  const back = () => current && side(ctx.view(), current.sel, ctx);
+  const make = async () => {
+    const name = input.value.trim();
+    if (!name) return back();
+    if (busy) return;
+    busy = true;
+    input.disabled = true;
+    try {
+      const r = await ctx.op('lan.create', { name });
+      const id = r.result?.lan;
+      if (!id) return back();
+      // From the first page (welcome.ts): its cards fade out first.
+      const go = () => {
+        const w = document.querySelector('.welcome')                      ;
+        const on = () => ctx.go('/lan/' + encodeURIComponent(id));
+        if (!w) return on();
+        w.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140, easing: 'ease-in', fill: 'forwards' }).finished.then(on, on);
+      };
+      if (ctx.view().lans.some((l) => l.id === id)) return go();
+      const stop = ctx.onView((v) => {
+        if (v.lans.some((l) => l.id === id)) {
+          stop();
+          go();
+        }
+      });
+    } catch (e) {
+      busy = false;
+      input.disabled = false;
+      input.focus();
+      app.toast(e instanceof ApiError ? e.message : '没能建好，再试一次', {});
+    }
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      void make();
+    } else if (e.key === 'Escape') back();
+  });
+  input.addEventListener('blur', () => {
+    if (busy) return;
+    if (input.value.trim()) void make();
+    else back();
+  });
+  input.addEventListener('click', (e) => e.stopPropagation());
 }
 
 // Shares I let go of (共享给我's 不要了) whose undo is still up: off the page

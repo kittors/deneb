@@ -2839,7 +2839,9 @@ body {
   height: 100%;
 }
 body {
-  background: var(--well);
+  /* The login page's own: it fades out to it, and the page that comes
+     fades in over it (§14.14). Every other page covers it. */
+  background: var(--bg);
   color: var(--ink);
   font: var(--font-size, 13px) / 1.4 -apple-system, 'SF Pro Text', 'PingFang SC', 'Microsoft YaHei UI', 'Noto Sans SC', sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -2859,6 +2861,7 @@ body {
 
 /* Pill buttons and glossy balls, as the desktop's. */
 .join-page .btn,
+.signin-page .btn,
 .dl-card .btn,
 .m-dock .btn {
   display: inline-flex;
@@ -2877,11 +2880,13 @@ body {
   transition: transform 0.18s cubic-bezier(0.3, 1.5, 0.5, 1), background 0.16s, box-shadow 0.16s, opacity 0.16s;
 }
 .join-page .btn:active,
+.signin-page .btn:active,
 .dl-card .btn:active,
 .m-dock .btn:active {
   transform: scale(0.96);
 }
 .join-page .btn.primary,
+.signin-page .btn.primary,
 .dl-card .btn.primary,
 .m-dock .btn.primary {
   color: #fff;
@@ -2889,11 +2894,13 @@ body {
   box-shadow: 0 1px 2px rgba(47, 107, 255, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.18);
 }
 .join-page .btn.primary:hover,
+.signin-page .btn.primary:hover,
 .dl-card .btn.primary:hover,
 .m-dock .btn.primary:hover {
   background: var(--primary-2);
 }
-.join-page .btn:disabled {
+.join-page .btn:disabled,
+.signin-page .btn:disabled {
   opacity: 0.45;
   cursor: default;
   transform: none;
@@ -2904,6 +2911,7 @@ body {
   box-shadow: inset 0 0 0 1px var(--line-2);
 }
 .join-page :focus-visible,
+.signin-page :focus-visible,
 .dl-card :focus-visible,
 .m-dock :focus-visible {
   outline: 2px solid var(--primary);
@@ -3023,10 +3031,95 @@ body {
   min-height: 0;
   margin: 8px 0 0 58px;
   font-size: 12px;
+  color: #ef4444;
+}
+.jc-error.ok {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ok);
+  font-weight: 500;
+}
+.jc-error.tip {
+  color: var(--ink-3);
+}
+.jc-error.wait {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   color: var(--ink-2);
+}
+.signin .jc-error.wait {
+  justify-content: center;
 }
 .jc-error:empty {
   display: none;
+}
+.code-boxes.checking .cb {
+  opacity: 0.6;
+  transition: opacity 0.16s ease-out;
+}
+.jc-hint {
+  margin: 10px 0 0 58px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.jc-hint:empty {
+  display: none;
+}
+.jc-hint .link {
+  margin-left: 0;
+}
+.jc-hint.bad {
+  color: #ef4444;
+}
+.join-page .link,
+.signin-page .link {
+  border: 0;
+  padding: 0;
+  margin-left: 4px;
+  background: none;
+  font: inherit;
+  color: var(--primary);
+  cursor: pointer;
+}
+.join-page .link:hover,
+.signin-page .link:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.code-boxes.ok .cb,
+.code-boxes.ok .cb.at,
+.code-boxes.ok .cb:focus {
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--ok) 70%, transparent);
+}
+/* The button's spinner while the code goes out. */
+.spin {
+  width: 14px;
+  height: 14px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  animation: spin 0.8s linear infinite;
+}
+.spin.grey {
+  width: 12px;
+  height: 12px;
+  border-width: 1.6px;
+  border-color: color-mix(in srgb, var(--ink-3) 45%, transparent);
+  border-top-color: var(--ink-2);
+}
+.jc-hint .spin.grey {
+  display: inline-block;
+  vertical-align: -2px;
+  margin-right: 5px;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 .join-note {
   max-width: 440px;
@@ -3065,7 +3158,8 @@ body {
 .field input::placeholder {
   color: var(--ink-3);
 }
-.join-page .field :focus-visible {
+.join-page .field :focus-visible,
+.signin-page .field :focus-visible {
   outline: 0;
 }
 .code-boxes {
@@ -3233,7 +3327,8 @@ body {
   }
   .field,
   .code-boxes,
-  .jc-error {
+  .jc-error,
+  .jc-hint {
     margin-left: 0;
   }
   .jc-foot .hint {
@@ -3310,6 +3405,204 @@ body {
 }
 .jc-stack .ball:first-child {
   margin-left: 0;
+}
+
+/* ---- The login page (§14.14): a column in the middle, as the desktop's
+   sign-in (§7.3); the app's icon over it, its sky's light round it. ---- */
+.signin-page {
+  position: relative;
+  min-height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: max(64px, 16vh) 24px 96px;
+  background: var(--bg);
+  overflow: hidden;
+}
+.signin-page::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: calc(max(64px, 16vh) - 170px);
+  width: 640px;
+  height: 400px;
+  transform: translateX(-50%);
+  background: radial-gradient(closest-side, rgba(79, 134, 255, 0.13), rgba(79, 134, 255, 0.05) 55%, transparent);
+  pointer-events: none;
+}
+[data-theme='dark'] .signin-page::before {
+  background: radial-gradient(closest-side, rgba(79, 134, 255, 0.2), rgba(79, 134, 255, 0.07) 55%, transparent);
+}
+.signin-page .brand {
+  position: absolute;
+  left: 28px;
+  top: 22px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.signin-page .brand svg {
+  color: var(--primary);
+}
+.signin {
+  position: relative;
+  width: 360px;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+.si-icon {
+  width: 84px;
+  height: 84px;
+  margin-bottom: 18px;
+}
+.si-icon img,
+.wc-icon img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+}
+.si-step {
+  position: relative;
+  width: 100%;
+}
+.si-out {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  pointer-events: none;
+}
+.si-title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: 0.2px;
+}
+.si-sub {
+  margin: 8px 0 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.signin .field {
+  height: 48px;
+  margin: 28px 0 0;
+  padding: 0 16px;
+  border-radius: 12px;
+}
+.signin .field input {
+  font-size: 15px;
+  text-align: left;
+}
+.signin .jc-error {
+  margin: 10px 0 0;
+  justify-content: center;
+  font-size: 13px;
+}
+.signin .jc-hint {
+  margin: 14px 0 0;
+  font-size: 13px;
+}
+.signin .jc-foot {
+  margin-top: 12px;
+}
+.signin .btn.primary {
+  width: 100%;
+  height: 48px;
+  font-size: 15px;
+  font-weight: 600;
+  gap: 8px;
+}
+.signin .btn.primary:disabled {
+  opacity: 0.4;
+}
+.signin .btn.primary.sending:disabled,
+.join-page .btn.primary.sending:disabled {
+  opacity: 1;
+  cursor: progress;
+}
+/* The login link's page (login-link.md): the question, then the button,
+   which ticks once in. */
+.signin .ll-foot {
+  margin-top: 28px;
+}
+.signin .btn.primary.done:disabled {
+  cursor: default;
+}
+.signin .ll-wait {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 0;
+}
+.signin .code-boxes {
+  justify-content: center;
+  gap: 10px;
+  margin: 28px 0 0;
+}
+.signin .code-boxes .cb {
+  width: 48px;
+  height: 56px;
+  font-size: 22px;
+}
+.signin .join-gone {
+  margin: -8px 0 18px;
+}
+.si-foot {
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  bottom: 28px;
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 13px;
+  color: var(--ink-3);
+  text-align: center;
+}
+.si-foot a {
+  color: var(--ink-2);
+  text-decoration: none;
+}
+.si-foot a:hover {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+@media (max-width: 767px) {
+  .signin-page {
+    padding-top: 64px;
+  }
+  /* The icon is the mark here: none in the corner over it. */
+  .signin-page .brand {
+    display: none;
+  }
+  .si-icon {
+    width: 72px;
+    height: 72px;
+    margin-bottom: 16px;
+  }
+  .signin .code-boxes {
+    gap: 8px;
+  }
+  .signin .code-boxes .cb {
+    width: 44px;
+    height: 54px;
+  }
+  .si-foot {
+    position: static;
+    margin-top: 48px;
+  }
 }
 
 /* phone.css */
@@ -3977,4 +4270,359 @@ body {
   color: var(--ink);
   cursor: default;
   transform: none;
+}
+
+/* welcome.css */
+/* A new account's first page (DESIGN.md §14.14): two cards in the middle
+   of the canvas, as the device card draws one (white, rounded 16, a fine
+   line, a small shadow). */
+.welcome {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: max(40px, 9vh) 24px 64px;
+  box-sizing: border-box;
+}
+.wc-card {
+  width: 560px;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: 22px 24px 22px;
+  border-radius: 16px;
+  background: var(--bg);
+  box-shadow: 0 0 0 1px var(--line), 0 8px 24px rgba(9, 9, 11, 0.06), 0 1px 3px rgba(9, 9, 11, 0.04);
+}
+[data-theme='dark'] .wc-card {
+  background: var(--well);
+  box-shadow: 0 0 0 1px var(--line), 0 12px 30px rgba(0, 0, 0, 0.35);
+}
+.wc-top {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.wc-icon {
+  flex: none;
+  width: 46px;
+  height: 46px;
+  margin: -3px;
+}
+.wc-title {
+  flex: 1;
+  min-width: 0;
+}
+.wc-h {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.wc-sub {
+  margin: 3px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.wc-tick {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--ok);
+}
+.wc-devs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin: 14px 0 0 54px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.wc-dev {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.wc-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--offline-grey);
+}
+.wc-dot.on {
+  background: var(--ok);
+}
+.wc-done-words {
+  color: var(--ink-2);
+  font-weight: 400;
+}
+.wc-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin: 18px 0 0 54px;
+}
+.welcome .btn.wc-dl {
+  padding: 0 13px;
+}
+.welcome .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  transition: transform 0.18s cubic-bezier(0.3, 1.5, 0.5, 1), background 0.16s, box-shadow 0.16s, opacity 0.16s;
+}
+.welcome .btn:active {
+  transform: scale(0.96);
+}
+.welcome .btn.primary {
+  color: #fff;
+  background: var(--primary);
+  box-shadow: 0 1px 2px rgba(47, 107, 255, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+.welcome .btn.primary:hover {
+  background: var(--primary-2);
+}
+.welcome .btn.ghost {
+  color: var(--ink);
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+.welcome .btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  transform: none;
+}
+.wc-more {
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.wc-more:hover {
+  color: var(--ink-2);
+}
+.wc-after {
+  box-sizing: border-box;
+  overflow: hidden;
+  margin: 14px 0 0 54px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--well);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+[data-theme='dark'] .wc-after {
+  background: var(--well-2);
+}
+.wc-lan .wc-h {
+  margin-bottom: 14px;
+}
+.wc-ways {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.wc-way {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-height: 112px;
+  box-sizing: border-box;
+  padding: 16px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--well);
+  font: inherit;
+  text-align: left;
+  color: var(--ink);
+  cursor: pointer;
+  transition: box-shadow 0.16s ease-out, background-color 0.16s ease-out, transform 0.18s cubic-bezier(0.3, 1.5, 0.5, 1);
+}
+[data-theme='dark'] .wc-way {
+  background: var(--well-2);
+}
+.wc-way:hover {
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--primary) 55%, transparent);
+}
+.wc-way:active {
+  transform: scale(0.985);
+}
+.wc-way:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.wc-way b {
+  font-size: 14px;
+  font-weight: 600;
+}
+.wc-way-sub {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.wc-way-ico {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  margin-bottom: 6px;
+  border-radius: 10px;
+  color: var(--primary);
+  background: var(--bg);
+  box-shadow: 0 1px 2px rgba(9, 9, 11, 0.06);
+}
+.wc-way.busy {
+  cursor: progress;
+  opacity: 0.7;
+}
+.wc-way.open {
+  cursor: default;
+  justify-content: center;
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--primary) 55%, transparent);
+}
+.wc-way.open:active {
+  transform: none;
+}
+.wc-join {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+}
+.welcome .field {
+  display: flex;
+  align-items: center;
+  height: 40px;
+  margin: 0;
+  padding: 0 12px;
+  border-radius: 10px;
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  transition: box-shadow 0.16s ease-out;
+}
+.welcome .field:focus-within {
+  box-shadow: inset 0 0 0 1.5px var(--primary), 0 0 0 4px color-mix(in srgb, var(--primary) 14%, transparent);
+}
+.welcome .field input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  padding: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  caret-color: var(--primary);
+}
+.welcome .field input::placeholder {
+  color: var(--ink-3);
+}
+.wc-join .btn {
+  align-self: flex-end;
+}
+.wc-line {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: #ef4444;
+}
+.wc-line:empty {
+  display: none;
+}
+
+/* The phone's (§14.6): the cards one over the other, the dock below. */
+.m-welcome {
+  position: fixed;
+  inset: 0;
+  overflow: auto;
+  box-sizing: border-box;
+  padding: calc(28px + env(safe-area-inset-top)) 16px 120px;
+  background: var(--well);
+}
+[data-theme='dark'] .m-welcome .wc-card {
+  background: var(--bg);
+}
+.m-wc-head h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+}
+.m-wc-head p {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.welcome.phone {
+  position: static;
+  padding: 20px 0 0;
+  gap: 12px;
+}
+.welcome.phone .wc-card {
+  padding: 18px 16px;
+}
+.welcome.phone .wc-ways {
+  grid-template-columns: 1fr;
+}
+
+/* 新建局域网 in the sidebar (§14.14), as the desktop's: the plus in the
+   primary blue; naming, the row is white and lifted, a field for the name. */
+.side .nav.new-lan {
+  color: var(--ink-2);
+}
+.side .nav.new-lan svg {
+  color: var(--primary);
+}
+.side .nav.new-lan.naming {
+  color: var(--ink);
+  background: var(--bg);
+  box-shadow: 0 1px 2px rgba(9, 9, 11, 0.06), 0 1px 1px rgba(9, 9, 11, 0.04);
+  cursor: text;
+}
+[data-theme='dark'] .side .nav.new-lan.naming {
+  background: var(--well-2);
+}
+.nl-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  padding: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  caret-color: var(--primary);
+}
+.nl-input::placeholder {
+  color: var(--ink-3);
+  font-weight: 400;
 }

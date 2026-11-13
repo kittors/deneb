@@ -112,6 +112,16 @@ function launch() {
 }
 
 const { proc, ws } = await launch();
+// Whatever happens (a scene that throws, an error here), Chrome goes with
+// this process, and its profile with it.
+process.on('exit', () => {
+  try {
+    proc.kill();
+  } catch (_) {}
+  try {
+    rmSync(profile, { recursive: true, force: true });
+  } catch (_) {}
+});
 const cdp = new CDP(ws);
 await cdp.open();
 const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank' });
@@ -127,7 +137,13 @@ await S('Page.enable');
 await S('Runtime.enable');
 await S('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: scale, mobile: false });
 await S('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
-const url = isURL ? scene + (scene.includes('?') ? '&' : '?') + `record=1&theme=${theme}` : pathToFileURL(scene).href + `?record=1&theme=${theme}`;
+// The page's own parameters go before its #, which may carry a token.
+const withParams = (u) => {
+  const h = u.indexOf('#');
+  const head = h < 0 ? u : u.slice(0, h);
+  return head + (head.includes('?') ? '&' : '?') + `record=1&theme=${theme}` + (h < 0 ? '' : u.slice(h));
+};
+const url = isURL ? withParams(scene) : pathToFileURL(scene).href + `?record=1&theme=${theme}`;
 const login = opt('login', '');
 if (login && isURL) {
   const [email, code] = login.split(':');
@@ -135,6 +151,44 @@ if (login && isURL) {
   await S('Page.navigate', { url: new URL(scene).origin + '/login' });
   await first;
   await evaluate(`(async () => { const h = { 'Content-Type': 'application/json' }; await fetch('/api/v1/login/email', { method: 'POST', headers: h, body: JSON.stringify({ email: ${JSON.stringify(email)} }) }); const r = await fetch('/api/v1/login/code', { method: 'POST', headers: h, body: JSON.stringify({ email: ${JSON.stringify(email)}, code: ${JSON.stringify(code)} }) }); return r.status; })()`);
+}
+// (web) --latency ms: every request waits that long, as on a real network,
+// to see what the page says while it waits.
+const latency = Number(opt('latency', 0));
+if (latency) {
+  await S('Network.enable');
+  await S('Network.emulateNetworkConditions', { offline: false, latency, downloadThroughput: -1, uploadThroughput: -1 });
+}
+// (web) A window beside the recorded page, of the same browser (its
+// cookies, its BroadcastChannel), for what passes between pages: --side
+// <path> opens one before the recording, --side-js runs in it, and the
+// recording waits until --side-ready holds there; a scene's {tab: {open}}
+// opens one meanwhile, and its {tab: {js}} runs in it. Not recorded.
+let side = null;
+async function openSide(path) {
+  const { targetId: id } = await cdp.send('Target.createTarget', { url: new URL(path, scene).href, newWindow: true });
+  const { sessionId } = await cdp.send('Target.attachToTarget', { targetId: id, flatten: true });
+  side = { id, S: (m, p) => cdp.send(m, p, sessionId) };
+  await side.S('Runtime.enable');
+}
+async function sideEval(expression) {
+  const r = await side.S('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
+  if (r.exceptionDetails) throw new Error('side: ' + (r.exceptionDetails.exception?.description || r.exceptionDetails.text));
+  return r.result.value;
+}
+const sidePath = opt('side', '');
+if (sidePath && isURL) {
+  await openSide(sidePath);
+  for (let i = 0; i < 100 && !(await sideEval(`document.readyState === 'complete' && location.origin === ${JSON.stringify(new URL(scene).origin)}`).catch(() => false)); i++) await new Promise((r) => setTimeout(r, 50));
+  const js = opt('side-js', '');
+  if (js) await sideEval(js);
+  const ready = opt('side-ready', '');
+  let ok = !ready;
+  for (let i = 0; i < 200 && !ok; i++) {
+    ok = !!(await sideEval(ready).catch(() => false));
+    if (!ok) await new Promise((r) => setTimeout(r, 50));
+  }
+  if (!ok) throw new Error('the side window never got ready: ' + ready);
 }
 // (web) "复制" may write to the clipboard, as it does for a person.
 if (isURL) await cdp.send('Browser.grantPermissions', { permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'], origin: new URL(scene).origin }).catch(() => {});
@@ -170,6 +224,8 @@ for (const a of plan.actions) {
   if (a.up) steps.push({ at, run: () => press('mouseReleased') });
   if (a.key) steps.push({ at, run: () => key(a.key) });
   if (a.js) steps.push({ at, run: () => evaluate(a.js) });
+  if (a.tab?.open) steps.push({ at, run: () => openSide(a.tab.open) });
+  if (a.tab?.js) steps.push({ at, run: () => sideEval(a.tab.js) });
   // (web) post: a request from here, not from the page (whose CSP keeps it
   // to its own server): to a dev tool such as web/probe/devworld, with a
   // body the page makes (a JS expression evaluated in it).
@@ -251,6 +307,7 @@ try {
   if (trace && trace !== 'null') writeFileSync(join(outDir, 'trace.json'), trace);
 } catch (_) {}
 
+if (side) await cdp.send('Target.closeTarget', { targetId: side.id }).catch(() => {});
 await cdp.send('Target.closeTarget', { targetId }).catch(() => {});
 // Chrome keeps writing its profile until it exits; wait before removing it.
 await new Promise((r) => {
@@ -264,7 +321,7 @@ try {
 
 // ---- Video and contact sheet --------------------------------------------------------
 const mp4 = join(outDir, `${name}_${theme}.mp4`);
-execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-framerate', String(FPS), '-i', join(outDir, 'frames', '%05d.jpg'), '-vf', 'scale=1920:-2:flags=lanczos', '-c:v', 'libx264', '-preset', 'medium', '-crf', '18', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', mp4]);
+execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-framerate', String(FPS), '-i', join(outDir, 'frames', '%05d.jpg'), '-vf', 'scale=1920:-2:flags=lanczos', '-c:v', 'libx264', '-threads', '2', '-preset', 'medium', '-crf', '18', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', mp4]);
 
 const sheet = join(outDir, `${name}_${theme}_sheet.jpg`);
 const sheetStep = Math.max(STEP, (to - from) / Math.max(1, sheetN - 1));

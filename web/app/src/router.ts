@@ -2,6 +2,7 @@
 //
 //	/i/<token>, /join/<token>  an invite link (the server's links are /i/)
 //	/login                     log in
+//	/login/link#<token>        the link in the code's mail (login-link.md)
 //	/                          home: the first LAN, or log in
 //	/lan/<id>                  a LAN, without "this computer" (§14.4)
 //	/share/<lan>               scene 4's console: the studio's devices to members
@@ -12,6 +13,7 @@
 export type Route =
   | { page: 'join'; token: string }
   | { page: 'login'; next?: string }
+  | { page: 'loginLink' }
   | { page: 'home' }
   | { page: 'lan'; lan: string }
   | { page: 'share'; lan?: string }
@@ -31,6 +33,7 @@ export function parse(path: string, search = ''): Route {
     case 'join':
       return parts[1] ? { page: 'join', token: parts[1] } : { page: 'notFound', path };
     case 'login':
+      if (parts[1] === 'link' && !parts[2]) return { page: 'loginLink' };
       return { page: 'login', next: q.get('next') ?? undefined };
     case 'lan':
       return parts[1] ? { page: 'lan', lan: parts[1] } : { page: 'home' };

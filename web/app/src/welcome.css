@@ -1,0 +1,353 @@
+/* A new account's first page (DESIGN.md §14.14): two cards in the middle
+   of the canvas, as the device card draws one (white, rounded 16, a fine
+   line, a small shadow). */
+.welcome {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: max(40px, 9vh) 24px 64px;
+  box-sizing: border-box;
+}
+.wc-card {
+  width: 560px;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: 22px 24px 22px;
+  border-radius: 16px;
+  background: var(--bg);
+  box-shadow: 0 0 0 1px var(--line), 0 8px 24px rgba(9, 9, 11, 0.06), 0 1px 3px rgba(9, 9, 11, 0.04);
+}
+[data-theme='dark'] .wc-card {
+  background: var(--well);
+  box-shadow: 0 0 0 1px var(--line), 0 12px 30px rgba(0, 0, 0, 0.35);
+}
+.wc-top {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.wc-icon {
+  flex: none;
+  width: 46px;
+  height: 46px;
+  margin: -3px;
+}
+.wc-title {
+  flex: 1;
+  min-width: 0;
+}
+.wc-h {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.wc-sub {
+  margin: 3px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.wc-tick {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--ok);
+}
+.wc-devs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin: 14px 0 0 54px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.wc-dev {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.wc-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--offline-grey);
+}
+.wc-dot.on {
+  background: var(--ok);
+}
+.wc-done-words {
+  color: var(--ink-2);
+  font-weight: 400;
+}
+.wc-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin: 18px 0 0 54px;
+}
+.welcome .btn.wc-dl {
+  padding: 0 13px;
+}
+.welcome .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  transition: transform 0.18s cubic-bezier(0.3, 1.5, 0.5, 1), background 0.16s, box-shadow 0.16s, opacity 0.16s;
+}
+.welcome .btn:active {
+  transform: scale(0.96);
+}
+.welcome .btn.primary {
+  color: #fff;
+  background: var(--primary);
+  box-shadow: 0 1px 2px rgba(47, 107, 255, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+.welcome .btn.primary:hover {
+  background: var(--primary-2);
+}
+.welcome .btn.ghost {
+  color: var(--ink);
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+.welcome .btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  transform: none;
+}
+.wc-more {
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.wc-more:hover {
+  color: var(--ink-2);
+}
+.wc-after {
+  box-sizing: border-box;
+  overflow: hidden;
+  margin: 14px 0 0 54px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--well);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+[data-theme='dark'] .wc-after {
+  background: var(--well-2);
+}
+.wc-lan .wc-h {
+  margin-bottom: 14px;
+}
+.wc-ways {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.wc-way {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-height: 112px;
+  box-sizing: border-box;
+  padding: 16px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--well);
+  font: inherit;
+  text-align: left;
+  color: var(--ink);
+  cursor: pointer;
+  transition: box-shadow 0.16s ease-out, background-color 0.16s ease-out, transform 0.18s cubic-bezier(0.3, 1.5, 0.5, 1);
+}
+[data-theme='dark'] .wc-way {
+  background: var(--well-2);
+}
+.wc-way:hover {
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--primary) 55%, transparent);
+}
+.wc-way:active {
+  transform: scale(0.985);
+}
+.wc-way:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.wc-way b {
+  font-size: 14px;
+  font-weight: 600;
+}
+.wc-way-sub {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.wc-way-ico {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  margin-bottom: 6px;
+  border-radius: 10px;
+  color: var(--primary);
+  background: var(--bg);
+  box-shadow: 0 1px 2px rgba(9, 9, 11, 0.06);
+}
+.wc-way.busy {
+  cursor: progress;
+  opacity: 0.7;
+}
+.wc-way.open {
+  cursor: default;
+  justify-content: center;
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--primary) 55%, transparent);
+}
+.wc-way.open:active {
+  transform: none;
+}
+.wc-join {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+}
+.welcome .field {
+  display: flex;
+  align-items: center;
+  height: 40px;
+  margin: 0;
+  padding: 0 12px;
+  border-radius: 10px;
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  transition: box-shadow 0.16s ease-out;
+}
+.welcome .field:focus-within {
+  box-shadow: inset 0 0 0 1.5px var(--primary), 0 0 0 4px color-mix(in srgb, var(--primary) 14%, transparent);
+}
+.welcome .field input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  padding: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  caret-color: var(--primary);
+}
+.welcome .field input::placeholder {
+  color: var(--ink-3);
+}
+.wc-join .btn {
+  align-self: flex-end;
+}
+.wc-line {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: #ef4444;
+}
+.wc-line:empty {
+  display: none;
+}
+
+/* The phone's (§14.6): the cards one over the other, the dock below. */
+.m-welcome {
+  position: fixed;
+  inset: 0;
+  overflow: auto;
+  box-sizing: border-box;
+  padding: calc(28px + env(safe-area-inset-top)) 16px 120px;
+  background: var(--well);
+}
+[data-theme='dark'] .m-welcome .wc-card {
+  background: var(--bg);
+}
+.m-wc-head h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+}
+.m-wc-head p {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.welcome.phone {
+  position: static;
+  padding: 20px 0 0;
+  gap: 12px;
+}
+.welcome.phone .wc-card {
+  padding: 18px 16px;
+}
+.welcome.phone .wc-ways {
+  grid-template-columns: 1fr;
+}
+
+/* 新建局域网 in the sidebar (§14.14), as the desktop's: the plus in the
+   primary blue; naming, the row is white and lifted, a field for the name. */
+.side .nav.new-lan {
+  color: var(--ink-2);
+}
+.side .nav.new-lan svg {
+  color: var(--primary);
+}
+.side .nav.new-lan.naming {
+  color: var(--ink);
+  background: var(--bg);
+  box-shadow: 0 1px 2px rgba(9, 9, 11, 0.06), 0 1px 1px rgba(9, 9, 11, 0.04);
+  cursor: text;
+}
+[data-theme='dark'] .side .nav.new-lan.naming {
+  background: var(--well-2);
+}
+.nl-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  padding: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  caret-color: var(--primary);
+}
+.nl-input::placeholder {
+  color: var(--ink-3);
+  font-weight: 400;
+}

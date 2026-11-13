@@ -9,11 +9,11 @@ import { deletingAccount } from './account.js';
                                             
                                                                           
 import { listedLANs, sharedOnly } from './model.js';
-import { current, go, onRoute } from './router.js';
+import { current, go, onRoute, parse } from './router.js';
                                          
-import { mountJoin, mountLogin } from './join.js';
+import { mountJoin, mountLogin, mountLoginLink } from './join.js';
 import { detectPlatform, downloadCard, esc, phoneDock, pickExample, spaced } from './download.js';
-import { recording } from './clock.js';
+import { after, recording } from './clock.js';
 
 // ---- Theme: the system's, or ?theme= (the recorder sets it) -------------------------------
 const query = new URLSearchParams(location.search);
@@ -56,6 +56,9 @@ const viewFns = new Set                       ();
 const stateFns = new Set                          ();
 let email                    ;
 let justJoined                    ;
+// Signed in a moment ago: the page that comes fades in over the login
+// page's background (DESIGN §14.14).
+let signedIn = false;
 
 const phoneQuery = matchMedia('(max-width: 767px)');
 const ctx      = {
@@ -103,6 +106,27 @@ async function session()                           {
   return view;
 }
 
+// safeNext is where a login goes on to (DESIGN §14.14): a page of the app's
+// own, never the login page itself, an invite (which has its own way in) or
+// another site.
+export function safeNext(next         )         {
+  if (!next || !next.startsWith('/') || next.startsWith('//')) return '/';
+  const q = next.indexOf('?');
+  const page = parse(q < 0 ? next : next.slice(0, q), q < 0 ? '' : next.slice(q)).page;
+  return page === 'login' || page === 'loginLink' || page === 'join' || page === 'notFound' ? '/' : next;
+}
+
+// toLogin sends a visit without a session to the login page, to come back
+// to path after. Whoever finds the session gone first sends it, once: the
+// stream's 401 and a page's own check both can, and the second must not
+// send it from the login page to itself (it came back to /login).
+function toLogin(path        )       {
+  const here = current().page;
+  if (here === 'login' || here === 'loginLink' || here === 'join') return;
+  const back = safeNext(path);
+  go(back === '/' ? '/login' : '/login?next=' + encodeURIComponent(back), true);
+}
+
 whenLoggedOut(() => {
   stopStream?.();
   stopStream = null;
@@ -110,8 +134,7 @@ whenLoggedOut(() => {
   // The account just deleted: its page goes to the login itself, once it
   // faded (account.ts, DESIGN §6.15).
   if (deletingAccount()) return;
-  const r = current();
-  if (r.page !== 'join' && r.page !== 'login') go('/login?next=' + encodeURIComponent(location.pathname), true);
+  toLogin(location.pathname + location.search);
 });
 
 // ---- Pages ---------------------------------------------------------------------------------
@@ -124,7 +147,18 @@ async function render(r       )                {
   unmount?.();
   unmount = null;
   const mount = (fn                  ) => {
-    if (n === rendering) unmount = fn();
+    if (n !== rendering) return;
+    unmount = fn();
+    if (signedIn) {
+      // Hidden until the clock's next tick, then in: on the clock, as all
+      // that moves on the page (clock.ts).
+      signedIn = false;
+      root.style.opacity = '0';
+      after(0, () => {
+        root.style.opacity = '';
+        root.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 260, easing: 'ease-out' });
+      });
+    }
   };
   switch (r.page) {
     case 'join': {
@@ -144,15 +178,48 @@ async function render(r       )                {
         }),
       );
     }
-    case 'login':
-      return mount(() =>
+    case 'login': {
+      mount(() =>
         mountLogin(root, {
           next: r.next,
+          // Signed in: the view loads while the tick shows; then the login
+          // page fades out and the app comes in, with no blank between.
           onDone: async (_me, mail) => {
             email = mail;
             view = null;
             await session().catch(() => null);
-            go(r.next && r.next.startsWith('/') ? r.next : '/', true);
+            return () => {
+              signedIn = true;
+              go(safeNext(r.next), true);
+            };
+          },
+        }),
+      );
+      // Signed in already (another tab, a bookmark): on to where it goes.
+      session().then(
+        (v) => v && n === rendering && current().page === 'login' && go(safeNext(r.next), true),
+        () => {},
+      );
+      return;
+    }
+    case 'loginLink':
+      // The link in the code's mail (login-link.md): a click logs in, and
+      // on to the first page, as after the code.
+      return mount(() =>
+        mountLoginLink(root, {
+          session: () => session().then((v) => (v ? (v.people.find((p) => p.id === v.me)?.email ?? '') : null)),
+          enter: () => {
+            signedIn = true;
+            go('/', true);
+          },
+          onDone: async (_me, mail) => {
+            email = mail;
+            view = null;
+            await session().catch(() => null);
+            return () => {
+              signedIn = true;
+              go('/', true);
+            };
           },
         }),
       );
@@ -164,13 +231,19 @@ async function render(r       )                {
   } catch {
     return mount(() => message('连不上服务器', '检查一下网络，过一会儿刷新'));
   }
-  if (!v) return go('/login?next=' + encodeURIComponent(location.pathname), true);
+  if (!v) return toLogin(location.pathname + location.search);
   if (r.page === 'home') {
     const first = listedLANs(v)[0];
     if (first) return go('/lan/' + encodeURIComponent(first.id), true);
     // Only what others share with me (a studio's member): 共享给我.
     if (v.sharedWithMe?.length || v.lans.some((l) => sharedOnly(v , l))) return go('/shared', true);
-    return v.lans[0] ? go('/lan/' + encodeURIComponent(v.lans[0].id), true) : mount(() => message('你还没有局域网', '朋友发来的邀请链接，在这里打开就能加入'));
+    if (v.lans[0]) return go('/lan/' + encodeURIComponent(v.lans[0].id), true);
+    // No LAN yet: the first page, in the frame of every page (welcome.ts,
+    // DESIGN §14.14).
+    await pagesReady;
+    if (n !== rendering) return;
+    const welcome = pages.get('home');
+    return mount(() => (welcome ? welcome(root, ctx, r) : message('你还没有局域网', '朋友发来的邀请链接，在这里打开就能加入')));
   }
   if (r.page === 'notFound') return mount(() => message('没有这个页面', '回到首页看看'));
   // The canvas pages come with pages.ts; wait for it rather than flash the

@@ -59,7 +59,7 @@ func TestFirstRunLive(t *testing.T) {
 	r.tt.Type("mia@deneb.test")
 	r.settle(200 * time.Millisecond)
 	r.click("发验证码")
-	r.until("the code's boxes", func() bool { return r.tt.HasText("验证码发到了 m•••@deneb.test") })
+	r.until("the code's boxes", func() bool { return r.tt.HasText("验证码发到了 mia@deneb.test") })
 	if len(s.sent) != 1 || s.sent[0] != "mia@deneb.test" {
 		t.Errorf("codes sent to %v", s.sent)
 	}

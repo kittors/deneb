@@ -2,6 +2,7 @@
 // which the LAN page shows in the device card's place, and on a phone the
 // dock at the bottom (there is no Deneb for phones, §14.6).
 import { after } from './clock.ts';
+import { APP_ICON } from './icon-app.ts';
 
 // The few glyphs these pages draw, as the desktop's (design/demos/v3/glyphs.js).
 const UI: Record<string, string> = {
@@ -18,6 +19,13 @@ export function icon(k: string, size = 18): string {
 // the star, its vertical pair the longer, its eyes cut out, on 18 units.
 export function star(size = 18, color = 'currentColor'): string {
   return `<svg viewBox="0 0 18 18" width="${size}" height="${size}" aria-hidden="true"><path fill="${color}" fill-rule="evenodd" d="M7.23,2.5A1.77,1.77 0 0 1 10.77,2.5A5.2,5.2 0 0 0 14.56,7.29A1.77,1.77 0 0 1 14.56,10.71A5.2,5.2 0 0 0 10.77,15.5A1.77,1.77 0 0 1 7.23,15.5A5.2,5.2 0 0 0 3.44,10.71A1.77,1.77 0 0 1 3.44,7.29A5.2,5.2 0 0 0 7.23,2.5ZM7,8H7A1,1 0 0 1 8,9V10A1,1 0 0 1 7,11H7A1,1 0 0 1 6,10V9A1,1 0 0 1 7,8ZM11,8H11A1,1 0 0 1 12,9V10A1,1 0 0 1 11,11H11A1,1 0 0 1 10,10V9A1,1 0 0 1 11,8Z"/></svg>`;
+}
+
+// The app icon, as the Dock shows it (icon-app.ts: C 小星), for the login
+// page and a new account's first page. The picture has its own rounded
+// square and margin; the page only sizes it.
+export function appIcon(size = 64): string {
+  return `<img class="app-icon" src="${APP_ICON}" width="${size}" height="${size}" alt="" aria-hidden="true" draggable="false" />`;
 }
 
 export function esc(s: string): string {
@@ -71,10 +79,11 @@ export interface DownloadCardOptions {
   onClose?: () => void;
 }
 
-// maskEmail shows the first letter and the domain: l***@gmail.com.
+// maskEmail shows the first letter and the domain, as the desktop's
+// sign-in does: l•••@gmail.com.
 export function maskEmail(email: string): string {
   const at = email.indexOf('@');
-  return at > 0 ? email[0] + '***' + email.slice(at) : email;
+  return at > 0 ? email[0] + '•••' + email.slice(at) : email;
 }
 
 // downloadCard is the card's contents, in the device card's frame (the LAN

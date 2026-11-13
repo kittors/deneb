@@ -9,6 +9,7 @@ import { lanPage } from './lan.js';
 import { minePage } from './mine.js';
 import { sharedPage } from './shared.js';
 import { operatePage } from './operate.js';
+import { welcomePage } from './welcome.js';
 
 registerPage('share', sharePage);
 registerPage('relays', relaysPage);
@@ -16,3 +17,4 @@ registerPage('lan', lanPage);
 registerPage('mine', minePage);
 registerPage('shared', sharedPage);
 registerPage('ops', operatePage);
+registerPage('home', welcomePage);
