@@ -13,8 +13,9 @@ import (
 // lifted keep 30 days (the cards show the last 30 days of them); relay
 // usage keeps this month and the two before (the cards show this month);
 // a device logged out or run out keeps its row, so its owner gets the same
-// address back, but not the addresses and ports it reported. It runs once
-// a day, with the backup, and the log says only how many of each went.
+// address back, but not the addresses and ports it reported; the
+// operators' record keeps a year. It runs once a day, with the backup, and
+// the log says only how many of each went.
 
 // cleanupAfter is how long what is over stays.
 const cleanupAfter = 30 * 24 * time.Hour
@@ -24,11 +25,11 @@ const usageMonths = 3
 
 // cleaned is what one cleanup removed.
 type cleaned struct {
-	invites, shares, kicks, usage, addresses int64
+	invites, shares, kicks, usage, addresses, records int64
 }
 
 func (c cleaned) any() bool {
-	return c.invites+c.shares+c.kicks+c.usage+c.addresses > 0
+	return c.invites+c.shares+c.kicks+c.usage+c.addresses+c.records > 0
 }
 
 // cleanup removes what is over, as above, and logs how much.
@@ -107,8 +108,13 @@ func (s *Server) cleanup() (cleaned, error) {
 		return c, err
 	}
 	c.usage, _ = res.RowsAffected()
+	// The operators' record keeps a year (opsrecord.go).
+	if c.records, err = s.dropOldRecords(now); err != nil {
+		return c, err
+	}
 	if c.any() {
-		s.logf("cleanup: %d invites, %d shares, %d kicks, %d rows of relay usage, %d devices' addresses", c.invites, c.shares, c.kicks, c.usage, c.addresses)
+		s.logf("cleanup: %d invites, %d shares, %d kicks, %d rows of relay usage, %d devices' addresses, %d lines of the operators' record",
+			c.invites, c.shares, c.kicks, c.usage, c.addresses, c.records)
 	}
 	return c, nil
 }

@@ -22,6 +22,12 @@ func (m recMailer) SendCode(_ context.Context, to, code, link string) error {
 	return nil
 }
 
+// SendAccountDeleted keeps the notice as a mail with the code "deleted".
+func (m recMailer) SendAccountDeleted(_ context.Context, to string) error {
+	m <- [3]string{to, "deleted", ""}
+	return nil
+}
+
 func (m recMailer) next(t *testing.T) (code, link string) {
 	t.Helper()
 	select {

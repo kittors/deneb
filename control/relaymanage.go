@@ -171,7 +171,10 @@ func opRelaySetWeight(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
 	if c.w.weight(rl.ID) == *a.Weight {
 		return errNoChange
 	}
-	return c.exec(`UPDATE relays SET weight = ? WHERE id = ?`, *a.Weight, rl.ID)
+	if err := c.exec(`UPDATE relays SET weight = ? WHERE id = ?`, *a.Weight, rl.ID); err != nil {
+		return err
+	}
+	return c.recordOps(rl, "relay.setWeight", fmt.Sprintf("把公共中转站「%s」的份额调成了 %d", rl.Name, *a.Weight))
 }
 
 func opRelaySetCapacity(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
@@ -185,7 +188,14 @@ func opRelaySetCapacity(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
 	if m := c.w.relayMeta[rl.ID]; m != nil && m.Capacity == *a.Capacity {
 		return errNoChange
 	}
-	return c.exec(`UPDATE relays SET capacity = ? WHERE id = ?`, *a.Capacity, rl.ID)
+	if err := c.exec(`UPDATE relays SET capacity = ? WHERE id = ?`, *a.Capacity, rl.ID); err != nil {
+		return err
+	}
+	text := fmt.Sprintf("把公共中转站「%s」同时最多调成了 %d 台", rl.Name, *a.Capacity)
+	if *a.Capacity == 0 {
+		text = fmt.Sprintf("把公共中转站「%s」改成了不限台数", rl.Name)
+	}
+	return c.recordOps(rl, "relay.setCapacity", text)
 }
 
 func opRelayKick(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
@@ -194,10 +204,26 @@ func opRelayKick(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
 		return err
 	}
 	id, err := kick(c.tx, c.w, rl.ID, a.Person, a.Device, c.me, c.now)
-	if err == nil {
-		out.Kick = id
+	if err != nil {
+		return err
 	}
-	return err
+	out.Kick = id
+	return c.recordOps(rl, "relay.kick", "不让"+c.w.kickedName(a.Person, a.Device)+"用公共中转站「"+rl.Name+"」")
+}
+
+// kickedName is who a kick names, as the record says it: a person's name, or
+// a device's with its owner's.
+func (w *World) kickedName(person proto.PersonID, device proto.DeviceID) string {
+	if p := w.people[person]; p != nil {
+		return p.DisplayName
+	}
+	if d := w.devices[device]; d != nil {
+		if o := w.people[d.Owner]; o != nil {
+			return o.DisplayName + "的「" + d.DisplayName + "」"
+		}
+		return "「" + d.DisplayName + "」"
+	}
+	return string(person) + string(device)
 }
 
 func opRelayUnkick(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
@@ -217,7 +243,10 @@ func opRelayUnkick(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
 	case rl.Owner != c.me:
 		return errNotFound("找不到这次踢人，或者已经撤销了")
 	}
-	return unkick(c.tx, k.ID, c.me, c.now)
+	if err := unkick(c.tx, k.ID, c.me, c.now); err != nil {
+		return err
+	}
+	return c.recordOps(rl, "relay.unkick", "又让"+c.w.kickedName(k.Person, k.Device)+"用公共中转站「"+rl.Name+"」了")
 }
 
 // kick writes a kick of person or device off relay, by by (empty: the

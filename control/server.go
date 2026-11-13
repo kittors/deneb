@@ -115,6 +115,8 @@ type Server struct {
 	db   *sql.DB
 	keys *keyring
 	hub  *hub
+	// started is when New made it: the console's "已经运行 30 天".
+	started time.Time
 
 	logins *loginTable
 	// testCodes are the seed's test accounts' fixed codes, by email; every
@@ -223,6 +225,7 @@ func New(cfg Config) (*Server, error) {
 		relayLive:     newRelayLive(),
 		versions:      newVersionWaiter(),
 	}
+	s.started = s.now()
 	name := cfg.Name
 	if name == "" {
 		if u, err := url.Parse(cfg.PublicURL); err == nil {

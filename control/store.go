@@ -271,6 +271,23 @@ var migrations = []string{
 	// 10 (M4): the deployment's operators (deneb-control operators), who
 	// manage the public relays on the ops page.
 	`ALTER TABLE people ADD COLUMN operator INTEGER NOT NULL DEFAULT 0;`,
+	// 11 (M7): the operators' record (console.go, opsrecord.go): each
+	// change an operator makes, on the Web console, the public relays' page
+	// or the admin socket, kept a year. Who did it and the sentence are
+	// written out as they were then, so a record still reads after an
+	// account went.
+	`CREATE TABLE ops_records (
+		id        INTEGER PRIMARY KEY AUTOINCREMENT,
+		at        INTEGER NOT NULL,
+		by_person TEXT NOT NULL DEFAULT '', -- empty: the admin socket
+		by_name   TEXT NOT NULL,
+		by_email  TEXT NOT NULL DEFAULT '',
+		act       TEXT NOT NULL,
+		target    TEXT NOT NULL DEFAULT '',
+		text      TEXT NOT NULL,
+		result    TEXT NOT NULL DEFAULT 'ok'
+	);
+	CREATE INDEX ops_records_at ON ops_records (at);`,
 }
 
 func migrate(db *sql.DB) error {

@@ -446,7 +446,12 @@ func (s *Server) signUp(email string) (proto.PersonID, error) {
 // The mail goes out in the background, so a step that mails a code takes
 // as long as one that does not.
 
-type mailJob struct{ to, code, link string }
+// mailJob is a mail waiting to go out: a code (and link), or with deleted
+// the notice that an operator deleted the account at its owner's request.
+type mailJob struct {
+	to, code, link string
+	deleted        bool
+}
 
 // startMail starts the mail queue, if the server has a mailer.
 func (s *Server) startMail() {
@@ -465,6 +470,17 @@ func (s *Server) startMail() {
 				return
 			case j := <-s.mailQ:
 				sctx, done := context.WithTimeout(ctx, mailTimeout)
+				if j.deleted {
+					// The account is gone: its email is logged as one
+					// with none is.
+					if err := s.cfg.Mailer.SendAccountDeleted(sctx, j.to); err != nil {
+						s.logf("mail: the notice that the account of %s was deleted did not go out: %v", s.logEmail(j.to), err)
+					} else {
+						s.logf("mail: the notice that the account was deleted went to %s", s.logEmail(j.to))
+					}
+					done()
+					continue
+				}
 				err := s.cfg.Mailer.SendCode(sctx, j.to, j.code, j.link)
 				done()
 				if err != nil {
@@ -491,13 +507,28 @@ func (s *Server) mailCode(email, code, link, why string) string {
 		return "no mailer is set up, nothing sent"
 	}
 	select {
-	case s.mailQ <- mailJob{email, code, link}:
+	case s.mailQ <- mailJob{to: email, code: code, link: link}:
 		if link != "" {
 			why += ", with a login link"
 		}
 		return why
 	default:
 		return "the mail queue is full, nothing sent"
+	}
+}
+
+// mailDeleted queues the notice that an operator deleted the account of
+// email at its owner's request. The account is gone already: a notice
+// that does not go out is logged, and that is all.
+func (s *Server) mailDeleted(email string) {
+	if s.mailQ == nil {
+		s.logf("mail: no mailer is set up: the notice that the account of %s was deleted did not go out", s.logEmail(email))
+		return
+	}
+	select {
+	case s.mailQ <- mailJob{to: email, deleted: true}:
+	default:
+		s.logf("mail: the mail queue is full: the notice that the account of %s was deleted did not go out", s.logEmail(email))
 	}
 }
 

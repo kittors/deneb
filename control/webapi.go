@@ -45,6 +45,7 @@ func (s *Server) webAPIRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET "+proto.PathWebOperatorUsage, s.web(s.handleWebOperatorUsage))
 	m.Handle("POST "+proto.PathWebInvite, post(s.handleWebInvite))
 	m.HandleFunc("GET "+proto.PathWebInvites+"{token}", s.handleWebInviteGet)
+	s.consoleRoutes(m, post)
 	m.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, r, errNotFound("没有这个接口"))
 	})

@@ -2,7 +2,6 @@ package control
 
 import (
 	"cmp"
-	"database/sql"
 	"net/http"
 	"slices"
 	"strings"
@@ -205,27 +204,17 @@ func (s *Server) handleAdminSetOperator(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	e := normEmail(req.Email)
-	if _, err := s.change("", func(tx *sql.Tx, wd *World) error {
-		p := wd.byEmail[e]
-		if p == nil {
-			return errNotFound("没有这个账号：" + e)
-		}
-		if p.Operator == !req.Remove {
-			return errNoChange
-		}
-		_, err := tx.Exec(`UPDATE people SET operator = ? WHERE id = ?`, !req.Remove, p.ID)
-		return err
-	}); err != nil {
+	p := s.state.Load().w.byEmail[e]
+	if p == nil {
+		s.writeErr(w, r, errNotFound("没有这个账号："+e))
+		return
+	}
+	// As the console's operator.set, with a line of the record.
+	if err := s.opsSetOperator(nil, p.ID, !req.Remove); err != nil {
 		s.writeErr(w, r, err)
 		return
 	}
-	st := s.state.Load()
-	if req.Remove {
-		s.logf("admin: %s is not an operator any more; version %d", e, st.v)
-	} else {
-		s.logf("admin: %s is an operator; version %d", e, st.v)
-	}
-	writeJSON(w, http.StatusOK, adminOperators(st.w))
+	writeJSON(w, http.StatusOK, adminOperators(s.state.Load().w))
 }
 
 // AdminOperators lists the operators, through the admin socket at path.

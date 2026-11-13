@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="supported-color-schemes" content="light dark">
+<title>你的 Deneb 账号注销了</title>
+<!--
+  The mail an operator's deleting an account sends its owner (DESIGN
+  §14.15): in the login code's mail's look (code.html), and like it, the
+  icon goes with the mail. It says the account went at their request; it
+  never says which operator did it.
+-->
+<style>
+  @media (prefers-color-scheme: dark) {
+    .bg { background-color: #0f0f12 !important; }
+    .card { background-color: #1b1b20 !important; border-color: #2c2c33 !important; }
+    .ink { color: #f4f4f5 !important; }
+    .ink2 { color: #b9b9c2 !important; }
+    .ink3 { color: #8b8b95 !important; }
+    .rule { border-color: #2c2c33 !important; }
+  }
+  @media (max-width: 520px) {
+    .outer { padding: 24px 12px !important; }
+    .card { padding: 28px 20px !important; }
+  }
+</style>
+</head>
+<body class="bg" style="margin:0;padding:0;background-color:#f4f4f6;">
+<div style="display:none;max-height:0;max-width:0;overflow:hidden;opacity:0;color:transparent;mso-hide:all;font-size:1px;line-height:1px;">应你的要求，你的 Deneb 账号注销了&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;</div>
+<table role="presentation" class="bg" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f4f4f6;">
+<tr><td class="outer" align="center" style="padding:44px 16px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:480px;">
+<tr><td style="padding:0 6px 18px;">
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+    <td width="32" height="32" valign="middle" style="width:32px;height:32px;"><img src="{{.Icon}}" width="32" height="32" alt="&#10022;" style="display:block;width:32px;height:32px;border:0;outline:none;text-decoration:none;color:#2f6bff;font-size:20px;line-height:32px;font-family:'PingFang SC','Microsoft YaHei',sans-serif;"></td>
+    <td class="ink" style="padding-left:9px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Helvetica Neue',Arial,sans-serif;font-size:17px;font-weight:600;color:#18181b;">Deneb</td>
+  </tr></table>
+</td></tr>
+<tr><td class="card" style="background-color:#ffffff;border:1px solid #e6e6ea;border-radius:16px;padding:34px 32px 30px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Helvetica Neue',Arial,sans-serif;">
+  <p class="ink2" style="margin:0;font-size:14px;line-height:1.5;color:#52525b;">账号注销了</p>
+  <p class="ink" style="margin:12px 0 0;font-size:18px;line-height:1.55;font-weight:600;color:#18181b;">应你的要求，你的 Deneb 账号注销了。</p>
+  <p class="ink" style="margin:16px 0 0;font-size:15px;line-height:1.65;color:#18181b;">注销的是 {{.Email}}。你的设备都已经登出，你在各个局域网里的位置、分享、邀请和你自己的中转站也一起删掉了。删掉的东西在备份里还会留到那份备份被换掉，最长两个月左右。</p>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:24px;"><tr>
+    <td class="rule ink3" style="border-top:1px solid #ececef;padding-top:18px;font-size:13px;line-height:1.65;color:#71717a;">如果这不是你要求的，请尽快联系 Deneb 的运营方。</td>
+  </tr></table>
+</td></tr>
+<tr><td class="ink3" style="padding:18px 6px 0;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Helvetica Neue',Arial,sans-serif;font-size:12px;line-height:1.75;color:#8b8b95;">
+  这封邮件由 Deneb 自动发出，请不要直接回复。<br>
+  {{- if .Site}}
+  <a class="ink3" href="{{.Site}}" style="color:#8b8b95;text-decoration:underline;">{{.SiteName}}</a>&nbsp;&nbsp;·&nbsp;&nbsp;
+  {{- end}}
+  <a class="ink3" href="https://github.com/kittors/deneb/blob/main/PRIVACY.md" style="color:#8b8b95;text-decoration:underline;">隐私说明</a>
+</td></tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>

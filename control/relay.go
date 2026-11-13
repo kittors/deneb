@@ -360,7 +360,17 @@ func opRelayJoin(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
 		return err
 	}
 	out.RelayJoin = c.s.joinView(j, tok)
-	return nil
+	if !public {
+		return nil
+	}
+	text := "为加一台公共中转站生成了安装命令"
+	if name != "" {
+		text = "为加一台公共中转站「" + name + "」生成了安装命令"
+	}
+	if rl := c.w.relays[a.Relay]; rl != nil {
+		text = "为公共中转站「" + rl.Name + "」重新生成了安装命令"
+	}
+	return c.recordOps(&proto.Relay{ID: a.Relay, Source: proto.RelayPublic}, "relay.join", text)
 }
 
 func opRelayRevokeJoin(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
@@ -370,7 +380,17 @@ func opRelayRevokeJoin(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
 	if !mine || !j.live(c.now) {
 		return errNotFound("找不到这个加入码，或者它已经用过、过期了")
 	}
-	return c.exec(`DELETE FROM relay_joins WHERE id = ?`, j.ID)
+	if err := c.exec(`DELETE FROM relay_joins WHERE id = ?`, j.ID); err != nil {
+		return err
+	}
+	if j.Source != proto.RelayPublic {
+		return nil
+	}
+	text := "作废了一条加公共中转站的安装命令"
+	if rl := c.w.relays[j.Relay]; rl != nil {
+		text = "作废了公共中转站「" + rl.Name + "」的一条安装命令"
+	}
+	return c.recordOps(&proto.Relay{ID: j.Relay, Source: proto.RelayPublic}, "relay.revokeJoin", text)
 }
 
 // opRelayCreate makes the relay first and a code for it (the form the
@@ -422,7 +442,10 @@ func opRelayRename(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
 	if name == rl.Name {
 		return errNoChange
 	}
-	return c.exec(`UPDATE relays SET name = ? WHERE id = ?`, name, rl.ID)
+	if err := c.exec(`UPDATE relays SET name = ? WHERE id = ?`, name, rl.ID); err != nil {
+		return err
+	}
+	return c.recordOps(rl, "relay.rename", "把公共中转站「"+rl.Name+"」改名叫「"+name+"」")
 }
 
 func opRelayDelete(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {

@@ -38,6 +38,9 @@ import (
 // begun in a browser.
 type Mailer interface {
 	SendCode(ctx context.Context, to, code, link string) error
+	// SendAccountDeleted tells to their account was deleted at their
+	// request, by an operator (DESIGN §14.15): not who did it.
+	SendAccountDeleted(ctx context.Context, to string) error
 }
 
 // LogMailer writes the codes into the log instead of mailing them: for a
@@ -54,6 +57,12 @@ func (m LogMailer) SendCode(_ context.Context, to, code, link string) error {
 	if link != "" {
 		m.Logf("mail (development, not sent): its login link is %s", link)
 	}
+	return nil
+}
+
+// SendAccountDeleted logs the notice.
+func (m LogMailer) SendAccountDeleted(_ context.Context, to string) error {
+	m.Logf("mail (development, not sent): to %s, 你的 Deneb 账号注销了", to)
 	return nil
 }
 
@@ -173,6 +182,18 @@ func (m *SMTPMailer) SendCode(ctx context.Context, to, code, link string) error 
 		return fmt.Errorf("mail: %q is not an address", to)
 	}
 	msg, err := codeMail(m.from, to, codeLetter{Code: code, Link: link, Site: m.Site}, time.Now())
+	if err != nil {
+		return err
+	}
+	return m.send(ctx, to, msg)
+}
+
+// SendAccountDeleted mails to that their account is gone.
+func (m *SMTPMailer) SendAccountDeleted(ctx context.Context, to string) error {
+	if !validEmail(to) {
+		return fmt.Errorf("mail: %q is not an address", to)
+	}
+	msg, err := deletedMail(m.from, to, m.Site, time.Now())
 	if err != nil {
 		return err
 	}
@@ -305,14 +326,40 @@ var (
 	codeHTMLSource string
 	//go:embed mailtmpl/code.txt
 	codeTextSource string
+	//go:embed mailtmpl/deleted.html
+	deletedHTMLSource string
+	//go:embed mailtmpl/deleted.txt
+	deletedTextSource string
 	// mailIcon is the 64 px app icon of design/brand/final
 	// (macos/AppIcon.iconset/icon_32x32@2x.png), the mail's one picture.
 	//go:embed mailtmpl/icon.png
 	mailIcon []byte
 
-	codeHTML = htmltemplate.Must(htmltemplate.New("code.html").Parse(codeHTMLSource))
-	codeText = texttemplate.Must(texttemplate.New("code.txt").Parse(codeTextSource))
+	codeHTML    = htmltemplate.Must(htmltemplate.New("code.html").Parse(codeHTMLSource))
+	codeText    = texttemplate.Must(texttemplate.New("code.txt").Parse(codeTextSource))
+	deletedHTML = htmltemplate.Must(htmltemplate.New("deleted.html").Parse(deletedHTMLSource))
+	deletedText = texttemplate.Must(texttemplate.New("deleted.txt").Parse(deletedTextSource))
 )
+
+// deletedMail is the mail that tells someone an operator deleted their
+// account at their request, in the code mail's look; it does not say who.
+func deletedMail(from *mail.Address, to, site string, now time.Time) ([]byte, error) {
+	data := struct {
+		Email, Site, SiteName string
+		Icon                  htmltemplate.URL
+	}{Email: to, Site: site, Icon: htmltemplate.URL("cid:" + mailIconID)}
+	if u, err := url.Parse(site); site != "" && err == nil {
+		data.SiteName = u.Host
+	}
+	var text, html bytes.Buffer
+	if err := deletedText.Execute(&text, data); err != nil {
+		return nil, err
+	}
+	if err := deletedHTML.Execute(&html, data); err != nil {
+		return nil, err
+	}
+	return letterMail(from, to, "你的 Deneb 账号注销了", text.Bytes(), html.Bytes(), now)
+}
 
 // mailIconID is the icon's Content-ID, which the HTML names as cid:.
 const mailIconID = "deneb-icon@deneb.mail"
@@ -354,15 +401,21 @@ func codeMail(from *mail.Address, to string, l codeLetter, now time.Time) ([]byt
 	if err := codeHTML.Execute(&html, data); err != nil {
 		return nil, err
 	}
+	return letterMail(from, to, "Deneb 验证码 "+l.Code, text.Bytes(), html.Bytes(), now)
+}
 
+// letterMail is a mail of Deneb's: multipart/alternative, the plain text
+// first, then the HTML with the icon it names as cid: (multipart/related),
+// which is what a program that shows HTML takes.
+func letterMail(from *mail.Address, to, subject string, text, html []byte, now time.Time) ([]byte, error) {
 	var body bytes.Buffer
 	alt := multipart.NewWriter(&body)
-	if err := mailPart(alt, `text/plain; charset="utf-8"`, crlf(text.Bytes()), nil); err != nil {
+	if err := mailPart(alt, `text/plain; charset="utf-8"`, crlf(text), nil); err != nil {
 		return nil, err
 	}
 	var related bytes.Buffer
 	rel := multipart.NewWriter(&related)
-	if err := mailPart(rel, `text/html; charset="utf-8"`, crlf(html.Bytes()), nil); err != nil {
+	if err := mailPart(rel, `text/html; charset="utf-8"`, crlf(html), nil); err != nil {
 		return nil, err
 	}
 	if err := mailPart(rel, `image/png; name="deneb.png"`, mailIcon, textproto.MIMEHeader{
@@ -383,7 +436,7 @@ func codeMail(from *mail.Address, to string, l codeLetter, now time.Time) ([]byt
 	header := func(k, v string) { b.WriteString(k + ": " + v + "\r\n") }
 	header("From", from.String())
 	header("To", "<"+to+">")
-	header("Subject", mime.BEncoding.Encode("utf-8", "Deneb 验证码 "+l.Code))
+	header("Subject", mime.BEncoding.Encode("utf-8", subject))
 	header("Date", now.Format(time.RFC1123Z))
 	header("Message-ID", "<"+strings.ToLower(randomCode(20))+"@"+from.Address[strings.LastIndexByte(from.Address, '@')+1:]+">")
 	header("MIME-Version", "1.0")

@@ -473,6 +473,28 @@ func TestLoadSMTPConfig(t *testing.T) {
 	}
 }
 
+// TestDeletedMail: the mail an operator's deleting an account sends its
+// owner (DESIGN §14.15) is the code mail's kind, icon and all; it says the
+// account went at their request, and nothing of who did it.
+func TestDeletedMail(t *testing.T) {
+	from, _ := mail.ParseAddress(`"Deneb" <noreply@example.com>`)
+	raw, err := deletedMail(from, "leo@example.net", "https://deneb.example.com", time.Date(2026, 11, 13, 8, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, l := readLetter(t, string(raw))
+	switch {
+	case l.Subject != "你的 Deneb 账号注销了", msg.Header.Get("To") != "<leo@example.net>", l.IconID != mailIconID, l.Link != "":
+		t.Fatalf("the mail: %q %v", l.Subject, msg.Header)
+	case !strings.Contains(l.Text, "应你的要求，你的 Deneb 账号注销了。"), !strings.Contains(l.Text, "注销的是 leo@example.net"),
+		!strings.Contains(l.HTML, "应你的要求，你的 Deneb 账号注销了。"), !strings.Contains(l.HTML, `src="cid:`+mailIconID+`"`),
+		!strings.Contains(l.HTML, ">deneb.example.com</a>"):
+		t.Fatalf("what it says:\n%s", l.Text)
+	case strings.Contains(l.Text+l.HTML, "管理员"), strings.Contains(l.Text+l.HTML, "操作"):
+		t.Fatal("it says who did it")
+	}
+}
+
 // TestCodeMail: the mail (DESIGN.md §14.14) is HTML and plain text in one,
 // its headers well formed whatever the sender's name, every line ASCII and
 // short; the code is in the subject, the text and the HTML; the icon goes

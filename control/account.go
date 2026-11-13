@@ -35,6 +35,13 @@ type accountPlan struct {
 // planAccountDeletion is what deleting person p's account does, owned
 // being their choice for the LANs they own with others in them.
 func (w *World) planAccountDeletion(p proto.PersonID, owned string) accountPlan {
+	return w.planAccountDeletionEach(p, func(*lan) string { return owned })
+}
+
+// planAccountDeletionEach is planAccountDeletion with a choice for each
+// such LAN (AccountTransfer, AccountDeleteLANs, or "" for none yet): the
+// operator's console asks LAN by LAN.
+func (w *World) planAccountDeletionEach(p proto.PersonID, choose func(*lan) string) accountPlan {
 	var pl accountPlan
 	for _, d := range w.devices {
 		if d.Owner == p {
@@ -49,12 +56,18 @@ func (w *World) planAccountDeletion(p proto.PersonID, owned string) accountPlan 
 	slices.SortFunc(lans, func(a, b *lan) int { return cmp.Compare(a.ID, b.ID) })
 	for _, l := range lans {
 		heir := l.heir(p)
-		switch {
-		case l.Owner != p:
+		if l.Owner != p {
 			// Joined, invited or waiting to be let in: the row goes.
 			if l.memberOf[p] != nil {
 				pl.leave = append(pl.leave, l)
 			}
+			continue
+		}
+		owned := ""
+		if heir != "" {
+			owned = choose(l)
+		}
+		switch {
 		case heir == "" || owned == proto.AccountDeleteLANs:
 			// Theirs alone (those invited or waiting are not in it yet), or
 			// they chose so.
@@ -178,7 +191,13 @@ func opAccountDelete(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
 	if normEmail(a.Confirm) != p.Email {
 		return errInvalid("要注销，请再输一遍你的邮箱")
 	}
+	return c.deleteAccount(p, pl, out.Account)
+}
 
+// deleteAccount carries out pl, a plan for p's account with nothing
+// blocked: account.delete's, or the operator's console's. v is the plan's
+// view, for the log.
+func (c *opCtx) deleteAccount(p *person, pl accountPlan, v *proto.AccountDeletion) error {
 	// Their LANs: deleted, or handed over; other people's, left.
 	for _, l := range pl.deleteLANs {
 		if err := c.deleteLAN(l); err != nil {
@@ -250,7 +269,6 @@ func opAccountDelete(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
 	if err := c.exec(`DELETE FROM people WHERE id = ?`, p.ID); err != nil {
 		return err
 	}
-	v := out.Account
 	c.after = append(c.after, func() {
 		// Once it is gone, its email is one with no account: logged masked.
 		c.s.logf("account %s %s deleted: %d devices; LANs: %d deleted, %d handed over, %d left; %d relays (%d in use); %d shares; %d invites",
@@ -283,14 +301,28 @@ func (s *Server) handleAdminAccountDelete(w http.ResponseWriter, r *http.Request
 		s.writeErr(w, r, errNotFound("没有这个账号："+email))
 		return
 	}
+	if !req.DryRun {
+		// As the console's account.delete: a line of the record, and the
+		// mail to them.
+		switch req.OwnedLANs {
+		case "", proto.AccountTransfer, proto.AccountDeleteLANs:
+		default:
+			s.writeErr(w, r, errInvalid("ownedLANs 只能是 transfer 或 delete"))
+			return
+		}
+		v, err := s.opsDeleteAccount(nil, p.ID, email, func(*lan) string { return req.OwnedLANs })
+		if err != nil {
+			s.writeErr(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, proto.OpResult{Version: s.Version(), Result: &proto.OpOutput{Account: v}})
+		return
+	}
 	op := proto.Op{ID: "admin", Op: proto.OpAccountDelete,
-		Args: proto.OpArgs{Confirm: email, OwnedLANs: req.OwnedLANs, DryRun: req.DryRun}}
+		Args: proto.OpArgs{Confirm: email, OwnedLANs: req.OwnedLANs, DryRun: true}}
 	s.mu.Lock()
 	e := s.applyOp("", p.ID, op)
 	s.mu.Unlock()
-	if e.status == http.StatusOK && !req.DryRun {
-		s.logf("admin: account %s deleted by the operator", p.ID)
-	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(e.status)

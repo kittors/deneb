@@ -120,6 +120,13 @@ func (s *Server) handleAdminApprove(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, r, err)
 		return
 	}
+	name := res.Name
+	if name == "" {
+		name = res.Hostname
+	}
+	if err := s.recordAlone(adminSocket, "login.approve", string(res.Device), pangu(fmt.Sprintf("批准了「%s」登进 %s", name, res.Email))); err != nil {
+		s.logf("admin: the record of approving %s: %v", res.Device, err)
+	}
 	writeJSON(w, http.StatusOK, res)
 }
 
@@ -338,29 +345,19 @@ func (s *Server) handleAdminSetSeats(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, r, err)
 		return
 	}
-	if req.Limit < -1 || req.Limit > 10000 {
-		s.writeErr(w, r, errInvalid("位置数不对：大于 0，-1 是不限，0 是恢复部署的"))
+	e := normEmail(req.Email)
+	p := s.state.Load().w.byEmail[e]
+	if p == nil {
+		s.writeErr(w, r, errNotFound("没有这个账号："+e))
 		return
 	}
-	e := normEmail(req.Email)
-	if _, err := s.change("", func(tx *sql.Tx, wd *World) error {
-		p := wd.byEmail[e]
-		if p == nil {
-			return errNotFound("没有这个账号：" + e)
-		}
-		if p.SeatLimit == req.Limit {
-			return errNoChange
-		}
-		_, err := tx.Exec(`UPDATE people SET seat_limit = ? WHERE id = ?`, req.Limit, p.ID)
-		return err
-	}); err != nil {
+	// As the console's seats.set: the same rules, and a line of the record.
+	if err := s.opsSetSeats(nil, p.ID, req.Limit); err != nil {
 		s.writeErr(w, r, err)
 		return
 	}
 	st := s.state.Load()
-	res := s.adminSeats(st.w, st.w.byEmail[e])
-	s.logf("admin: %s's seats now %d (own %v), %d used; version %d", e, res.Limit, res.Own, res.Used, st.v)
-	writeJSON(w, http.StatusOK, res)
+	writeJSON(w, http.StatusOK, s.adminSeats(st.w, st.w.byEmail[e]))
 }
 
 // AdminListSeats lists everyone's seats, through the admin socket at path.
@@ -442,13 +439,11 @@ func (s *Server) handleAdminRevokeSessions(w http.ResponseWriter, r *http.Reques
 		s.writeErr(w, r, errNotFound("没有这个账号："+e))
 		return
 	}
-	res, err := s.db.Exec(`DELETE FROM web_sessions WHERE person = ?`, p.ID)
+	n, err := s.opsRevokeSessions(nil, p.ID)
 	if err != nil {
 		s.writeErr(w, r, err)
 		return
 	}
-	n, _ := res.RowsAffected()
-	s.logf("admin: %d browser sessions of %s revoked", n, e)
 	writeJSON(w, http.StatusOK, AdminRevokeSessionsResult{Revoked: n})
 }
 
@@ -551,15 +546,8 @@ func (s *Server) handleAdminDeleteDevice(w http.ResponseWriter, r *http.Request)
 		s.writeErr(w, r, err)
 		return
 	}
-	var gone AdminDevice
-	if _, err := s.change("", func(tx *sql.Tx, wd *World) error {
-		d := wd.devices[req.Device]
-		if d == nil {
-			return errNotFound("没有这台设备：" + string(req.Device))
-		}
-		gone = adminDevice(wd, d, s.hub.onlineSnapshot())
-		return deleteDevice(tx, d, s.now())
-	}); err != nil {
+	gone, err := s.opsDeleteDevice(nil, req.Device)
+	if err != nil {
 		s.writeErr(w, r, err)
 		return
 	}
