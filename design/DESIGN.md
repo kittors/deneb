@@ -1054,6 +1054,8 @@
 
 ## 15. 品牌（2026-11-11 第二版：一颗亮星，重画）
 
+> 2026-11-13：用户说这版"很丑、没有设计感"，菜单栏和 Windows 的也丑，Windows 的要彩色。第 4 批在重做：三个方向（A 水晶星、B 光环、C 小星），设计说明在 `design/brand/batch4/README.md`，交付在 `~/Desktop/Deneb组网demo/品牌/第4批-重做/`。用户选定之前，本节仍是现行规则。
+
 11-09 用户从三个方向（`~/Desktop/Deneb组网demo/品牌/第1批-logo/`）里选了"一颗亮星"。第一版圆核太大、光芒细得像针，像一个球插着针，底色也平；11-11 照同一颗星重画了比例、曲线和光，就是现在这版（第 3 批，`~/Desktop/Deneb组网demo/品牌/第3批-精致版/`）。
 
 全套文件在 `design/brand/final/`，第一版留在 `design/brand/v1/`，第 1 批的三个方向在 `design/brand/batch1/`。`design/brand/build-final.sh` 从源文件重新出图：星的形状在 `star.py`，图标、组合和各平台的文件在 `final.py`；`review.py` 出新旧对照和各处的效果图。
