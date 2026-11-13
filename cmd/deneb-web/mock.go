@@ -41,6 +41,7 @@ type mock struct {
 	seed     map[proto.PersonID]bool    // M7: accounts the deployment's seed names, which cannot be deleted
 	seq      int
 	now      func() time.Time
+	console  *opsWorld // the deployment's console (M7 batch 3, mock_ops.go)
 }
 
 type mdev struct {
@@ -228,6 +229,7 @@ func newMock() *mock {
 	}}
 	m.invites["k3xQ9"] = &minvite{id: "i_k3xQ9", lan: "l_weekend", inviter: "p_kittors", state: proto.InvitePending, expires: now.Add(7 * 24 * time.Hour)}
 	m.invites["old42"] = &minvite{id: "i_old42", lan: "l_weekend", inviter: "p_kittors", state: proto.InviteExpired, expires: now.Add(-24 * time.Hour)}
+	m.console = newOpsWorld(now)
 	return m
 }
 
@@ -466,6 +468,17 @@ func (m *mock) view(me proto.PersonID) *proto.UserView {
 	}
 	if v.Relays == nil {
 		v.Relays = []proto.Relay{}
+	}
+	// The deployment's operator (M7 batch 3): the console's rows in the
+	// sidebar, and the public relays' page as it was.
+	if me == opsOperator {
+		ov := &proto.OperatorView{Relays: []proto.RelayView{}, Joins: []proto.RelayJoinView{}}
+		for _, r := range m.relays {
+			if r.r.Source == proto.RelayPublic {
+				ov.Relays = append(ov.Relays, r.v)
+			}
+		}
+		v.Operator = ov
 	}
 	return v
 }
@@ -870,6 +883,7 @@ func (m *mock) handler() http.Handler {
 	mux.Handle("POST /api/v1/_mock/relay-up", post(m.authed(m.relayUp)))
 	mux.Handle("POST /api/v1/_mock/share", post(m.authed(m.shareMe)))
 	mux.Handle("POST /api/v1/_mock/seed", post(m.authed(m.seedMe)))
+	m.opsRoutes(mux, post)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fail(404, proto.ErrNotFound, "没有这个接口"))
 	})

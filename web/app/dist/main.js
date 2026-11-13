@@ -245,6 +245,9 @@ async function render(r       )                {
     const welcome = pages.get('home');
     return mount(() => (welcome ? welcome(root, ctx, r) : message('你还没有局域网', '朋友发来的邀请链接，在这里打开就能加入')));
   }
+  // The deployment's console, its public relays among it, is its operators'
+  // only: for anyone else there is no such page (DESIGN §14.15).
+  if ((r.page === 'console' || r.page === 'ops') && !v.operator) return mount(() => message('没有这个页面', '回到首页看看'));
   if (r.page === 'notFound') return mount(() => message('没有这个页面', '回到首页看看'));
   // The canvas pages come with pages.ts; wait for it rather than flash the
   // stand-in first.

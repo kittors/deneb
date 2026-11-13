@@ -73,11 +73,18 @@ export const api = {
   op: (op: OpType, args: OpArgs = {}) => call<OpResult>('POST', Paths.ops, { id: opID(), op, args }),
   relayUsage: () => call<RelayUsage>('GET', Paths.relayUsage),
   operatorUsage: () => call<OperatorUsage>('GET', Paths.operatorUsage),
+  // The deployment's console (DESIGN §14.15, a design): what the operators
+  // see and do, as design/plan/m7/ops-console.md proposes it.
+  operator: {
+    get: <T>(path: string) => call<T>('GET', '/api/v1/operator/' + path),
+    act: <T = unknown>(act: string, args: Record<string, string>) => call<T>('POST', '/api/v1/operator/act', { act, args }),
+  },
   // The mock's stand-ins (deneb-web -mock) for what happens away from the
   // browser: Deneb installed on this computer, a relay set up.
   mock: {
     deviceUp: () => call<{ device: string }>('POST', '/api/v1/_mock/device-up'),
     relayUp: (join?: string) => call<{ relay: string }>('POST', '/api/v1/_mock/relay-up', { join: join ?? '' }),
+    opsAlert: () => call<unknown>('POST', '/api/v1/_mock/ops/alert'),
   },
 };
 

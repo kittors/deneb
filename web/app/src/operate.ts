@@ -78,7 +78,7 @@ export function operatePage(root: HTMLElement, ctx: Ctx, _route: Route): () => v
     const off = ps.filter((p) => !p.v.online).length;
     const now = usage ? ` · 现在 ${usage.people} 个人、${usage.devices} 台设备在经它们中转` : '';
     const up = !ps.length ? '还没有公共中转站' : off ? `${ps.length} 个公共中转站，${off} 个连不上` : ps.length === 1 ? '1 个公共中转站，在线' : `${ps.length} 个公共中转站都在线`;
-    app.setTitle('运营', spaced(up + now), off ? 'warn' : 'ok');
+    app.setTitle('公共中转站', spaced(up + now), off ? 'warn' : 'ok');
   }
 
   // ---- The well -----------------------------------------------------------------------

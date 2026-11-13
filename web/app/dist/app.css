@@ -2818,6 +2818,949 @@ body {
   gap: 8px;
 }
 
+/* console.css */
+/* The deployment's console (DESIGN.md §14.15): a column of white cards in
+   the canvas, as the first page's (welcome.css); lists of people and
+   devices with balls and tiles; the window's own card on the right for one
+   of them. The page is white, as every page is; the column starts where
+   the title does (28 from the left), as the relays page's wells do; with
+   the card open it narrows, so that the card covers none of it. */
+.cons {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  padding: 20px 24px 72px 28px;
+  box-sizing: border-box;
+}
+.cons-col {
+  width: 760px;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  transition: max-width 0.24s cubic-bezier(0.3, 0.3, 0.2, 1);
+}
+/* The card is 340 wide, 20 from the right; 20 more between it and the
+   column. */
+.cons.carded .cons-col {
+  max-width: calc(100% + 24px - 380px);
+}
+.cons-card {
+  box-sizing: border-box;
+  padding: 18px 22px;
+  border-radius: 16px;
+  background: var(--bg);
+  box-shadow: 0 0 0 1px var(--line), 0 8px 24px rgba(9, 9, 11, 0.05), 0 1px 3px rgba(9, 9, 11, 0.04);
+}
+[data-theme='dark'] .cons-card {
+  background: var(--well);
+  box-shadow: 0 0 0 1px var(--line), 0 12px 30px rgba(0, 0, 0, 0.35);
+}
+.cons-h {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.cons-hint {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink-3);
+}
+.cons-quiet {
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+.cons-quiet.center,
+.center {
+  text-align: left;
+}
+.cons-empty {
+  margin: 0;
+  padding: 26px 0;
+  text-align: center;
+  font-size: 13.5px;
+  color: var(--ink-3);
+}
+.cons button {
+  font: inherit;
+}
+.cons-link {
+  flex: none;
+  border: 0;
+  padding: 0;
+  background: none;
+  font-size: 13px;
+  color: var(--primary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.cons-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.cons-link.danger {
+  color: #ef4444;
+}
+.cons-link.quiet {
+  color: var(--ink-3);
+}
+
+/* Dots: green all well, amber tight, red broken. */
+.cons-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+.cons-dot.warn {
+  background: #f59e0b;
+}
+.cons-dot.bad {
+  background: #ef4444;
+}
+.cons-dot.ok {
+  background: var(--ok);
+}
+
+/* 要看的事 */
+.cons-alert {
+  display: grid;
+  grid-template-columns: 8px 1fr auto;
+  gap: 12px;
+  align-items: start;
+  padding: 11px 0;
+}
+.cons-alert + .cons-alert {
+  box-shadow: 0 -1px 0 var(--line);
+}
+.cons-alert .cons-dot {
+  margin-top: 7px;
+}
+.cons-at-title {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+.cons-at-text {
+  margin-top: 1px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.cons-at-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  padding-top: 2px;
+}
+.cons-when {
+  font-size: 12px;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+.cons-alert.done .cons-at-title {
+  font-weight: 400;
+  color: var(--ink-2);
+}
+.cons-quiet + .cons-recent,
+.cons-alert + .cons-quiet {
+  margin-top: 4px;
+}
+.cons-recent {
+  overflow: hidden;
+}
+.cons-allok {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+  font-size: 14px;
+  font-weight: 500;
+}
+.cons-okmark {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--ok);
+}
+.cons-okmark.big {
+  width: 40px;
+  height: 40px;
+}
+.cons-okmark.big svg {
+  width: 22px;
+  height: 22px;
+}
+
+/* 服务器 */
+.cons-row {
+  display: grid;
+  grid-template-columns: 8px 84px 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 0;
+  font-size: 13.5px;
+}
+.cons-row + .cons-row,
+.cons-backups + .cons-row {
+  box-shadow: 0 -1px 0 var(--line);
+}
+.cons-k {
+  color: var(--ink-2);
+}
+.cons-backups {
+  overflow: hidden;
+  margin: -2px 0 8px 104px;
+}
+.cons-bk {
+  display: grid;
+  grid-template-columns: 110px 1fr auto;
+  gap: 10px;
+  padding: 3px 0;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.cons-bk-name {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+/* 人和设备: four numbers */
+.cons-nums {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  padding: 14px;
+}
+.cons-num {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  color: inherit;
+  text-align: left;
+}
+button.cons-num {
+  cursor: pointer;
+  transition: background 0.16s;
+}
+button.cons-num:hover {
+  background: var(--well);
+}
+[data-theme='dark'] button.cons-num:hover {
+  background: var(--well-2);
+}
+.cons-n {
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.cons-n b {
+  margin-right: 3px;
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.cons-num small {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+/* Finding: the field and the chips */
+.cons-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.cons-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: var(--bg);
+  box-shadow: 0 0 0 1px var(--line-2);
+  color: var(--ink-3);
+  transition: box-shadow 0.16s;
+}
+[data-theme='dark'] .cons-search {
+  background: var(--well);
+}
+.cons-search:focus-within {
+  box-shadow: 0 0 0 1.5px var(--primary);
+}
+.cons-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+}
+.cons-search input::placeholder {
+  color: var(--ink-3);
+}
+.cons-search input::-webkit-search-cancel-button {
+  display: none;
+}
+.cons-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.cons-chip {
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--well);
+  color: var(--ink-2);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.16s, color 0.16s;
+}
+[data-theme='dark'] .cons-chip {
+  background: var(--well-2);
+}
+.cons-chip:hover {
+  color: var(--ink);
+}
+.cons-chip.on {
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+  color: var(--primary);
+  font-weight: 500;
+}
+
+/* The lists */
+.cons-list {
+  padding: 6px;
+}
+.cons-rows {
+  overflow: hidden;
+}
+.cons-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 0.14s;
+}
+.cons-item:hover {
+  background: var(--well);
+}
+[data-theme='dark'] .cons-item:hover {
+  background: var(--well-2);
+}
+.cons-main {
+  flex: 1;
+  min-width: 0;
+}
+.cons-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+.cons-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-3);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.cons-sub .ball {
+  flex: none;
+}
+.cons-meta {
+  font-size: 12.5px;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+.cons-state {
+  min-width: 88px;
+  font-size: 12.5px;
+  color: var(--ink-3);
+  text-align: right;
+  white-space: nowrap;
+}
+.cons-state.on {
+  color: var(--ok);
+}
+.cons-state.on::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin: 0 6px 1px 0;
+  border-radius: 50%;
+  background: var(--ok);
+}
+.cons-state.out {
+  color: var(--ink-3);
+}
+.cons-tag {
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 18px;
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+}
+.cons-tag.grey {
+  color: var(--ink-2);
+  background: var(--track);
+}
+.cons-tile {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  color: var(--ink-2);
+  background: var(--well);
+}
+[data-theme='dark'] .cons-tile {
+  background: var(--well-2);
+}
+.cons-tile svg {
+  fill: currentColor;
+}
+.cons-tile.big {
+  width: 48px;
+  height: 48px;
+  border-radius: 13px;
+}
+.cons-tile.big svg {
+  width: 26px;
+  height: 26px;
+}
+.cons-more-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 32px;
+}
+.cons-more,
+.cons-btn {
+  height: 30px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.16s, color 0.16s, box-shadow 0.16s, transform 0.18s cubic-bezier(0.3, 1.5, 0.5, 1);
+}
+.cons-more {
+  color: var(--ink);
+  background: var(--bg);
+  box-shadow: 0 0 0 1px var(--line-2);
+}
+[data-theme='dark'] .cons-more {
+  background: var(--well);
+}
+.cons-btn {
+  color: #fff;
+  background: var(--primary);
+}
+.cons-btn:active,
+.cons-more:active {
+  transform: scale(0.96);
+}
+.cons-btn.ghost {
+  color: var(--ink);
+  background: var(--bg);
+  box-shadow: 0 0 0 1px var(--line-2);
+}
+[data-theme='dark'] .cons-btn.ghost {
+  background: var(--well-2);
+}
+.cons-btn.danger {
+  color: #fff;
+  background: #ef4444;
+}
+.cons-btn.ghost.danger {
+  color: #ef4444;
+  background: transparent;
+  box-shadow: 0 0 0 1px color-mix(in srgb, #ef4444 45%, transparent);
+}
+.cons-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+  transform: none;
+}
+
+/* 等着批准的登录 */
+.cons-wait {
+  overflow: hidden;
+}
+.cons-pick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 0 6px 48px;
+  overflow: hidden;
+}
+
+/* The card on the right: the window's sheet, a little wider for a person
+   and their devices, scrolling if the window is short. */
+.sheet:has(> .cons-sheet) {
+  width: 340px;
+  max-height: calc(100% - 108px);
+  overflow: auto;
+}
+.cons-sheet .top b {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.cons-sheet button {
+  font: inherit;
+}
+.cons-dsub {
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+.cons-owner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.cons-owner:hover {
+  color: var(--ink);
+}
+.cons-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin: -4px 0 12px -4px;
+  padding: 2px 6px 2px 2px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  font-size: 13px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.cons-back:hover {
+  background: var(--well);
+}
+.cons-sec {
+  margin-top: 12px;
+  padding-top: 12px;
+  box-shadow: 0 -1px 0 var(--line);
+}
+.cons-st {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-3);
+}
+.cons-st .cons-link {
+  font-size: 13px;
+  font-weight: 400;
+}
+.cons-do {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 0 4px;
+}
+.cons-do + .cons-do {
+  margin-top: 6px;
+}
+.cons-why {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+.cons-why.done {
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+.cons-pick[hidden],
+.cons-recent[hidden],
+.cons-backups[hidden] {
+  display: none;
+}
+.cons-dev {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 -8px;
+  padding: 5px 8px;
+  border-radius: 10px;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+.cons-dev:hover {
+  background: var(--well);
+}
+[data-theme='dark'] .cons-dev:hover {
+  background: var(--well-2);
+}
+.cons-dev .cons-tile {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+}
+.cons-dev .cons-tile svg {
+  width: 17px;
+  height: 17px;
+}
+.cons-dev .cons-state {
+  min-width: 0;
+}
+.cons-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.cons-line.quiet {
+  color: var(--ink-3);
+}
+.cons-ask {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  margin: 2px -10px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+}
+.cons-line + .cons-line {
+  margin-top: 6px;
+}
+.cons-grow {
+  flex: 1;
+  min-width: 0;
+}
+.cons-grow.done {
+  color: var(--ink-2);
+}
+.cons-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.cons-step button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--well);
+  color: var(--ink);
+  font-size: 16px;
+  cursor: pointer;
+}
+[data-theme='dark'] .cons-step button {
+  background: var(--well-2);
+}
+.cons-step b {
+  display: inline-block;
+  min-width: 26px;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.cons-kv {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+  font-size: 13.5px;
+}
+.cons-kv span {
+  color: var(--ink-2);
+}
+.cons-kv b {
+  font-weight: 500;
+  text-align: right;
+}
+.cons-kv b.cons-state {
+  min-width: 0;
+  font-size: 13.5px;
+}
+.mono {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 12.5px;
+}
+.cons-danger {
+  margin-top: 16px;
+  padding-top: 14px;
+  box-shadow: 0 -1px 0 var(--line);
+}
+
+/* 替人注销账号 */
+.cons-del {
+  padding: 24px 28px;
+}
+.cons-del-warn {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 13.5px;
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.12);
+}
+[data-theme='dark'] .cons-del-warn {
+  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.14);
+}
+.cons-del-list {
+  margin: 4px 0 12px;
+  padding-left: 18px;
+  font-size: 13.5px;
+  line-height: 1.9;
+  color: var(--ink-2);
+}
+.cons-del-lan {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 12px;
+  font-size: 13.5px;
+}
+.cons-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 16px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.cons-confirm input {
+  height: 40px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 10px;
+  outline: none;
+  background: var(--well);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+}
+[data-theme='dark'] .cons-confirm input {
+  background: var(--well-2);
+}
+.cons-confirm input:focus {
+  box-shadow: inset 0 0 0 1.5px var(--primary);
+}
+.cons-del-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+}
+.cons-del-foot .cons-btn {
+  height: 36px;
+  padding: 0 18px;
+  font-size: 14px;
+}
+.cons-gone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 30px 0 26px;
+  font-size: 13.5px;
+}
+.cons-gone b {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* 记录 */
+.cons-seg {
+  align-self: flex-start;
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--well);
+}
+[data-theme='dark'] .cons-seg {
+  background: var(--well-2);
+}
+.cons-seg button {
+  height: 30px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 13.5px;
+  cursor: pointer;
+  transition: background 0.18s, color 0.18s, box-shadow 0.18s;
+}
+.cons-seg button.on {
+  color: var(--ink);
+  font-weight: 500;
+  background: var(--bg);
+  box-shadow: 0 1px 3px rgba(9, 9, 11, 0.1), 0 0 0 1px var(--line);
+}
+[data-theme='dark'] .cons-seg button.on {
+  background: var(--well);
+}
+.cons-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.cons-recs {
+  padding: 8px 18px 14px;
+}
+.cons-day {
+  padding: 12px 0 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-3);
+}
+.cons-rec {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.cons-time {
+  flex: none;
+  width: 40px;
+  font-size: 12.5px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.cons-logcard {
+  padding: 0;
+  overflow: hidden;
+}
+.cons-earlier {
+  display: block;
+  margin: 10px auto 0;
+}
+.cons-earlier[hidden] {
+  display: none;
+}
+.cons-cap {
+  margin: 10px 0 0;
+  text-align: center;
+}
+.cons-cap[hidden] {
+  display: none;
+}
+/* A record done with deneb-control on the server: the command's mark in
+   place of someone's ball. */
+.cons-srv {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  color: var(--ink-2);
+  background: var(--well);
+}
+[data-theme='dark'] .cons-srv {
+  background: var(--well-2);
+}
+.cons-log {
+  height: 440px;
+  overflow: auto;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 28px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 28px);
+  padding: 10px 12px 12px;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.75;
+}
+.cons-ln {
+  display: flex;
+  gap: 12px;
+  padding: 0 6px;
+  border-radius: 4px;
+}
+.cons-ln .t {
+  flex: none;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.cons-ln .x {
+  min-width: 0;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.cons-ln.k-alert .x {
+  color: #b45309;
+}
+.cons-ln.k-error .x {
+  color: #dc2626;
+}
+[data-theme='dark'] .cons-ln.k-alert .x {
+  color: #fbbf24;
+}
+[data-theme='dark'] .cons-ln.k-error .x {
+  color: #f87171;
+}
+
+/* The sidebar: 概况's red dot while an alert is on. */
+.nav .adot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-left: auto;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: #ef4444;
+}
+.nav .adot[hidden] {
+  display: none;
+}
+
 /* join.css */
 /* The invite page, the login card, the download card and the phone's dock
    (DESIGN.md §14.5–§14.7), on the desktop's tokens (tokens.css). Values not

@@ -196,6 +196,17 @@ export function clear()       {
   head.querySelector('.title').onclick = null;
 }
 
+// The console's sidebar rows (§14.15): their glyphs, and 概况's red dot,
+// known once the console (or the sidebar's first look) has the alerts.
+const OPS_DEVICES = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="13" height="9.5" rx="1.6"/><path d="M2.5 17.5h15"/><rect x="18" y="8" width="3.5" height="9.5" rx="1"/></svg>`;
+const OPS_LOG = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M8.5 7h11M8.5 12h11M8.5 17h7"/><circle cx="4.8" cy="7" r="0.9" fill="currentColor"/><circle cx="4.8" cy="12" r="0.9" fill="currentColor"/><circle cx="4.8" cy="17" r="0.9" fill="currentColor"/></svg>`;
+let opsDot                = null;
+export function setOpsDot(n        )       {
+  opsDot = n;
+  const d = document.querySelector('.side-list .nav[data-id="ops-overview"] .adot')                      ;
+  if (d) d.hidden = !n;
+}
+
 // The sidebar, as the desktop's (DESIGN.md §7, §14.3): my LANs; 我的设备,
 // 共享给我 and the relays; then the console of each LAN I own; last, for
 // the deployment's operators, 运营. What the web does not have yet (全部,
@@ -222,8 +233,23 @@ function side(v          , sel        , ctx     )       {
   html += `<div class="group">设备</div>` + row('mine', '我的设备', G.ui('home', 18), count(v.devices.filter((d) => d.owner === v.me && !d.publicLAN && !deletingDevs.has(d.id)).length));
   html += row('shared', '共享给我', G.ui('inbox', 18), count(shared)) + row('relays', '中转站', G.ui('relayLine', 18));
   for (const l of listedLANs(v).filter((x) => x.owner === v.me)) html += `<div class="gap"></div><div class="group">${esc(spaced('管理' + l.name))}</div>` + row('share:' + l.id, '设备共享', G.ui('share', 18));
-  // The deployment's operators: its public relays, at the foot (§14.12 M4-13).
-  if (v.operator) html += `<div class="gap"></div><div class="group">部署</div>` + row('ops', '运营', G.ui('ops', 18));
+  // The deployment's operators: its console (§14.15), the public relays
+  // among it (§14.12 M4-13). 概况 has a red dot while an alert is on.
+  if (v.operator) {
+    if (opsDot == null) {
+      opsDot = 0;
+      fetch('/api/v1/operator/overview', { credentials: 'same-origin' })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((o) => o && setOpsDot(o.alerts.length), () => {});
+    }
+    html +=
+      `<div class="gap"></div><div class="group">部署</div>` +
+      row('ops-overview', '概况', G.ui('ops', 18), `<span class="adot"${opsDot ? '' : ' hidden'} aria-label="有要看的事"></span>`) +
+      row('ops-people', '用户', G.ui('people', 18)) +
+      row('ops-devices', '设备', OPS_DEVICES) +
+      row('ops', '公共中转站', G.ui('relayLine', 18)) +
+      row('ops-log', '记录', OPS_LOG);
+  }
   const list = app.win.querySelector('.side-list');
   list.innerHTML = html;
   const nl = list.querySelector('.new-lan')               ;
@@ -234,6 +260,7 @@ function side(v          , sel        , ctx     )       {
       const id = (nav               ).dataset.id          ;
       const [kind, arg] = id.includes(':') ? [id.slice(0, id.indexOf(':')), id.slice(id.indexOf(':') + 1)] : [id, ''];
       if (kind === 'invitation') return showInvitation(arg, ctx);
+      if (kind.startsWith('ops')) return ctx.go(kind === 'ops' ? '/ops/relays' : kind === 'ops-overview' ? '/ops' : '/ops/' + kind.slice(4));
       ctx.go(kind === 'lan' ? '/lan/' + encodeURIComponent(arg) : kind === 'share' ? '/share/' + encodeURIComponent(arg) : '/' + kind);
     };
     nav.addEventListener('click', go);

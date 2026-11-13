@@ -10,6 +10,7 @@ import { minePage } from './mine.js';
 import { sharedPage } from './shared.js';
 import { operatePage } from './operate.js';
 import { welcomePage } from './welcome.js';
+import { consolePage } from './console.js';
 
 registerPage('share', sharePage);
 registerPage('relays', relaysPage);
@@ -18,3 +19,4 @@ registerPage('mine', minePage);
 registerPage('shared', sharedPage);
 registerPage('ops', operatePage);
 registerPage('home', welcomePage);
+registerPage('console', consolePage);

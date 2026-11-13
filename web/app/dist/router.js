@@ -9,7 +9,9 @@
 //	/mine                      my devices, wherever they are
 //	/shared                    共享给我: the devices others share with me
 //	/relays                    relays: the public ones, and my own
-//	/ops                       the deployment's page (its admin only)
+//	/ops                       the deployment's console (its operators only): 概况
+//	/ops/people, /ops/devices, /ops/log   its 用户, 设备, 记录
+//	/ops/relays                the public relays (M4-13)
                    
                                    
                                     
@@ -21,6 +23,7 @@
                       
                       
                    
+                                                                        
                                        
 
 export function parse(path        , search = '')        {
@@ -46,7 +49,9 @@ export function parse(path        , search = '')        {
     case 'relays':
       return { page: 'relays' };
     case 'ops':
-      return { page: 'ops' };
+      if (parts[1] === 'relays') return { page: 'ops' };
+      if (parts[1] === 'people' || parts[1] === 'devices' || parts[1] === 'log') return { page: 'console', part: parts[1] };
+      return { page: 'console', part: 'overview' };
   }
   return { page: 'notFound', path };
 }
