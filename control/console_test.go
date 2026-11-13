@@ -1,8 +1,10 @@
 package control
 
 import (
+	"bytes"
 	"database/sql"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -388,7 +390,35 @@ func TestConsoleLog(t *testing.T) {
 	now := cw.clk.now().UTC()
 	today := now.Truncate(24 * time.Hour)
 	file := func(day time.Time) string { return filepath.Join(s.cfg.LogDir, logFileName(day.Format("20060102"))) }
-	line := func(at time.Time, text string) string { return at.Format("2006/01/02 15:04:05") + " " + text + "\n" }
+	// line is a line as deneb-control's log writes it: a log.Logger set up
+	// as cmd/deneb-control sets the standard one (LogPrefix, LogFlags),
+	// its time then moved to at. "http: …" goes through the server's
+	// ErrorLog's prefix (LogPrefix+"http: "); "bare: …" with none, as a
+	// development run might, or another prefix one day.
+	line := func(at time.Time, text string) string {
+		t.Helper()
+		prefix := LogPrefix
+		if rest, ok := strings.CutPrefix(text, "http: "); ok {
+			prefix, text = LogPrefix+"http: ", rest
+		} else if rest, ok := strings.CutPrefix(text, "bare: "); ok {
+			prefix, text = "", rest
+		}
+		var buf bytes.Buffer
+		before := time.Now().UTC()
+		log.New(&buf, prefix, LogFlags).Print(text)
+		after := time.Now().UTC()
+		out := buf.String()
+		for _, t0 := range []time.Time{before, after} {
+			if stamp := t0.Format("2006/01/02 15:04:05"); strings.Contains(out, stamp) {
+				return strings.Replace(out, stamp, at.UTC().Format("2006/01/02 15:04:05"), 1)
+			}
+		}
+		t.Fatalf("no time in %q", out)
+		return ""
+	}
+	if l := line(today, "op x"); !strings.HasPrefix(l, "deneb-control: ") {
+		t.Fatalf("the log's own line: %q", l)
+	}
 	var y strings.Builder
 	for i := range 1500 {
 		y.WriteString(line(today.Add(-time.Hour).Add(time.Duration(i)*time.Second), fmt.Sprintf("device d_%d (pc) online, engine \"0.7\"", i)))
@@ -406,7 +436,7 @@ func TestConsoleLog(t *testing.T) {
 		"alert firing relay-full/pub: 公共中转站「香港」满了 [logged]",
 		"op lan.create from d_1: version 7",
 		"backup: VACUUM INTO failed: disk full",
-		"cleanup: 1 invites",
+		"bare: cleanup: 1 invites",
 	}
 	for i := range 1000 {
 		b.WriteString(line(today.Add(time.Duration(i)*time.Second), secrets[i%len(secrets)]))
@@ -416,6 +446,18 @@ func TestConsoleLog(t *testing.T) {
 	var res OpsLog
 	if st := cw.get(t, cw.ops, "log", &res); st != 200 || len(res.Lines) != 200 || !res.More || res.Last != res.Lines[199].Seq {
 		t.Fatalf("the last 200: %d lines, more %v, last %d", len(res.Lines), res.More, res.Last)
+	}
+	// Each line at its own time, without the log's prefix.
+	for i, l := range res.Lines {
+		if want := today.Add(time.Duration(800+i) * time.Second); !l.At.Equal(want) {
+			t.Fatalf("line %d at %v, want %v: %q", i, l.At, want, l.Text)
+		}
+		if strings.HasPrefix(l.Text, "deneb-control") {
+			t.Fatalf("the prefix stayed: %q", l.Text)
+		}
+	}
+	if !slices.ContainsFunc(res.Lines, func(l OpsLine) bool { return l.Text == "http: TLS handshake error from ‹地址›: EOF" }) {
+		t.Fatal("net/http's line: its http: is to stay, its address to go")
 	}
 	for _, l := range res.Lines {
 		for _, bad := range []string{"198.51.100.7:", "2001:db8::7]:41641", "482917", "abcdefghijklmnopqrstuvwxyz", "a90009bb"} {

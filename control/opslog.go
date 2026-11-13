@@ -3,6 +3,7 @@ package control
 import (
 	"bufio"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -166,8 +167,8 @@ func readLogDay(path string, day time.Time, from int64, skip bool) ([]OpsLine, e
 		}
 		line = strings.TrimRight(line, "\r\n")
 		text := line
-		if t, err := time.Parse("2006/01/02 15:04:05", prefix(line, 19)); err == nil {
-			at, text = t.UTC(), strings.TrimPrefix(line[19:], " ")
+		if t, msg, ok := splitLogLine(line); ok {
+			at, text = t, msg
 		}
 		out = append(out, OpsLine{Seq: base + pos, At: at, Kind: logKind(text), Text: redactLog(text)})
 		if err != nil {
@@ -177,11 +178,34 @@ func readLogDay(path string, day time.Time, from int64, skip bool) ([]OpsLine, e
 	return out, nil
 }
 
-func prefix(s string, n int) string {
-	if len(s) < n {
-		return s
+// LogPrefix and LogFlags are how deneb-control's log writes a line
+// (cmd/deneb-control sets them): "deneb-control: 2026/11/13 08:00:00 the
+// message", in UTC. net/http's errors go out as LogPrefix+"http: ".
+const (
+	LogPrefix = "deneb-control: "
+	LogFlags  = log.LstdFlags | log.LUTC
+)
+
+// logStamp is the time log writes at the head of a line, after a prefix
+// of up to 64 characters (LogPrefix, LogPrefix+"http: ", or none), to the
+// second or finer.
+var logStamp = regexp.MustCompile(`^(.{0,64}?)(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})(?:\.\d{1,6})? `)
+
+// splitLogLine takes a line of the log apart: when it was written, and
+// what it says, without LogPrefix (before the time, or after it, as with
+// log.Lmsgprefix) but with what else the prefix said ("http: "). ok is
+// false for a line with no time, such as one of a panic's.
+func splitLogLine(line string) (at time.Time, text string, ok bool) {
+	m := logStamp.FindStringSubmatchIndex(line)
+	if m == nil {
+		return time.Time{}, line, false
 	}
-	return s[:n]
+	t, err := time.Parse("2006/01/02 15:04:05", line[m[4]:m[5]])
+	if err != nil {
+		return time.Time{}, line, false
+	}
+	text = strings.TrimPrefix(line[m[2]:m[3]], LogPrefix) + line[m[1]:]
+	return t.UTC(), strings.TrimPrefix(text, LogPrefix), true
 }
 
 // logKind is what a line of the server's log is about, by how it starts.

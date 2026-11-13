@@ -143,8 +143,9 @@ func main() {
 	var relays relayFlags
 	flag.Var(&relays, "relay", `a relay as key=value pairs, repeatable; replaces the seed's: "id=hk,name=香港,host=derp.example.com,ipv4=1.2.3.4,derp=443,stun=3478"`)
 	flag.Parse()
-	log.SetFlags(log.LstdFlags | log.LUTC)
-	log.SetPrefix("deneb-control: ")
+	// As the console reads the log back (control/opslog.go).
+	log.SetFlags(control.LogFlags)
+	log.SetPrefix(control.LogPrefix)
 
 	if *healthcheck != "" {
 		os.Exit(check(*healthcheck))
@@ -307,7 +308,7 @@ func main() {
 		// Streams and long polls watch this context, so a shutdown ends
 		// them instead of waiting on them.
 		BaseContext: func(net.Listener) context.Context { return ctx },
-		ErrorLog:    log.New(logOut, "deneb-control: http: ", log.LstdFlags|log.LUTC),
+		ErrorLog:    log.New(logOut, control.LogPrefix+"http: ", control.LogFlags),
 	}
 	ln, err := net.Listen("tcp", *listen)
 	if err != nil {
