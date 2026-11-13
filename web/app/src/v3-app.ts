@@ -18,6 +18,10 @@
     t.innerHTML = html.trim();
     return t.content.firstElementChild;
   };
+  // esc: words going into markup stay words. Names here are anyone's (a
+  // device's, a person's, a LAN's, a relay's): one with < or & in it shows
+  // as typed, never as an element.
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
   const PEOPLE = {
     me: { name: '我', full: 'kittors', ch: 'K', c: '#3B82F6' },
@@ -37,7 +41,7 @@
   ];
   const ball = (k, cls = '') => {
     const p = PEOPLE[k];
-    return `<span class="ball ${cls}" style="--c:${p.c}">${p.ch}</span>`;
+    return `<span class="ball ${cls}" style="--c:${p.c}">${esc(p.ch)}</span>`;
   };
   const dot = (c) => `<span class="ball" style="--c:${c}"></span>`;
 
@@ -254,11 +258,11 @@
       return n.kind === 'relay' ? '#A1A1AA' : PEOPLE[n.owner].c;
     }
     device(id, o) {
-      const el = h(`<div class="dev ${o.cls || ''}" data-id="${id}"><div class="tile" style="--c:${PEOPLE[o.owner].c}">${G.device(o.type, 30)}</div><div class="name"><span class="nm">${o.name}</span><small>${o.sub || ''}</small></div></div>`);
+      const el = h(`<div class="dev ${o.cls || ''}" data-id="${id}"><div class="tile" style="--c:${PEOPLE[o.owner].c}">${G.device(o.type, 30)}</div><div class="name"><span class="nm">${esc(o.name)}</span><small>${esc(o.sub || '')}</small></div></div>`);
       return this.addNode(id, 'device', el, o);
     }
     relay(id, o) {
-      const el = h(`<div class="relay" data-id="${id}"><div class="orb">${G.device('relay', 18)}</div><div class="name ${o.labelSide || ''}">${o.name}<small>${o.sub || ''}</small></div></div>`);
+      const el = h(`<div class="relay" data-id="${id}"><div class="orb">${G.device('relay', 18)}</div><div class="name ${o.labelSide || ''}">${esc(o.name)}<small>${esc(o.sub || '')}</small></div></div>`);
       return this.addNode(id, 'relay', el, Object.assign({ owner: null }, o));
     }
     addNode(id, kind, el, o) {
@@ -872,9 +876,9 @@
       const mine = n.owner === 'me';
       return (
         `<div class="top"><div class="tile-s"><div class="tile" style="--c:${owner.c}">${G.device(n.type, 20)}</div></div>` +
-        `<div><b>${n.name}</b><span>${mine ? '我的设备' : owner.name + '的设备'}</span></div>` +
+        `<div><b>${esc(n.name)}</b><span>${mine ? '我的设备' : esc(owner.name + '的设备')}</span></div>` +
         `<button class="icon-btn sheet-close" title="关闭">${G.ui('close', 16)}</button></div>` +
-        (st ? `<div class="status"><span class="badge ${st.relay ? 'relay-badge' : ''}" style="--c:${st.c || '#a1a1aa'}">${st.icon}</span><div>${st.t}<small>${st.s}</small></div></div>` : '')
+        (st ? `<div class="status"><span class="badge ${st.relay ? 'relay-badge' : ''}" style="--c:${st.c || '#a1a1aa'}">${st.icon}</span><div>${esc(st.t)}<small>${esc(st.s)}</small></div></div>` : '')
       );
     }
     select(id) {
@@ -895,7 +899,8 @@
     // one takes over in the same chip: the chip stays, its width follows,
     // the words fade in. The pointer on it holds it.
     toast(text, o = {}) {
-      text = App.space(text);
+      // The words are words (a name in them shows as typed: esc above).
+      text = esc(App.space(String(text)));
       const icon = o.dev ? `<span class="toast-tile"><span class="tile" style="--c:${PEOPLE[o.dev.owner].c}">${G.device(o.dev.type, 15)}</span></span>` : '';
       const body = h(`<div class="toast-body">${icon}<span>${text}</span>${o.undo ? '<button>撤销</button>' : ''}</div>`);
       const parent = o.parent || this.canvas;
