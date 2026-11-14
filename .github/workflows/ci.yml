@@ -27,8 +27,10 @@ env:
   # Releases are pure Go (deploy/linux/build-deb.sh, deploy/package.sh), and
   # so is everything here: the window reaches the system through purego.
   CGO_ENABLED: "0"
-  # The engine's tests take about six minutes on a runner.
-  GOTESTFLAGS: -timeout=15m
+  # The engine's tests take about six minutes on a runner; the window's
+  # (cmd/deneb, macOS only) took 761 s before the 0.1.8 batch's tests
+  # (11-14) and now take longer than 15 minutes.
+  GOTESTFLAGS: -timeout=30m
 
 jobs:
   test-linux:
@@ -52,7 +54,7 @@ jobs:
   test-macos:
     name: Test (macOS)
     runs-on: macos-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
         with:
