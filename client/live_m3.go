@@ -14,7 +14,7 @@ import (
 // deviceFrom is a device of the user view as the snapshot has it.
 func deviceFrom(d proto.DeviceView) *model.Device {
 	md := &model.Device{
-		ID: model.DeviceID(d.ID), Owner: model.PersonID(d.Owner), Name: d.DisplayName,
+		ID: model.DeviceID(d.ID), Owner: model.PersonID(d.Owner), Name: d.DisplayName, Avatar: slices.Clone(d.Avatar),
 		Kind: string(d.Kind), OS: string(d.OS), FQDN: d.FQDN, Online: d.Online,
 		RefusesMe: d.RefusesMe, Refused: map[model.PersonID]bool{}, PublicLAN: model.LANID(d.PublicLAN),
 	}

@@ -87,6 +87,7 @@ type Device struct {
 	ID          DeviceID `json:"id"`
 	Name        string   `json:"name"`        // DNS label, e.g. "box"
 	DisplayName string   `json:"displayName"` // what people call it, e.g. "构建服务器"
+	Avatar      []byte   `json:"avatar,omitempty"`
 	Owner       PersonID `json:"owner"`
 	OwnerName   string   `json:"ownerName"` // owner's DNS label, e.g. "lin"
 	FQDN        string   `json:"fqdn"`      // box.lin.deneb.internal

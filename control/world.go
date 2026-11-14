@@ -169,6 +169,7 @@ type device struct {
 	// not the person who logged it in, manages it. Empty for a person's.
 	PublicLAN   proto.LANID
 	DisplayName string
+	Avatar      []byte
 	Kind        proto.DeviceKind
 	OS          proto.OS
 	Hostname    string
@@ -345,7 +346,7 @@ func loadWorld(q querier, network proto.Network, publicURL string, now time.Time
 	}
 
 	err = each(`SELECT id, owner, machine_key, node_key, disco_key, name, display_name, kind, os, hostname,
-			ipv4, ipv6, endpoints, home_relay, relays, paused, engine_version, caps, logged_out, created_at, last_seen, expires_at, name_pinned, public_lan FROM devices`,
+			ipv4, ipv6, endpoints, home_relay, relays, paused, engine_version, caps, logged_out, created_at, last_seen, expires_at, name_pinned, public_lan, avatar FROM devices`,
 		func(r *sql.Rows) error {
 			d := &device{
 				Paused:  map[proto.ScopeID]bool{},
@@ -357,7 +358,7 @@ func loadWorld(q querier, network proto.Network, publicURL string, now time.Time
 			var mk, nk, dk, v4, v6, eps, relays, paused, caps string
 			var created, seen, expires int64
 			if err := r.Scan(&d.ID, &d.Owner, &mk, &nk, &dk, &d.Name, &d.DisplayName, &d.Kind, &d.OS, &d.Hostname,
-				&v4, &v6, &eps, &d.HomeRelay, &relays, &paused, &d.EngineVersion, &caps, &d.LoggedOut, &created, &seen, &expires, &d.NamePinned, &d.PublicLAN); err != nil {
+				&v4, &v6, &eps, &d.HomeRelay, &relays, &paused, &d.EngineVersion, &caps, &d.LoggedOut, &created, &seen, &expires, &d.NamePinned, &d.PublicLAN, &d.Avatar); err != nil {
 				return err
 			}
 			d.ExpiresAt = fromMS(expires)

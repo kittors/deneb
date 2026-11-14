@@ -30,16 +30,19 @@ func (a *app) view(c *ui.Context) {
 	if o := a.onboard; o != nil && o.leaving.IsZero() {
 		// The first time's steps, the whole window (DESIGN §7.3).
 		a.onboardView(c, p)
+		a.updateOutsideSidebar(c, p)
 		return
 	}
 	switch {
 	case !a.snap.Engine && a.snap.Version == 0, a.snap.LoggedIn && !a.snap.Loaded:
 		a.startingView(c, p)
+		a.updateOutsideSidebar(c, p)
 		return
 	case !a.snap.LoggedIn && a.deleting == nil:
 		// (The account just deleted: its page stays, scrolled where it was,
 		// while the window fades to the sign-in, DESIGN §6.15.)
 		a.loginView(c, p)
+		a.updateOutsideSidebar(c, p)
 		return
 	}
 	bar := c.TitleBar()
@@ -63,18 +66,27 @@ func (a *app) view(c *ui.Context) {
 			if a.strip > 0 {
 				ui.Box(c.Key("title-strip")).Height(a.strip).Shrink(0).DragWindow()
 			}
-			if a.all() {
-				a.allHeader(c, p)
+			if a.myDevicesOpen {
+				a.myDevicesPage(c, p)
 			} else {
-				a.header(c, p)
+				if a.all() {
+					a.allHeader(c, p)
+				} else {
+					a.header(c, p)
+				}
+				a.canvas(c, p)
+				a.inviteLayer(c, p)
 			}
-			a.canvas(c, p)
-			a.inviteLayer(c, p)
 		})
 		a.personChip(c, p)
 		a.accountLayer(c, p)
 		// Deleting the account, over the window (DESIGN §6.15).
 		a.accountDeleteLayer(c, p)
+		a.settingsLayer(c, p)
+		a.updateLayer(c, p)
+		a.avatarLayer(c, p)
+		a.renameLayer(c, p)
+		a.confirmLayer(c, p)
 		if a.chrome != nil {
 			// The window buttons as the system draws them, for the
 			// recordings of Windows and Linux (DESIGN §7.2).
@@ -152,7 +164,7 @@ func (a *app) sidebar(c *ui.Context, p *palette, bar ui.TitleBar) {
 		if len(a.shownLANs()) > 1 {
 			// Every LAN at once, each in a region (scene 3).
 			people := func() { ui.Icon(c, uiGlyphs["people"]).Size(18, 18).TextColor(p.ink3) }
-			if navRowWith(c, p, "all", "全部", a.all(), people, rowOpts{}) {
+			if navRowWith(c, p, "all", "全部", a.all() && !a.myDevicesOpen, people, rowOpts{}) {
 				a.show(c, allLANs, false)
 			}
 		}
@@ -180,7 +192,7 @@ func (a *app) sidebar(c *ui.Context, p *palette, bar ui.TitleBar) {
 			}
 			hover := false
 			o.hover = &hover
-			if navRowWith(c, p, "lan-"+string(l.ID), l.Name, l.ID == a.lan, dots(l.Members), o) {
+			if navRowWith(c, p, "lan-"+string(l.ID), l.Name, l.ID == a.lan && !a.myDevicesOpen, dots(l.Members), o) {
 				a.show(c, l.ID, false)
 			}
 			if hover {
@@ -206,20 +218,28 @@ func (a *app) sidebar(c *ui.Context, p *palette, bar ui.TitleBar) {
 		a.newLANRow(c, p)
 		ui.Box(c).Height(16)
 		group(c, p, "设备")
-		navRow(c, p, "我的设备", "我的设备", false, func() { ui.Icon(c, uiGlyphs["home"]).Size(18, 18).TextColor(p.ink3) }, fmt.Sprint(len(a.snap.Mine)), 0)
+		if navRow(c, p, "我的设备", "我的设备", a.myDevicesOpen, func() { ui.Icon(c, uiGlyphs["home"]).Size(18, 18).TextColor(p.ink3) }, fmt.Sprint(len(a.snap.Mine)), 0) {
+			a.setMyDevices(true)
+			a.accountOpen = false
+		}
 		shared := ""
 		if n := len(a.snap.Shared); n > 0 {
 			shared = fmt.Sprint(n)
 		}
 		// The devices given to me, on a canvas of their own (DESIGN §6.11).
 		inbox := func() { ui.Icon(c, uiGlyphs["inbox"]).Size(18, 18).TextColor(p.ink3) }
-		if navRowWith(c, p, "共享给我", "共享给我", a.shared(), inbox, rowOpts{count: shared, flash: a.flash(c, model.SharedLANID)}) &&
+		if navRowWith(c, p, "共享给我", "共享给我", a.shared() && !a.myDevicesOpen, inbox, rowOpts{count: shared, flash: a.flash(c, model.SharedLANID)}) &&
 			a.snap.Can(model.FeatureShare) {
 			a.show(c, model.SharedLANID, false)
 		}
 		ui.Spacer(c)
 		// Me: the account card (M7, DESIGN §6.15).
-		a.accountRowView(c, p)
+		ui.Row(c.Key("sidebar-footer")).Height(44).Gap(8).AlignItems(ui.Center).Children(func() {
+			a.accountRowView(c, p)
+			ui.Spacer(c)
+			a.settingsEntry(c, p)
+			a.updateEntry(c, p)
+		})
 	})
 }
 
@@ -675,6 +695,6 @@ func (a *app) inviteTo(c *ui.Context, lan model.LANID, who model.PersonID) {
 	}
 	a.send(c, model.Op{Kind: model.OpLANInvite, LAN: lan, Person: who})
 	a.notify(c, nil, "已邀请"+spaced(a.people[string(who)].name)+"加入「"+short(l.Name)+"」", func() {
-		a.send(c, model.Op{Kind: model.OpInviteRevoke, LAN: lan, Person: who})
+		a.askConfirm("撤回邀请", name, l.Name, func(c *ui.Context) { a.send(c, model.Op{Kind: model.OpInviteRevoke, LAN: lan, Person: who}) })
 	})
 }

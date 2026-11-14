@@ -45,6 +45,8 @@ func main() {
 		a.onboarded, a.saveOnboarded = onboardedState()
 		a.adapter = adapterInstaller(lc)
 	}
+	a.pickAvatar = pickDeviceAvatar
+	a.updates = newAppUpdater(a)
 	a.copyText = mygo.Clipboard.WriteText
 	a.openURL = mygo.Shell.OpenExternal
 	a.reveal = mygo.Shell.ShowItemInFolder
@@ -77,7 +79,18 @@ func main() {
 			// MyGo draws this window itself; no web page sits behind it.
 			Content: ui.View(bar.view(a.view)),
 		})
+		w.OnHide(func() {
+			if store, ok := a.store.(interface{ MonitorDevices(bool) }); ok {
+				store.MonitorDevices(false)
+			}
+		})
+		w.OnShow(func() {
+			if store, ok := a.store.(interface{ MonitorDevices(bool) }); ok {
+				store.MonitorDevices(a.myDevicesOpen)
+			}
+		})
 		bar.attach(w)
+		a.updates.start()
 		// Deneb opened again (Windows, Linux: oneWindow): the window there
 		// is comes to the front.
 		mygo.App.OnSecondInstance(func([]string, string) {
@@ -257,7 +270,7 @@ func keepEngine(a *app, lc *localclient.Client) {
 			msg = "启动不了 Deneb 引擎，请重新安装 Deneb"
 		case !followed:
 			followed = true
-			go followEngineOnce(lc)
+			go followEngineOnce(a, lc)
 		}
 		if msg != said {
 			said = msg

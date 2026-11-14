@@ -288,6 +288,7 @@ var migrations = []string{
 		result    TEXT NOT NULL DEFAULT 'ok'
 	);
 	CREATE INDEX ops_records_at ON ops_records (at);`,
+	`ALTER TABLE devices ADD COLUMN avatar BLOB NOT NULL DEFAULT X'';`,
 }
 
 func migrate(db *sql.DB) error {

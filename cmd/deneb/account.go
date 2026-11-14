@@ -10,7 +10,7 @@ import (
 
 // The account (M7, DESIGN §6.15): the sidebar's last row opens its card,
 // with logging this computer out, the privacy notes, and deleting the
-// account; a device's card deletes the device.
+// account; account-wide device deletion lives on My Devices.
 
 // privacyURL is the privacy notes, PRIVACY.md on GitHub.
 const privacyURL = "https://github.com/kittors/deneb/blob/main/PRIVACY.md"
@@ -19,11 +19,10 @@ const privacyURL = "https://github.com/kittors/deneb/blob/main/PRIVACY.md"
 // the code that was wrong is said (onboard.go).
 var danger = ui.Hex("#ef4444")
 
-// accountRowView is the sidebar's last row: my ball, my name and the gear,
-// one button that opens the account card, or puts it away.
+// accountRowView is the compact account control in the footer toolbar.
 func (a *app) accountRowView(c *ui.Context, p *palette) {
-	row := ui.ButtonBase(c.Key("account-row")).Gap(10).Padding(8, 6, 4, 8).Radius(12).AlignItems(ui.Center).
-		FocusRing(false).Label("账号")
+	row := ui.ButtonBase(c.Key("account-row")).Size(40, 40).Radius(999).Center().
+		FocusRing(false).Label("账号").Tooltip("账号")
 	if row.Hovered() || a.accountOpen {
 		row.Background(p.well2)
 	}
@@ -32,15 +31,8 @@ func (a *app) accountRowView(c *ui.Context, p *palette) {
 		if who := a.people[a.me]; who != nil {
 			ball(c, who, 32, false)
 		} else {
-			// Logged out under the window, a frame before the sign-in.
-			ui.Box(c).Size(32, 32).Radius(999).Background(p.well)
+			ui.Box(c).Size(32, 32).Radius(999).Background(p.well2)
 		}
-		name := ""
-		if me := a.snap.Person(a.snap.Me); me != nil {
-			name = me.Name
-		}
-		ui.Text(c, name).FontSize(13).FontWeight(500).Grow(1).SingleLine()
-		ui.Box(c).Size(30, 30).Center().Children(func() { ui.Icon(c, uiGlyphs["gear"]).Size(18, 18).TextColor(p.ink2) })
 	})
 	if b := row.Bounds(); b.W > 0 {
 		a.accountRowAt = b
@@ -105,11 +97,18 @@ func (a *app) accountCard(c *ui.Context, p *palette) {
 		rule(c, p)
 		if d := a.snap.Device(a.snap.Self); d != nil {
 			ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-				deviceTile(c, p, glyphFor(d.Kind), ownerColors[0], 32, false)
+				a.profileTile(c, p, d.ID, glyphFor(d.Kind), ownerColors[0], 32, false, 0)
 				ui.Column(c).Gap(1).Grow(1).Shrink(1).Children(func() {
 					ui.Text(c, "这台电脑").FontSize(11).TextColor(p.ink3)
 					ui.Text(c, d.Name).FontSize(13).FontWeight(500).SingleLine()
 				})
+				edit := ui.ButtonBase(c.Key("edit-self")).Height(28).Padding(0, 10).Radius(999).Background(p.well).FocusRing(false).Label("编辑这台电脑")
+				edit.Children(func() { ui.Text(c, "编辑").FontSize(12).FontWeight(500).TextColor(p.ink2) })
+				if edit.Clicked() {
+					a.accountOpen = false
+					a.selected = string(a.snap.Self)
+					a.more = false
+				}
 				out := ui.ButtonBase(c.Key("logout")).Height(28).Padding(0, 12).Radius(999).Background(p.well).FocusRing(false)
 				if out.Hovered() {
 					out.Background(p.well2)
@@ -120,18 +119,6 @@ func (a *app) accountCard(c *ui.Context, p *palette) {
 					a.logout(c)
 				}
 			})
-			rule(c, p)
-		}
-		if menuItem(c, p, "privacy", "隐私说明", "记了什么、存多久、谁看得到、怎么删", p.ink, "external").Clicked() {
-			a.accountOpen = false
-			if a.openURL != nil {
-				a.openURL(privacyURL)
-			}
-		}
-		rule(c, p)
-		if menuItem(c, p, "delete-account", "注销账号", "账号和名下的东西一起删掉，不能恢复", danger, "").Clicked() {
-			a.accountOpen = false
-			a.openAccountDelete(c)
 		}
 	})
 }
@@ -144,8 +131,8 @@ func rule(c *ui.Context, p *palette) {
 // menuItem is a row of a card that is one button: its words, in col, a
 // grey line under them, and an icon at the right, if any; it lights up
 // under the pointer, out to the card's edges.
-func menuItem(c *ui.Context, p *palette, key, label, line string, col ui.Color, icon string) ui.Element {
-	b := ui.ButtonBase(c.Key(key)).Padding(6, 8).Margin(-6, -8).Radius(10).Gap(10).AlignItems(ui.Center).FocusRing(false).Label(label)
+func menuItem(c *ui.Context, p *palette, key, label string, col ui.Color, icon string) ui.Element {
+	b := ui.ButtonBase(c.Key(key)).Height(40).Padding(0, 8).Margin(0, -8).Radius(10).Gap(10).AlignItems(ui.Center).FocusRing(false).Label(label)
 	if b.Hovered() {
 		b.Background(p.well)
 	}
@@ -153,7 +140,6 @@ func menuItem(c *ui.Context, p *palette, key, label, line string, col ui.Color, 
 	b.Children(func() {
 		ui.Column(c).Gap(2).Grow(1).Shrink(1).Children(func() {
 			ui.Text(c, label).FontSize(13).FontWeight(500).TextColor(col)
-			ui.Text(c, line).FontSize(11).TextColor(p.ink3).LineHeight(1.45)
 		})
 		if icon != "" {
 			ui.Icon(c, uiGlyphs[icon]).Size(16, 16).TextColor(p.ink3)
@@ -249,49 +235,76 @@ func (a *app) curtainView(c *ui.Context, p *palette, lifting bool) {
 // (checkOnboard); the demo, which has no sign-in of its own, too.
 func (a *app) signedOut() {
 	a.selected, a.more, a.accountOpen, a.deleting = "", false, false, nil
+	a.setMyDevices(false)
+	a.deviceDetails = ""
+	a.settingsOpen = false
+	a.renaming, a.avatarEdit, a.confirming = nil, nil, nil
 	if o := a.onboard; o == nil || o.step != 0 || !o.leaving.IsZero() {
 		// (The real window may be at it already: what was typed stays.)
 		a.onboard = &onboarding{}
 	}
 }
 
-// canDelete reports whether d is mine to delete: my own devices (DESIGN
-// §6.15).
-func (a *app) canDelete(d *device) bool { return d.mine && !d.pending }
-
-// deleteRow is the last line of a device's "更多": deleting it, in red, and
-// how that differs from logging it out.
-func (a *app) deleteRow(c *ui.Context, p *palette, d *device) {
-	self := d.id == a.self
-	// Two lines, a sentence each: what deleting does, and logging out instead.
-	label, line := "删除这台设备", "彻底删掉：马上登出，再登录是新设备、新地址。\n只是暂时不用，在它上面登出就行，地址不变。"
-	if self {
-		label, line = "删除这台电脑", "彻底删掉：马上登出，再登录是新设备、新地址。\n只想暂时断开，用账号卡片里的“登出”就行。"
+// canDelete keeps account-wide deletion on My Devices. A stale confirmation
+// cannot act after the device/owner changed, nor queue the same delete twice.
+func (a *app) canDelete(id model.DeviceID) bool {
+	d := a.snap.Device(id)
+	if !a.myDevicesOpen || d == nil || d.Owner != a.snap.Me {
+		return false
 	}
-	ui.Column(c.Key("delete-device")).Margin(10, 0, 0, 0).Gap(2).Children(func() {
-		b := ui.ButtonBase(c.Key("delete-button")).Height(28).Padding(0, 4).Gap(6).Radius(8).FocusRing(false).AlignSelf(ui.Start).AlignItems(ui.Center).Label(label)
-		if b.Hovered() {
-			b.Background(p.well)
+	for _, p := range a.pend {
+		if p.op.Kind == model.OpDeviceDelete && p.op.Device == id {
+			return false
 		}
+	}
+	return true
+}
+
+func (a *app) deleteRow(c *ui.Context, p *palette, id model.DeviceID) {
+	if !a.canDelete(id) {
+		return
+	}
+	label := "删除这台设备"
+	if id == a.snap.Self {
+		label = "删除这台电脑"
+	}
+	ui.Row(c.Key("delete-device")).Margin(6, 0, 0, 0).Children(func() {
+		b := ui.ButtonBase(c.Key("delete-button")).Height(32).Padding(0, 10).Gap(6).Radius(8).FocusRing(false).AlignItems(ui.Center).Label(label)
+		if b.Hovered() {
+			b.Background(p.well2)
+		}
+		b.AnimatePose(pressPose(b, .97), ui.Snappy)
 		b.Children(func() {
 			ui.Icon(c, uiGlyphs["trash"]).Size(14, 14).TextColor(danger)
 			ui.Text(c, label).FontSize(12).FontWeight(500).TextColor(danger)
 		})
 		if b.Clicked() {
-			a.deleteDevice(c, d)
+			a.deleteDevice(c, id)
 		}
-		ui.Text(c, line).FontSize(11).TextColor(p.ink3).Padding(0, 4, 0, 4).LineHeight(1.45)
 	})
 }
 
-// deleteDevice deletes d, as taking it out of the LAN does: it goes at once,
-// and the server hears of it only as the toast goes, so that undo is
-// nothing done (DESIGN §6.4, §6.15). This computer stays on the canvas till
-// then, and the window goes to the sign-in after.
-func (a *app) deleteDevice(c *ui.Context, d *device) {
+// Deletion is confirmed first, then held behind the visible undo toast. It
+// removes the account's device from every LAN; LAN cards never call it.
+func (a *app) deleteDevice(c *ui.Context, id model.DeviceID) {
+	if !a.canDelete(id) {
+		return
+	}
+	d := a.snap.Device(id)
+	a.askConfirm("删除设备", d.Name, "将从所有局域网移除，收回共享并让设备登出。重新添加后地址会改变。", func(c *ui.Context) {
+		if a.canDelete(id) {
+			a.deleteDeviceNow(c, id)
+		}
+	})
+}
+func (a *app) deleteDeviceNow(c *ui.Context, id model.DeviceID) {
+	d := a.snap.Device(id)
+	if d == nil {
+		return
+	}
 	a.selected, a.more = "", false
-	op := model.Op{Kind: model.OpDeviceDelete, Device: d.dev}
-	if d.id == a.self {
+	op := model.Op{Kind: model.OpDeviceDelete, Device: id}
+	if id == a.snap.Self {
 		a.holdFor(c, op, "这台电脑会被删掉")
 		held := a.pend[len(a.pend)-1]
 		// As the toast goes, the window fades to its background, and then
@@ -314,5 +327,6 @@ func (a *app) deleteDevice(c *ui.Context, d *device) {
 		}
 		return
 	}
-	a.hold(c, op, d, say("已删除", short(d.name)))
+	a.deviceDetails = ""
+	a.holdFor(c, op, say("已删除", short(d.Name)))
 }

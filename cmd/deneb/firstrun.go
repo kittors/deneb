@@ -34,10 +34,11 @@ func onboardedState() (done bool, save func()) {
 // system service, as an administrator: Windows asks the person once
 // (design/plan/m7/engine-security.md, the window's part). keepEngine
 // starts no engine of the window's meanwhile; answered no, or failed, it
-// starts it again. nil where there is no such step: macOS (waits for a
-// developer account), Linux (the package puts it in), a development build.
+// starts it again. macOS installs a root-owned launchd service through the
+// system's administrator authentication. Linux's package puts its service
+// in; a development build ships no engine to install.
 func adapterInstaller(lc *localclient.Client) func(context.Context) error {
-	if runtime.GOOS != "windows" {
+	if runtime.GOOS != "windows" && runtime.GOOS != "darwin" {
 		return nil
 	}
 	bin := bundledEngine()

@@ -133,7 +133,7 @@ func TestM2Frames(t *testing.T) {
 			_ = b
 			r.rec(900)
 			r.shot("局域网卡片")
-			sw, _ := r.tt.Find("新设备要我同意")
+			sw, _ := r.tt.Find("审批新设备")
 			r.move(ui.Point{X: 1180 - 20 - 16 - 12 - 19, Y: sw.Y + sw.H/2}, 300)
 			r.tt.ClickAt(1180-20-16-12-19, sw.Y+sw.H/2)
 			r.rec(900)

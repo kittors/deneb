@@ -20,7 +20,7 @@ import (
 // adapterNotice is the pill's and the card's words. "以后再说" puts it away
 // as "知道了" does the engine's: until Deneb starts again.
 var adapterNotice = model.Notice{Code: "adapter", Short: "还没装网卡", Message: "这台电脑还没装网卡",
-	Detail: "装上网卡以后，能直接连到局域网里的其他设备，不用绕中转站，浏览器、游戏也都能直接用。"}
+	Detail: "装上以后，浏览器、远程桌面、游戏能直接访问局域网里的 IP 和设备名称。没装时，在 Deneb 里点「打开」访问服务。"}
 
 // adapterJob is the adapter put in from its card: since when the system
 // asks the person, since when it is in; declined, the person said no, or it
@@ -121,9 +121,13 @@ func (a *app) installFromNotice(c *ui.Context) {
 func (a *app) adapterCard(c *ui.Context, p *palette) {
 	j := &a.adapterJob
 	// The first time's step says it at more length, in a wider box.
-	askBox(c, p, "Windows 会弹窗问你，点「是」就行。")
+	ask := "系统会请你输入开机密码或使用触控 ID，允许 Deneb 安装系统网卡。"
+	if a.platform == "windows" {
+		ask = "Windows 会弹窗问你，点「是」就行。"
+	}
+	askBox(c, p, ask)
 	if j.declined {
-		ui.Text(c.Key("adapter-declined"), "没装上也能照常用，想装时再点「装网卡」").FontSize(12).TextColor(p.ink2).LineHeight(1.5).
+		ui.Text(c.Key("adapter-declined"), "没装上可以先在 Deneb 里点「打开」访问，想装时再试一次").FontSize(12).TextColor(p.ink2).LineHeight(1.5).
 			Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{}})
 	}
 	fade := ui.ElementTransition{Duration: 180 * time.Millisecond, Enter: &ui.Motion{}, Exit: &ui.Motion{}}

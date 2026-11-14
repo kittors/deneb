@@ -34,9 +34,9 @@ import (
 //
 //   - logout: the account card, 登出: the sign-in; signed in again (off the
 //     recording), this computer comes back as it was.
-//   - device: 我的 NAS's card, "更多", 删除这台设备: the toast; as it goes,
+//   - device: My Devices, 我的 NAS details, 删除这台设备: the toast; as it goes,
 //     the server deletes it, and logs its engine out.
-//   - self: this computer's "更多", 删除这台电脑: the toast, the window
+//   - self: My Devices, this computer details, 删除这台电脑: the toast, the window
 //     fades to the sign-in; signed in again, it is a new device.
 //   - account: 注销账号: what goes, 工作室 handed to Mia, who joined first;
 //     my email again; the sign-in says the account is gone.
@@ -424,13 +424,14 @@ func m7device(r *realRig, w *m7world) {
 	r.run(600 * time.Millisecond)
 	r.record()
 	r.run(600 * time.Millisecond)
-	r.tapDevice(nas)
-	r.run(1000 * time.Millisecond)
-	r.click("更多")
-	r.run(900 * time.Millisecond)
-	r.still("更多里的删除")
+	r.click("我的设备")
+	r.run(600 * time.Millisecond)
+	r.click("详情我的 NAS")
+	r.run(600 * time.Millisecond)
+	r.still("我的设备里的删除")
 	r.record()
-	r.click("删除这台设备")
+	clickVisibleDeviceAction(r.t, r.tt, "删除这台设备", 740)
+	acceptConfirmation(r.t, r.tt, "删除设备")
 	r.run(1000 * time.Millisecond)
 	r.still("删掉了")
 	r.record()
@@ -451,24 +452,14 @@ func m7self(r *realRig, w *m7world) {
 	r.run(600 * time.Millisecond)
 	r.record()
 	r.run(600 * time.Millisecond)
-	r.tapDevice(self)
-	r.run(1000 * time.Millisecond)
-	r.click("更多")
-	r.run(700 * time.Millisecond)
-	// The card is taller than the window: it scrolls in itself, a little
-	// each frame, as a wheel turns.
-	at := r.a.cardAt
-	for i := 0; i < 24; i++ {
-		r.tt.Wheel(at.X+at.W/2, at.Y+at.H/2, 0, 300.0/24)
-		r.tick()
-	}
-	r.run(700 * time.Millisecond)
-	if b, ok := r.tt.Find("删除这台电脑"); !ok || b.Y+b.H > 740-12 {
-		r.t.Fatalf("self: 删除这台电脑 is not in sight: %v %v", b, ok)
-	}
+	r.click("我的设备")
+	r.run(600 * time.Millisecond)
+	r.click("详情" + r.a.snap.Device(r.a.snap.Self).Name)
+	r.run(600 * time.Millisecond)
 	r.still("删除这台电脑")
 	r.record()
-	r.click("删除这台电脑")
+	clickVisibleDeviceAction(r.t, r.tt, "删除这台电脑", 740)
+	acceptConfirmation(r.t, r.tt, "删除设备")
 	r.run(1000 * time.Millisecond)
 	r.still("这台电脑会被删掉")
 	r.record()

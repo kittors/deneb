@@ -323,7 +323,7 @@ func (a *app) onboardAdapter(c *ui.Context, p *palette, now time.Time) {
 	}
 	deviceTile(c, p, kind, col, 56, false).Margin(0, 0, 18, 0)
 	onboardTitle(c, p, "给这台电脑装一块网卡", "装上以后，这台电脑上的任何程序（浏览器、远程桌面、游戏）都能直接连到局域网里的设备，就像在同一个 Wi-Fi 里。")
-	ask := "系统会请你在「登录项与扩展」里打开 Deneb，输一次开机密码。"
+	ask := "系统会请你输入开机密码或使用触控 ID，允许 Deneb 安装系统网卡。"
 	if a.platform == "windows" {
 		ask = "Windows 会弹一个窗口问你，点「是」就行。"
 	}

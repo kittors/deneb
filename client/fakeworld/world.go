@@ -79,6 +79,7 @@ type World struct {
 }
 
 type device struct {
+	avatar        []byte
 	id            proto.DeviceID
 	owner         proto.PersonID
 	name, display string
@@ -303,7 +304,7 @@ func (w *World) decideLocked(who proto.PersonID, from proto.DeviceID, op proto.O
 			delete(d.refused, a.Person)
 		}
 		return nil, nil
-	case proto.OpDeviceRename, proto.OpDeviceSetKind:
+	case proto.OpDeviceRename, proto.OpDeviceSetKind, proto.OpDeviceSetAvatar:
 		// As M1's server has them: a new name keeps the DNS label.
 		d := w.devices[a.Device]
 		if d == nil {
@@ -317,7 +318,14 @@ func (w *World) decideLocked(who proto.PersonID, from proto.DeviceID, op proto.O
 				return no(apitype.ErrInvalid, "给设备起个名字。")
 			}
 			d.display = strings.TrimSpace(a.Name)
+		} else if op == proto.OpDeviceSetAvatar {
+			avatar, err := proto.NormalizeDeviceAvatar(a.Avatar)
+			if err != nil {
+				return no(apitype.ErrInvalid, err.Error())
+			}
+			d.avatar = avatar
 		} else {
+			d.avatar = nil
 			d.kind = a.Kind
 		}
 		return nil, nil
@@ -496,7 +504,7 @@ func (w *World) userViewLocked(who proto.PersonID) proto.UserView {
 		if d.owner != who && visible[id] == nil {
 			continue
 		}
-		dv := proto.DeviceView{ID: id, Owner: d.owner, Name: d.name, DisplayName: d.display,
+		dv := proto.DeviceView{ID: id, Owner: d.owner, Name: d.name, DisplayName: d.display, Avatar: d.avatar,
 			FQDN: proto.FQDN(d.name, w.handle(d.owner)), Kind: d.kind, OS: d.os,
 			Addrs: []netip.Prefix{netip.PrefixFrom(d.addr, 32)}, Online: true, LANs: visible[id]}
 		if d.owner == who {
@@ -560,7 +568,7 @@ func (w *World) netmapLocked(self proto.DeviceID) (*apitype.Device, []apitype.Sc
 }
 
 func (w *World) apiDevice(d *device) *apitype.Device {
-	return &apitype.Device{ID: apitype.DeviceID(d.id), Name: d.name, DisplayName: d.display, Owner: apitype.PersonID(d.owner),
+	return &apitype.Device{ID: apitype.DeviceID(d.id), Name: d.name, DisplayName: d.display, Avatar: d.avatar, Owner: apitype.PersonID(d.owner),
 		OwnerName: w.handle(d.owner), FQDN: proto.FQDN(d.name, w.handle(d.owner)), Addrs: []string{d.addr.String()},
 		Kind: string(d.kind), OS: string(d.os)}
 }

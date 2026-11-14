@@ -31,7 +31,7 @@ import (
 //     back; taken back again, the toast goes and the seat with it. Both
 //     devices go back into 周末联机 at the end.
 //   - shared: 阿杰 gives me his NAS from it: "共享给我" counts it and shows
-//     it, "阿杰 · 直接连上"; its card says whose and which way; "不要了"
+//     it, "阿杰 · 直接连上"; its card says whose and which way; "取消共享"
 //     gives it back once the toast goes.
 func TestRealAcceptance3(t *testing.T) {
 	items := os.Getenv("DENEB_REAL3")
@@ -423,16 +423,16 @@ func m3shared(r *realRig) {
 	r.tick()
 	r.until("its card", func() bool { return r.tt.HasText("阿杰分享给你的") })
 	r.hold(800 * time.Millisecond)
-	for _, want := range []string{"只有你能连它，反过来不行", "不要了", "你可以用"} {
+	for _, want := range []string{"仅允许你访问此设备", "取消共享", "可用服务"} {
 		if !r.tt.HasText(want) {
 			r.t.Errorf("shared: its card lacks %q: %q", want, r.tt.Texts())
 		}
 	}
 	r.still("卡片")
 	r.record()
-	r.click("不要了")
+	r.click("取消共享")
 	r.hold(800 * time.Millisecond)
-	r.still("不要了")
+	r.still("取消共享")
 	r.record()
 	r.until("given back once the toast went", func() bool { return r.a.base.SharedOf(model.DeviceID(nas)) == nil })
 	r.logf("given back")

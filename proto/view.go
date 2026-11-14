@@ -92,7 +92,9 @@ const (
 	FeatureInvitePerson = "invitePerson"
 	// FeatureRename: device.rename (the DNS label follows) and
 	// device.setKind. M1 servers do both too, without the label.
-	FeatureRename = "rename"
+	FeatureRename        = "rename"
+	FeatureDeviceAvatar  = "deviceAvatar"
+	FeatureServiceRemove = "serviceRemove"
 	// FeatureRenew: device.renew and DeviceView.login.
 	FeatureRenew = "renew"
 	// FeatureDNSName: device.setDNSName.
@@ -119,7 +121,7 @@ var M2Features = []string{FeatureApprove, FeatureDNSName, FeatureInvitePerson, F
 var M3Features = []string{FeatureApprove, FeatureDNSName, FeatureInvitePerson, FeaturePublicDevice, FeatureRename, FeatureRenew, FeatureSeats, FeatureShare, FeatureShareMode}
 
 // M4Features are the features of an M4 server: M3's and the relays.
-var M4Features = []string{FeatureApprove, FeatureDNSName, FeatureInvitePerson, FeaturePublicDevice, FeatureRelays, FeatureRename, FeatureRenew, FeatureSeats, FeatureShare, FeatureShareMode}
+var M4Features = []string{FeatureDeviceAvatar, FeatureServiceRemove, FeatureApprove, FeatureDNSName, FeatureInvitePerson, FeaturePublicDevice, FeatureRelays, FeatureRename, FeatureRenew, FeatureSeats, FeatureShare, FeatureShareMode}
 
 // RelayView is one of my relays as I, its owner, see it (M4). Its card
 // says where it came from, what it can see and how much it carried; the
@@ -386,7 +388,8 @@ type DeviceView struct {
 	Owner       PersonID       `json:"owner"`
 	Name        string         `json:"name"`        // DNS label: "nas"
 	DisplayName string         `json:"displayName"` // "阿杰的 NAS"
-	FQDN        string         `json:"fqdn"`        // "nas.jie.deneb.internal"
+	Avatar      []byte         `json:"avatar,omitempty"`
+	FQDN        string         `json:"fqdn"` // "nas.jie.deneb.internal"
 	Kind        DeviceKind     `json:"kind"`
 	OS          OS             `json:"os"`
 	Addrs       []netip.Prefix `json:"addrs"`

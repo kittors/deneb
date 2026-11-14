@@ -546,7 +546,6 @@ func (a *app) deviceView(c *ui.Context, p *palette, d *device, w, h float32) {
 			// Mine, let go over the tray: it flies into the slot the tray
 			// opened for it, and leaves the LAN as it lands there.
 			a.takeOut(c, d, true, true)
-			landing = true
 		} else {
 			// Anywhere else, the tray's band beside the tray too: it stays,
 			// at the nearest free spot. (Someone else's device never
@@ -698,7 +697,7 @@ func (a *app) deviceView(c *ui.Context, p *palette, d *device, w, h float32) {
 		tile := ui.Box(c).Size(tileSize, tileSize)
 		tile.AnimatePose(pose, tileAnim)
 		tile.Children(func() {
-			solid := deviceTileOff(c, p, d.kind, owner, tileSize, a.selected == d.id, off)
+			solid := a.profileTile(c, p, d.dev, d.kind, owner, tileSize, a.selected == d.id, off)
 			if wait > 0 {
 				solid.Opacity(1 - wait)
 				pendingTile(c, p, d.kind, owner, tileSize).Absolute().Left(0).Top(0).Opacity(wait).PassThrough()
@@ -756,6 +755,10 @@ func deviceTile(c *ui.Context, p *palette, kind string, col ui.Color, size float
 // deviceTileOff is a device's tile off of the way to how it shows offline:
 // grey, its glyph see-through (DESIGN §3.4).
 func deviceTileOff(c *ui.Context, p *palette, kind string, col ui.Color, size float32, selected bool, off float32) ui.Element {
+	return deviceTilePicture(c, p, kind, col, size, selected, off, nil)
+}
+
+func deviceTilePicture(c *ui.Context, p *palette, kind string, col ui.Color, size float32, selected bool, off float32, picture ui.ImageSource) ui.Element {
 	if off > 0 {
 		col = col.Mix(offlineGrey, off)
 	}
@@ -771,6 +774,10 @@ func deviceTileOff(c *ui.Context, p *palette, kind string, col ui.Color, size fl
 	}
 	t.Shadow(0, size*0.13, size*0.3, 0, col.Alpha(0.3)).Shadow(0, 1, 2, 0, ui.RGBA(0, 0, 0, 0.1))
 	t.Children(func() {
+		if picture != nil {
+			ui.Box(c.Key("avatar")).Absolute().Left(0).Top(0).Size(size, size).Radius(radius).Clip().PassThrough().Children(func() { ui.Image(c, picture).Size(size, size).Fit(ui.Cover).Opacity(1 - .45*off) })
+			return
+		}
 		// A soft spot of light near the top left, fading out well before
 		// its box's edge so that it never shows a shape of its own.
 		ui.Box(c).Absolute().Left(size*0.16).Top(size*0.06).Size(size*0.46, size*0.2).PassThrough().

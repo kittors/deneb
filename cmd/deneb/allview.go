@@ -487,7 +487,7 @@ func (a *app) droppedInAll(c *ui.Context, d *device, w, h float32) {
 	case to == "":
 		a.leaveHere(c, d)
 	case a.moveTo(c, d, to, spot):
-		stay()
+		// moveTo returns it home while confirmation is pending.
 	default:
 		d.off = ui.Point{X: d.rest.X - d.base.X, Y: d.rest.Y - d.base.Y}
 		d.flying = true
@@ -548,6 +548,16 @@ func (a *app) rekey(d *device, lan model.LANID) {
 // other way round, and sends it back to where it rested. It reports false,
 // and does nothing, when the device is in the other LAN already.
 func (a *app) moveTo(c *ui.Context, d *device, to model.LANID, spot ui.Point) bool {
+	l, was := a.snap.LAN(to), a.snap.LAN(d.lan)
+	if l == nil || was == nil || l.Has(d.dev) || l.HasPending(d.dev) {
+		return false
+	}
+	d.off = ui.Point{X: d.rest.X - d.base.X, Y: d.rest.Y - d.base.Y}
+	d.flying = true
+	a.askConfirm("移动设备", d.name, "从“"+was.Name+"”移至“"+l.Name+"”。", func(c *ui.Context) { a.moveToNow(c, d, to, spot) })
+	return true
+}
+func (a *app) moveToNow(c *ui.Context, d *device, to model.LANID, spot ui.Point) bool {
 	from, l, was := d.lan, a.snap.LAN(to), a.snap.LAN(d.lan)
 	if l == nil || was == nil || l.Has(d.dev) || l.HasPending(d.dev) {
 		return false
@@ -555,14 +565,17 @@ func (a *app) moveTo(c *ui.Context, d *device, to model.LANID, spot ui.Point) bo
 	rest := d.rest
 	// It rests where it lands now: the toast keeps clear of there.
 	d.rest = spot
+	d.off, d.flying = ui.Point{X: spot.X - d.base.X, Y: spot.Y - d.base.Y}, true
 	a.rekey(d, to)
 	a.sendAfter(c, model.Op{Kind: model.OpLANAddDevice, LAN: to, Device: d.dev},
 		model.Op{Kind: model.OpLANRemoveDevice, LAN: from, Device: d.dev})
 	a.notify(c, d, "已把"+short(d.name)+"挪到"+short(l.Name), func() {
-		a.sendAfter(c, model.Op{Kind: model.OpLANAddDevice, LAN: from, Device: d.dev},
-			model.Op{Kind: model.OpLANRemoveDevice, LAN: to, Device: d.dev})
-		a.rekey(d, from)
-		d.off, d.flying = ui.Point{X: rest.X - d.base.X, Y: rest.Y - d.base.Y}, true
+		a.askConfirm("移回设备", d.name, "从“"+l.Name+"”移回“"+was.Name+"”。", func(c *ui.Context) {
+			a.sendAfter(c, model.Op{Kind: model.OpLANAddDevice, LAN: from, Device: d.dev},
+				model.Op{Kind: model.OpLANRemoveDevice, LAN: to, Device: d.dev})
+			a.rekey(d, from)
+			d.off, d.flying = ui.Point{X: rest.X - d.base.X, Y: rest.Y - d.base.Y}, true
+		})
 	})
 	return true
 }
@@ -570,6 +583,11 @@ func (a *app) moveTo(c *ui.Context, d *device, to model.LANID, spot ui.Point) bo
 // leaveHere takes one of my devices out of its LAN, let go out of every
 // region; undo brings it back where it was.
 func (a *app) leaveHere(c *ui.Context, d *device) {
+	d.off = ui.Point{X: d.rest.X - d.base.X, Y: d.rest.Y - d.base.Y}
+	d.flying = true
+	a.askConfirm("移出局域网", d.name, "设备将断开此局域网。", func(c *ui.Context) { a.leaveHereNow(c, d) })
+}
+func (a *app) leaveHereNow(c *ui.Context, d *device) {
 	l := a.snap.LAN(d.lan)
 	if l == nil {
 		return

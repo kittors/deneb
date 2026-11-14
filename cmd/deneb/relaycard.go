@@ -37,17 +37,17 @@ func (a *app) relayCardView(c *ui.Context, p *palette, id model.RelayID) {
 		a.relayStatus(c, p, rl, mine)
 		switch {
 		case rl.Public():
-			note(c, p, "自动兜底，不用管。直接连不上，或者局域网自己的中转站用不了时，自动经它中转。", 14)
-			note(c, p, "内容全程加密，中转站看不到。", 6)
+			note(c, p, "直连或专用中转不可用时，自动使用公共中转。", 14)
+			note(c, p, "端到端加密", 6)
 		case mine:
 			a.relayNow(c, p, rl)
 			a.relayMonth(c, p, rl)
 			a.relayUsers(c, p, rl)
-			note(c, p, "内容全程加密，你也看不到；你能看到谁在用、用了多少。", 14)
+			note(c, p, "内容端到端加密，仅显示用户与流量统计。", 14)
 		default:
 			who := a.personName(rl.Owner)
 			// (No space after a full stop of its own: "，Mia".)
-			note(c, p, "内容全程加密，"+say(who, "看不到；")+say(who, "能看到谁在经它连、用了多少。"), 14)
+			note(c, p, say(who, "仅能查看用户与流量统计，无法读取内容。"), 14)
 		}
 		a.relayFoot(c, p, rl, mine)
 	})
@@ -59,21 +59,14 @@ func (a *app) relayHead(c *ui.Context, p *palette, rl *model.Relay, mine bool) {
 	ui.Row(c).Gap(12).AlignItems(ui.Start).Children(func() {
 		relayOrb(c, p, 40, rl.Down, 0)
 		ui.Column(c).Gap(2).Grow(1).Children(func() {
-			key := "relay:" + string(rl.ID)
-			if r := a.renaming; r != nil && r.id == key {
-				a.nameField(c, p, r, 15, func(name string) {
-					if name != rl.Label() {
-						a.send(c, model.Op{Kind: model.OpRelayRename, Relay: rl.ID, Name: name})
-					}
-				})
-			} else if mine {
+			if mine {
 				name := ui.ButtonBase(c.Key("name")).FocusRing(false).Cursor(ui.CursorText).AlignSelf(ui.Start).Label("改名字")
 				name.Children(func() {
 					ui.Text(c.Key("name-"+rl.Label()), rl.Label()).FontSize(15).FontWeight(600).SingleLine().MaxWidth(cardNameWidth).
 						Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{}})
 				})
 				if name.Clicked() {
-					a.renaming = &renaming{id: key, name: rl.Label()}
+					a.beginRename(model.Op{Kind: model.OpRelayRename, Relay: rl.ID}, rl.Label())
 				}
 			} else {
 				ui.Text(c, rl.Label()).FontSize(15).FontWeight(600).SingleLine().MaxWidth(cardNameWidth)
@@ -248,7 +241,7 @@ func (a *app) relayUsers(c *ui.Context, p *palette, rl *model.Relay) {
 				a.kickChip(c, p, rl, who, "")
 			}
 		})
-		note(c, p, "点一下，就不让他用这个中转站", 8)
+		note(c, p, "点击用户可禁止使用", 8)
 	}
 	var kept []model.RelayKick
 	for _, k := range rl.Kicks {
@@ -322,6 +315,13 @@ func (a *app) kickChip(c *ui.Context, p *palette, rl *model.Relay, who model.Per
 // kick keeps who off my relay, or lets them back (off false), and says so
 // with the other way as its undo.
 func (a *app) kick(c *ui.Context, rl *model.Relay, who model.PersonID, off bool) {
+	if off {
+		a.askConfirm("禁止使用中转", a.personName(who), rl.Label(), func(c *ui.Context) { a.kickNow(c, rl, who, true) })
+		return
+	}
+	a.kickNow(c, rl, who, false)
+}
+func (a *app) kickNow(c *ui.Context, rl *model.Relay, who model.PersonID, off bool) {
 	kind, undo := model.OpRelayKick, model.OpRelayUnkick
 	text := say("已不让", a.personName(who), "用", short(a.relayCall(rl)))
 	if !off {
@@ -518,7 +518,7 @@ func (a *app) joinCardView(c *ui.Context, p *palette, id string) {
 			})
 			return
 		}
-		note(c, p, "不装也能用：直接连不上时，自动经公共中转站。", 12)
+		note(c, p, "未安装专用中转时，自动使用公共中转。", 12)
 	})
 }
 

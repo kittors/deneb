@@ -231,7 +231,7 @@ func (a *app) panelHead(c *ui.Context, p *palette) {
 		if me := s.Person(s.Me); me != nil {
 			col = ownerColors[me.Color%model.NumColors]
 		}
-		deviceTile(c, p, kind, col, 36, false)
+		a.profileTile(c, p, s.Self, kind, col, 36, false, 0)
 		ui.Column(c).Gap(2).Grow(1).Children(func() {
 			ui.Text(c, name).FontSize(14).FontWeight(600).SingleLine().MaxWidth(220)
 			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
@@ -645,7 +645,7 @@ func (a *app) panelShared(c *ui.Context, p *palette, sh model.SharedDevice) {
 		col = ownerColors[who.Color%model.NumColors]
 	}
 	row.Children(func() {
-		deviceTile(c, p, glyphFor(m.Kind), col, 24, false)
+		a.profileTile(c, p, m.ID, glyphFor(m.Kind), col, 24, false, 0)
 		ui.Column(c).Gap(1).Grow(1).Shrink(1).Children(func() {
 			ui.Text(c, m.Name).FontSize(13).FontWeight(500).SingleLine()
 			line := from + " · " + a.pathWords(sh.Device)

@@ -267,7 +267,12 @@ type app struct {
 	// sidebar's last row (where that was in the last frame, and how tall
 	// the window is); the page that deletes the account, while it shows;
 	// what the sign-in says once the account was deleted.
+	avatars      map[model.DeviceID]cachedAvatar
+	pickAvatar   func() ([]byte, error)
+	avatarBusy   bool
+	updates      *appUpdater
 	accountOpen  bool
+	settingsOpen bool
 	accountRowAt ui.Rect
 	winH         float32
 	deleting     *accountDeleting
@@ -336,9 +341,13 @@ type app struct {
 	// clock is the view's clock as the frame being built has it (now).
 	clock time.Time
 
-	renaming *renaming       // a name edited in place (DESIGN §6.9)
-	picking  bool            // the card's row of kinds is open
-	watching map[string]bool // devices to tell of as they come online (DESIGN §6.8)
+	confirming    *confirmation
+	myDevicesOpen bool
+	deviceDetails model.DeviceID
+	avatarEdit    *avatarEditor
+	renaming      *renaming       // a name edited in place (DESIGN §6.9)
+	picking       bool            // the card's row of kinds is open
+	watching      map[string]bool // devices to tell of as they come online (DESIGN §6.8)
 	// seenInvitations are the invites by name whose card has shown once:
 	// one put off stays in the sidebar, rather than show again by itself.
 	seenInvitations map[string]bool

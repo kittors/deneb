@@ -49,6 +49,9 @@ func TestRelayFromTheTray(t *testing.T) {
 		t.Error("香港 stays on the canvas with nothing through it")
 	}
 	r.click("撤销")
+	if r.a.confirming != nil {
+		acceptConfirmation(t, r.tt, r.a.confirming.title)
+	}
 	r.run(time.Second)
 	if r.lan().Added("srv") || r.pathOf("jnas").Relay != "hk" {
 		t.Errorf("undone, 周末联机 still uses my server (%v), the NAS through %q", r.lan().AddedRelays, r.pathOf("jnas").Relay)
@@ -65,6 +68,7 @@ func TestRelayOutOfTheLAN(t *testing.T) {
 		}
 	}
 	r.click("不用这个中转站")
+	acceptConfirmation(t, r.tt, "移除中转站")
 	r.run(1500 * time.Millisecond)
 	if r.lan().Added("srv") || r.pathOf("jnas").Relay != "hk" {
 		t.Fatalf("周末联机 still uses my server (%v), the NAS through %q", r.lan().AddedRelays, r.pathOf("jnas").Relay)
@@ -82,6 +86,7 @@ func TestRelayKeepsSomeoneOff(t *testing.T) {
 	r.tap(r.relay("srv"))
 	r.run(800 * time.Millisecond)
 	r.click("不让阿杰用")
+	acceptConfirmation(t, r.tt, "禁止使用中转")
 	r.run(time.Second)
 	rl := r.d.Snapshot().Relays["srv"]
 	if rl.Kick("jie") == nil || slices.Contains(rl.Using, "jie") {
@@ -145,7 +150,7 @@ func TestRelayNotMine(t *testing.T) {
 	}
 	r.tap(r.relay("jiesrv"))
 	r.run(800 * time.Millisecond)
-	if !r.has("内容全程加密，阿杰看不到；阿杰能看到谁在经它连、用了多少。") || r.has("不用这个中转站") {
+	if !r.has("阿杰仅能查看用户与流量统计，无法读取内容。") || r.has("不用这个中转站") {
 		t.Errorf("阿杰's server's card: %q", r.tt.Texts())
 	}
 }
@@ -172,6 +177,7 @@ func TestRelayInstallCommand(t *testing.T) {
 	r.click("关闭")
 	r.click("等待安装")
 	r.click("收回这行命令")
+	acceptConfirmation(t, r.tt, "收回安装命令")
 	if n := len(r.d.Snapshot().RelayJoins); n != 1 {
 		t.Errorf("taken back at once, before the toast went: %d waiting", n)
 	}

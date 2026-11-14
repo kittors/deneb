@@ -7,16 +7,19 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/egoist/mygo"
-	"github.com/egoist/mygo/plugins/updater"
-	"github.com/egoist/mygo/plugins/updater/native"
+	"github.com/egoist/mygo/netproxy"
+	"github.com/egoist/mygo/ui"
 	"github.com/kittors/deneb/engine/localapi/apitype"
 )
 
@@ -33,7 +36,13 @@ var appIcon []byte
 // mygo.json check: development builds never do, nor the .deb, which a new
 // .deb updates with its engine.
 func useUpdater() {
-	mygo.Use(native.New(updater.Options{Icon: appIcon}))
+	// Deneb draws its integrated update entry and dialog using mygo.Updater.
+	// A release build names its download site (updateFeed); its archives are
+	// still checked with the configured Ed25519 key. Without one, updates
+	// come from the GitHub releases of mygo.json's "updates".
+	if updateFeed != "" {
+		mygo.Updater.SetSource(httpsUpdateSource(updateFeed))
+	}
 	if dir := os.Getenv("DENEB_UPDATE_SOURCE"); dir != "" {
 		// A release before it is published, from a folder that holds what
 		// `mygo build` wrote for it. Its files must be signed with the key
@@ -144,7 +153,7 @@ func followEngine(ctx context.Context, lc engineAPI, bundled, want string, insta
 var installing atomic.Bool
 
 // followEngineOnce runs followEngine for this launch's engine.
-func followEngineOnce(lc engineAPI) {
+func followEngineOnce(a *app, lc engineAPI) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	install := func(ctx context.Context, exe string) error {
@@ -152,5 +161,59 @@ func followEngineOnce(lc engineAPI) {
 		defer installing.Store(false)
 		return installService(ctx, exe)
 	}
-	log.Printf("deneb: %s", followEngine(ctx, lc, bundledEngine(), mygo.App.Version(), install))
+	result := followEngine(ctx, lc, bundledEngine(), mygo.App.Version(), install)
+	log.Printf("deneb: %s", result)
+	v, err := lc.Version(ctx)
+	if err != nil || v.Engine != mygo.App.Version() {
+		a.post(func(*ui.Context) {
+			a.engineErr = "系统引擎还未更新，请在系统认证窗口中允许安装，或重新打开 Deneb 重试"
+		})
+	}
+}
+
+// updateFeed is the folder of the download site that holds the signed
+// manifests (update-<os>-<arch>.json) and archives, as
+// "https://<site>/download/". Release builds set it through MYGO_LDFLAGS
+// (deploy/package.sh, DENEB_UPDATE_FEED), so the site's address stays out
+// of the repository.
+var updateFeed string
+
+// httpsUpdateSource serves the same signed manifests as a release. Archive
+// hosts are constrained to the feed's HTTPS origin, and Go verifies TLS.
+type httpsUpdateSource string
+
+func (s httpsUpdateSource) Manifest(ctx context.Context, _ bool) (io.ReadCloser, error) {
+	return s.Open(ctx, string(s)+"update-"+runtime.GOOS+"-"+runtime.GOARCH+".json")
+}
+func (s httpsUpdateSource) Open(ctx context.Context, raw string) (io.ReadCloser, error) {
+	base, err := url.Parse(string(s))
+	if err != nil {
+		return nil, err
+	}
+	target, err := url.Parse(raw)
+	if err != nil {
+		return nil, err
+	}
+	if target.Scheme != "https" || target.Host != base.Host || target.User != nil || !strings.HasPrefix(target.Path, base.Path) {
+		return nil, errors.New("更新文件不在 Deneb HTTPS 下载目录中")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
+	if err != nil {
+		return nil, err
+	}
+	client := &http.Client{Transport: netproxy.Transport(), CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 5 || req.URL.Scheme != "https" || req.URL.Host != base.Host {
+			return errors.New("更新下载跳转到了其他服务")
+		}
+		return nil
+	}}
+	response, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if response.StatusCode != http.StatusOK {
+		response.Body.Close()
+		return nil, fmt.Errorf("更新服务：%s", response.Status)
+	}
+	return response.Body, nil
 }

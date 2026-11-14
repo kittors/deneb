@@ -13,7 +13,11 @@
 #            denebd_<v>_<arch>.deb; and deneb-server_<v>_<arch>.deb for
 #            servers (deploy/linux/build-deb.sh)
 #
-#   deploy/package.sh [windows] [linux]        (default both)
+#   macos    native Apple silicon or Intel .app and .dmg, with its engine;
+#            the app installs its root-owned launchd service after macOS
+#            administrator authentication. Build this target on macOS.
+#
+#   deploy/package.sh [macos] [windows] [linux] (default windows linux)
 #
 # The app's files hold Deneb's LICENSE and THIRD_PARTY_NOTICES, the
 # licenses of everything its programs link (deploy/notices.sh); the
@@ -29,6 +33,12 @@
 #   TAGS         more build tags for the engine; never denebtest: test
 #                builds are made apart (test/topo/.accept/) and never
 #                released, which deploy/check-release.sh makes sure of
+#   DENEB_UPDATE_FEED  where the apps look for updates: the download
+#                site's folder of signed manifests, "https://<site>/download/"
+#                (deploy/updates.md). Default: from WEB_HOST in
+#                deploy/web/site.hkspare.env when that file is there, which
+#                keeps the site's address out of the repository; with
+#                neither, the apps update from GitHub releases
 #
 # Windows installers need NSIS's makensis; without it MyGo leaves the
 # installer out and says so. The Debian packages of the engine are made
@@ -63,7 +73,7 @@ staged=
 # however it ends: they are for the packages, not for `mygo dev`.
 cleanup() {
 	for p in $staged; do
-		rm -f "$res/$p/denebd.exe" "$res/$p/wintun.dll" "$res/$p/LICENSE.txt" "$res/$p/THIRD_PARTY_NOTICES.txt"
+		rm -f "$res/$p/denebd" "$res/$p/denebd.exe" "$res/$p/wintun.dll" "$res/$p/LICENSE.txt" "$res/$p/THIRD_PARTY_NOTICES.txt"
 		rmdir "$res/$p" 2>/dev/null || true
 	done
 }
@@ -84,6 +94,18 @@ notices() {
 
 for target in "$@"; do
 	case $target in
+	macos)
+		[ "$(go env GOHOSTOS)" = darwin ] || {
+			echo "package: macos needs macOS for app signing and the disk image" >&2
+			exit 1
+		}
+		arch=$(go env GOHOSTARCH)
+		notices darwin "$arch" ./cmd/deneb ./cmd/denebd
+		(cd "$root" && CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" go build ${tags:+-tags "$tags"} -trimpath \
+			-ldflags "-X main.version=$version" -o "$res/darwin-$arch/denebd" ./cmd/denebd)
+		"$root/deploy/check-release.sh" "$res/darwin-$arch/denebd"
+		platforms="$platforms,darwin/$arch"
+		;;
 	windows)
 		[ -f "$wintun/bin/amd64/wintun.dll" ] || {
 			echo "package: no $wintun/bin/amd64/wintun.dll: unpack wintun-$wintun_version.zip from https://www.wintun.net there, or set WINTUN_DIR" >&2
@@ -106,14 +128,31 @@ for target in "$@"; do
 		engine_debs=1
 		;;
 	*)
-		echo "usage: $0 [windows] [linux]" >&2
+		echo "usage: $0 [macos] [windows] [linux]" >&2
 		exit 2
 		;;
 	esac
 done
 
+# The update feed goes into the app at link time (cmd/deneb/update.go,
+# updateFeed): MyGo adds MYGO_LDFLAGS after its own -ldflags.
+feed=${DENEB_UPDATE_FEED:-}
+if [ -z "$feed" ] && [ -f "$root/deploy/web/site.hkspare.env" ]; then
+	feed=$(sed -n 's/^WEB_HOST=//p' "$root/deploy/web/site.hkspare.env" | tr -d '"' | head -n 1)
+	[ -z "$feed" ] || feed=https://$feed/download/
+fi
+case $feed in
+"" | https://*/) ;;
+*) echo "DENEB_UPDATE_FEED must be https://<site>/<folder>/, not $feed" >&2; exit 2 ;;
+esac
+if [ -n "$feed" ]; then
+	echo "the apps look for updates at the download site (DENEB_UPDATE_FEED)"
+else
+	echo "no DENEB_UPDATE_FEED: the apps look for updates in GitHub releases"
+fi
+
 # MyGo replaces each platform's folder of $out with what it builds.
-(cd "$root" && go tool mygo build -platform "${platforms#,}" -o "$out" cmd/deneb)
+(cd "$root" && MYGO_LDFLAGS="${MYGO_LDFLAGS:+$MYGO_LDFLAGS }${feed:+-X main.updateFeed=$feed}" go tool mygo build -platform "${platforms#,}" -o "$out" cmd/deneb)
 if [ -n "${engine_debs:-}" ]; then
 	# The engine's packages beside the window's, and in the release's
 	# checksums, named as MyGo names its files there, once.

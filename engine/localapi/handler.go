@@ -62,6 +62,21 @@ func Handler(b Backend, extra http.Handler) http.Handler {
 	mux.HandleFunc("GET /v1/version", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, apitype.VersionInfo{API: apitype.APIVersion, Engine: b.EngineVersion(), PID: os.Getpid()})
 	})
+	mux.HandleFunc("GET /v1/device-metrics", func(w http.ResponseWriter, r *http.Request) {
+		metrics, ok := b.(interface {
+			DeviceMetrics(context.Context) (json.RawMessage, error)
+		})
+		if !ok {
+			WriteError(w, &apitype.Error{Code: apitype.ErrNotFound, Message: "此引擎不支持设备监控"})
+			return
+		}
+		raw, err := metrics.DeviceMetrics(r.Context())
+		if err != nil {
+			WriteError(w, err)
+			return
+		}
+		writeJSON(w, raw)
+	})
 	mux.HandleFunc("GET /v1/state", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, b.State())
 	})

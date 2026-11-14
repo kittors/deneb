@@ -277,6 +277,9 @@ func (a *app) askJoin(c *ui.Context) {
 // shrinks away now, and the server hears of it once the toast goes, its
 // undo the command as it was.
 func (a *app) revokeJoin(c *ui.Context, id string) {
+	a.askConfirm("收回安装命令", "中转站安装命令", "收回后此命令将失效。", func(c *ui.Context) { a.revokeJoinNow(c, id) })
+}
+func (a *app) revokeJoinNow(c *ui.Context, id string) {
 	a.selected = ""
 	a.holdFor(c, model.Op{Kind: model.OpRelayRevokeJoin, Join: id}, "已收回这行命令")
 	a.toast.orb = true
@@ -332,6 +335,13 @@ func (a *app) relayInSay(c *ui.Context, id model.RelayID, from, spot ui.Point, f
 func (a *app) relayOut(c *ui.Context, id model.RelayID) { a.relayOutOf(c, a.lan, id, true) }
 
 func (a *app) relayOutOf(c *ui.Context, lan model.LANID, id model.RelayID, toast bool) {
+	rl, l := a.snap.Relays[id], a.snap.LAN(lan)
+	if rl == nil || l == nil {
+		return
+	}
+	a.askConfirm("移除中转站", rl.Label(), "从“"+l.Name+"”移除，连接将改用其他路径。", func(c *ui.Context) { a.relayOutOfNow(c, lan, id, toast) })
+}
+func (a *app) relayOutOfNow(c *ui.Context, lan model.LANID, id model.RelayID, toast bool) {
 	rl, l := a.snap.Relays[id], a.snap.LAN(lan)
 	if rl == nil || l == nil || !l.Added(id) {
 		return

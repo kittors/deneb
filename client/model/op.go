@@ -32,7 +32,8 @@ const (
 	OpInviteRevoke         OpKind = "invite.revoke"         // Invite (an Invited's id), or LAN and Person
 	OpDeviceRenew          OpKind = "device.renew"          // Device
 	OpDeviceRename         OpKind = "device.rename"         // Device, Name
-	OpDeviceSetKind        OpKind = "device.setKind"        // Device, DevKind
+	OpDeviceSetAvatar      OpKind = "device.setAvatar"
+	OpDeviceSetKind        OpKind = "device.setKind" // Device, DevKind
 	// OpLANAddRelay is the reason's "加一个中转站": the LAN's devices that
 	// nothing reaches go through a relay. The demo plays it; the real one
 	// comes with relays in M4.
@@ -89,6 +90,7 @@ type Op struct {
 	On      bool   // service.set: open it, or close it; the approve switches
 	Refuse  bool   // device.refuse: refuse them, or let them back
 
+	Avatar     []byte
 	DevKind    string // device.setKind
 	Invitation string // invite.accept, invite.decline: an Invitation's ID
 
@@ -318,7 +320,7 @@ func (s *Snapshot) With(op Op) *Snapshot {
 		return s.withM3(op)
 	case OpRelayAdd, OpRelayRemove, OpRelayRename, OpRelayKick, OpRelayUnkick, OpRelayJoin, OpRelayRevokeJoin:
 		return s.withM4(op)
-	case OpDeviceRenew, OpDeviceRename, OpDeviceSetKind:
+	case OpDeviceRenew, OpDeviceRename, OpDeviceSetKind, OpDeviceSetAvatar:
 		d := s.Devices[op.Device]
 		if d == nil {
 			return s
@@ -336,11 +338,14 @@ func (s *Snapshot) With(op Op) *Snapshot {
 				return s
 			}
 			nd.Name = op.Name
+		case OpDeviceSetAvatar:
+			nd.Avatar = slices.Clone(op.Avatar)
 		case OpDeviceSetKind:
-			if op.DevKind == "" || d.Kind == op.DevKind {
+			if op.DevKind == "" || d.Kind == op.DevKind && len(d.Avatar) == 0 {
 				return s
 			}
 			nd.Kind = op.DevKind
+			nd.Avatar = nil
 		}
 		n := s.clone()
 		n.Devices = cloneMap(s.Devices)

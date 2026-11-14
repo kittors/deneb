@@ -1,7 +1,7 @@
 {
   "name": "Deneb",
   "identifier": "dev.deneb.app",
-  "version": "0.1.0",
+  "version": "0.1.8",
   "copyright": "Copyright (c) 2026 kittors",
   "out": "build",
   "urlSchemes": [
@@ -25,5 +25,10 @@
       "libayatana-appindicator3-1"
     ],
     "webview": false
+  },
+  "updates": {
+    "publicKey": "oIpKlr1FzjpMDb9aZiY3pT0cIL89a02CwLA2/sDQztA=",
+    "github": "kittors/deneb",
+    "changelog": "../../CHANGELOG.md"
   }
 }

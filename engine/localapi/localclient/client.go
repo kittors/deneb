@@ -445,3 +445,8 @@ func (c *Client) RawStream(ctx context.Context, path string, fn func([]byte) err
 func (c *Client) Raw(ctx context.Context, method, path string, body, out any) error {
 	return c.do(ctx, method, path, body, out)
 }
+
+func (c *Client) DeviceMetrics(ctx context.Context) (json.RawMessage, error) {
+	var raw json.RawMessage
+	return raw, c.do(ctx, "GET", "/v1/device-metrics", nil, &raw)
+}

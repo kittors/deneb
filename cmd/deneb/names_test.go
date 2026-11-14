@@ -73,7 +73,7 @@ func TestLongNamesEndShort(t *testing.T) {
 	m := a.device("mia")
 	tt.ClickAt(sidebarWidth+m.at().X, headerHeight+m.at().Y)
 	tt.Advance(600 * time.Millisecond)
-	if !tt.HasText("你可以用") {
+	if !tt.HasText("可用服务") {
 		t.Fatal("Mia's card did not open")
 	}
 	// The name shows twice now, on the canvas and in the card: each within

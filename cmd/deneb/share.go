@@ -181,8 +181,9 @@ func (a *app) shareTo(c *ui.Context, d *device, who string) {
 	a.popAt[who] = c.Now()
 	dev := d.dev
 	a.notify(c, d, say("已把", short(d.name), "分享给", a.people[who].name), func() {
-		a.sendAfter(c, model.Op{Kind: model.OpShareRevoke, Device: dev, Person: pid},
-			model.Op{Kind: model.OpShareRelease, Device: dev, Person: pid})
+		a.askConfirm("撤回共享", d.name, a.people[who].name, func(c *ui.Context) {
+			a.sendAfter(c, model.Op{Kind: model.OpShareRevoke, Device: dev, Person: pid}, model.Op{Kind: model.OpShareRelease, Device: dev, Person: pid})
+		})
 	})
 }
 
@@ -190,6 +191,13 @@ func (a *app) shareTo(c *ui.Context, d *device, who string) {
 // which gives it back as it was; once the toast goes without it, the
 // server hears that the seat it kept can go (share.release).
 func (a *app) revokeShare(c *ui.Context, dev model.DeviceID, who string) {
+	m := a.snap.Device(dev)
+	if m == nil {
+		return
+	}
+	a.askConfirm("收回共享", m.Name, "取消分享给 "+a.people[who].name+" 的访问。", func(c *ui.Context) { a.revokeShareNow(c, dev, who) })
+}
+func (a *app) revokeShareNow(c *ui.Context, dev model.DeviceID, who string) {
 	m := a.snap.Device(dev)
 	if m == nil {
 		return
@@ -214,6 +222,9 @@ func (a *app) revokeShare(c *ui.Context, dev model.DeviceID, who string) {
 // leaveShare gives back a device given to me ("不要了"). It goes at once
 // and the toast offers undo; the server hears of it as the toast goes.
 func (a *app) leaveShare(c *ui.Context, d *device) {
+	a.askConfirm("取消共享", d.name, "此设备将从共享列表移除。", func(c *ui.Context) { a.leaveShareNow(c, d) })
+}
+func (a *app) leaveShareNow(c *ui.Context, d *device) {
 	sh := a.snap.SharedOf(d.dev)
 	if sh == nil {
 		return
@@ -236,6 +247,9 @@ func (a *app) leaveShare(c *ui.Context, d *device) {
 // devices go at once; the server hears of it only as the toast goes, so
 // that undo is nothing done, and the seat stays theirs until then.
 func (a *app) freeSeat(c *ui.Context, who string) {
+	a.askConfirm("移出成员", a.people[who].name, "移出所有自有局域网，并收回向其共享的设备。", func(c *ui.Context) { a.freeSeatNow(c, who) })
+}
+func (a *app) freeSeatNow(c *ui.Context, who string) {
 	pid := model.PersonID(who)
 	var ops []model.Op
 	for _, l := range a.snap.LANs {

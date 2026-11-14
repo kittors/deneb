@@ -19,6 +19,7 @@ type Op struct {
 // OpArgs are the arguments of every op in one struct; each OpType lists the
 // fields it reads, and the others stay empty.
 type OpArgs struct {
+	Avatar  []byte     `json:"avatar,omitempty"`
 	LAN     LANID      `json:"lan,omitempty"`
 	Device  DeviceID   `json:"device,omitempty"`
 	Person  PersonID   `json:"person,omitempty"`
@@ -116,8 +117,10 @@ const (
 	// device's owner. The DNS label follows the new name when the name has
 	// letters or digits to make one from, unless it was set by hand with
 	// device.setDNSName.
-	OpDeviceRename  OpType = "device.rename"
-	OpDeviceSetKind OpType = "device.setKind" // Device, Kind. The device's owner.
+	OpDeviceRename    OpType = "device.rename"
+	OpDeviceSetAvatar OpType = "device.setAvatar" // Device, Avatar. Only its owner.
+	OpServiceRemove   OpType = "service.remove"   // Device, Service. Remove a published catalog entry.
+	OpDeviceSetKind   OpType = "device.setKind"   // Device, Kind. The device's owner.
 	// Device, Name (the DNS label): its FQDN changes, and later renames
 	// leave it alone. The device's owner, from the command line or "更多";
 	// two of one person's devices cannot share it.

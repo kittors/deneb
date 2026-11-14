@@ -52,13 +52,21 @@ type Live struct {
 	usageNow chan struct{}
 	// proxy is which proxy program runs here, for the notice of one taking
 	// the connections (M6).
-	proxy runningProxy
+	proxy          runningProxy
+	monitoring     bool
+	metrics        proto.DeviceMetricsView
+	latencies      map[model.DeviceID]model.LatencySample
+	metricsError   string
+	metricsLoading bool
+	metricsWake    chan struct{}
+	metricsEpoch   uint64
+	metricsCancel  context.CancelFunc
 }
 
 // NewLive returns the store of the engine lc talks to. It watches nothing
 // until Start.
 func NewLive(lc *localclient.Client) *Live {
-	l := &Live{lc: lc, now: time.Now, subs: map[int]func(*model.Snapshot){}, usageNow: make(chan struct{}, 1)}
+	l := &Live{lc: lc, now: time.Now, subs: map[int]func(*model.Snapshot){}, usageNow: make(chan struct{}, 1), metricsWake: make(chan struct{}, 1)}
 	l.snap = l.buildLocked(l.now())
 	return l
 }
@@ -72,6 +80,7 @@ func (l *Live) Start() {
 	go l.watch(ctx)
 	go l.listen(ctx)
 	go l.relayUsage(ctx)
+	go l.deviceMetrics(ctx)
 }
 
 // listen asks the engine which common services this computer listens on,
@@ -114,6 +123,7 @@ func (l *Live) Close() {
 // the ops of: a control shows only where both the server and this store
 // take it.
 var liveFeatures = map[string]bool{
+	proto.FeatureDeviceAvatar: true, proto.FeatureServiceRemove: true,
 	proto.FeatureApprove: true, proto.FeatureInvitePerson: true, proto.FeatureRename: true,
 	proto.FeatureRenew: true, proto.FeatureDNSName: true,
 	// M3's (DESIGN §6.11).
@@ -173,6 +183,15 @@ func (l *Live) takeState(st *apitype.State) {
 			// A view that does not read: the last one stays, rather than an
 			// empty world for a moment.
 			view = l.view
+		}
+		if l.state != nil && (l.state.User != st.User || l.state.SelfDeviceID != st.SelfDeviceID || !st.LoggedIn) {
+			l.metrics = proto.DeviceMetricsView{}
+			l.latencies = nil
+			l.metricsError = ""
+			l.metricsEpoch++
+			if l.metricsCancel != nil {
+				l.metricsCancel()
+			}
 		}
 		l.state, l.view, l.down = st, view, false
 		paths := make(map[model.DeviceID]model.Path, len(st.Paths))
@@ -272,6 +291,19 @@ func (l *Live) buildLocked(now time.Time) *model.Snapshot {
 		Relays:  map[model.RelayID]*model.Relay{},
 		Paths:   map[model.DeviceID]model.Path{},
 	}
+	s.DeviceMetrics = map[model.DeviceID]proto.DeviceMetrics{}
+	s.DeviceLatencies = l.latencies
+	for id, m := range l.metrics.Devices {
+		if l.state != nil && l.state.LoggedIn && l.view != nil {
+			for _, d := range l.view.Devices {
+				if d.ID == id && d.Owner == l.view.Me {
+					s.DeviceMetrics[model.DeviceID(id)] = m
+					break
+				}
+			}
+		}
+	}
+	s.MetricsError, s.MetricsLoading = l.metricsError, l.metricsLoading
 	st := l.state
 	if st == nil {
 		return s
@@ -594,7 +626,7 @@ func (l *Live) Do(ctx context.Context, op model.Op) (model.Result, error) {
 	args := proto.OpArgs{
 		LAN: proto.LANID(op.LAN), Device: proto.DeviceID(op.Device), Person: proto.PersonID(op.Person),
 		Name: op.Name, Invite: op.Invite, On: op.On, Refuse: op.Refuse,
-		Kind: proto.DeviceKind(op.DevKind), Invitation: proto.InviteID(op.Invitation),
+		Avatar: op.Avatar, Kind: proto.DeviceKind(op.DevKind), Invitation: proto.InviteID(op.Invitation),
 		Share: proto.ShareID(op.Share), Mode: proto.LANMode(op.Mode),
 	}
 	if err := l.shareArgs(op, &args); err != nil {

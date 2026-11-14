@@ -129,7 +129,7 @@ func (e *Engine) stateLocked() *apitype.State {
 }
 
 func deviceOf(n proto.Node) apitype.Device {
-	d := apitype.Device{ID: apitype.DeviceID(n.ID), Name: n.Name, DisplayName: n.DisplayName, Owner: apitype.PersonID(n.Owner),
+	d := apitype.Device{ID: apitype.DeviceID(n.ID), Name: n.Name, DisplayName: n.DisplayName, Avatar: slices.Clone(n.Avatar), Owner: apitype.PersonID(n.Owner),
 		OwnerName: n.OwnerName, FQDN: n.FQDN, Kind: string(n.Kind), OS: string(n.OS), Addrs: []string{}}
 	for _, a := range n.Addrs {
 		d.Addrs = append(d.Addrs, a.Addr().String())

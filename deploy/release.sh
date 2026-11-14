@@ -1,17 +1,19 @@
 #!/bin/sh
 # Puts a release of Deneb on GitHub as a draft, signed for updates
 # (design/plan/m6/client.md, "M7 · 打开自动更新"): deploy/package.sh builds
-# it, MYGO_UPDATER_PRIVATE_KEY signs the Windows app's update, and the files
+# it, MYGO_UPDATER_PRIVATE_KEY signs the Mac/Windows updates, and the files
 # go up to the draft release v<version>. A person looks at the draft and
-# publishes it; installed Windows apps then update to it, the latest
-# published release (cmd/deneb/update.go). .github/workflows/release.yml
+# publishes it. The runtime feed is the HTTPS download mirror; publish its
+# archives first and manifests last as described in deploy/updates.md.
+# .github/workflows/release.yml
 # runs it for a tag pushed.
 #
-#   deploy/release.sh [-n] [windows] [linux]      (default both)
+#   deploy/release.sh [-n] [macos] [windows] [linux] (default windows linux)
 #
 #   -n   build, sign and check, and list what would go up; upload nothing
 #
 # What goes up, from deploy/out/<version>/:
+#   darwin-<arch>/ the DMG and signed update archive/manifest (macOS host)
 #   windows-amd64/  the installer, the update archive and its deltas, and
 #                   update-windows-amd64.json, the manifest apps read: last,
 #                   so that it never names a file not up yet
@@ -21,7 +23,7 @@
 # Not the Linux archives, install script, PKGBUILD and manifests that MyGo
 # writes too: the window they install has no engine (the denebd .deb has
 # it), and the .deb, in /opt, is updated by a newer .deb, not by itself. Not
-# macOS, which waits for an Apple developer account (i1).
+# Apple notarization: current macOS packages are ad hoc signed.
 #
 # Needs what deploy/package.sh needs, and:
 #   updates in cmd/deneb/mygo.json: its publicKey, and github kittors/deneb
@@ -47,9 +49,9 @@ fi
 [ $# -gt 0 ] || set -- windows linux
 for target in "$@"; do
 	case $target in
-	windows | linux) ;;
+	macos | windows | linux) ;;
 	*)
-		echo "usage: $0 [-n] [windows] [linux]" >&2
+		echo "usage: $0 [-n] [macos] [windows] [linux]" >&2
 		exit 2
 		;;
 	esac
@@ -83,13 +85,22 @@ files=
 manifests=
 for target in "$@"; do
 	case $target in
+    macos)
+        arch=$(go env GOHOSTARCH)
+        d=$out/darwin-$arch
+        for f in "$d"/*.dmg "$d"/*-darwin-$arch.tar.gz "$d"/*.delta; do
+            [ -f "$f" ] && files="$files $f"
+        done
+        [ -f "$d/update-darwin-$arch.json" ] || fail "no macOS signed update manifest"
+        manifests="$manifests $d/update-darwin-$arch.json"
+        ;;
 	windows)
 		d=$out/windows-amd64
 		for f in "$d"/*-setup-*.exe "$d"/*-windows-amd64.zip "$d"/*-windows-amd64.tar.gz "$d"/*.delta; do
 			[ -f "$f" ] && files="$files $f"
 		done
 		[ -f "$d/update-windows-amd64.json" ] || fail "no $d/update-windows-amd64.json: was it signed?"
-		manifests=$d/update-windows-amd64.json
+		manifests="$manifests $d/update-windows-amd64.json"
 		;;
 	linux)
 		for f in "$out"/linux-*/*.deb; do
@@ -134,4 +145,4 @@ fi
 # shellcheck disable=SC2086 # the paths hold no spaces: deploy/out/<version>/...
 gh release upload "$tag" --repo "$repo" --clobber $files "$sums"
 [ -z "$manifests" ] || gh release upload "$tag" --repo "$repo" --clobber $manifests
-echo "release: up in the draft $tag: look at it, then publish it (gh release edit $tag --repo $repo --draft=false); apps update to it once it is published"
+echo "release: up in the draft $tag: look at it, then publish it (gh release edit $tag --repo $repo --draft=false); publish the HTTPS mirror separately (deploy/updates.md)"

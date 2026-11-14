@@ -114,6 +114,7 @@ func TestToastOverTheTrayKeepsClear(t *testing.T) {
 	// Aim where the tray is, as a hand would: centered under the canvas.
 	tray := a.trayZone(a.cw, a.ch)
 	drag(tt, from, ui.Point{X: a.origin.X + tray.X + tray.W/2, Y: a.origin.Y + tray.Y + tray.H/2})
+	acceptConfirmation(t, tt, "移出局域网")
 	const text = "已把我的游戏主机移出局域网"
 	seen := 0
 	for i := 0; i < 40; i++ {

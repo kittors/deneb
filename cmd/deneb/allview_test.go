@@ -120,6 +120,8 @@ func TestAllViewMoveAndUndo(t *testing.T) {
 	to := r.at("work/lindb")
 	to.X, to.Y = to.X-108, to.Y+196
 	r.drag(r.at("weekend/game"), to)
+	acceptConfirmation(t, r.tt, "移动设备")
+	r.step(1200)
 	if a.snap.LAN("weekend").Has("game") || !a.snap.LAN("work").Has("game") {
 		t.Fatal("the console did not move to 工作室")
 	}
@@ -133,6 +135,7 @@ func TestAllViewMoveAndUndo(t *testing.T) {
 	if err := r.tt.Click("撤销"); err != nil {
 		t.Fatal(err)
 	}
+	acceptConfirmation(t, r.tt, "移回设备")
 	r.step(1200)
 	if !a.snap.LAN("weekend").Has("game") || a.snap.LAN("work").Has("game") {
 		t.Fatal("undo did not move the console back")
@@ -148,6 +151,8 @@ func TestAllViewDropOutLeaves(t *testing.T) {
 	a := r.a
 	from := r.at("weekend/game")
 	r.drag(from, ui.Point{X: from.X + 250, Y: from.Y + 200})
+	acceptConfirmation(t, r.tt, "移出局域网")
+	r.step(1200)
 	if a.snap.LAN("weekend").Has("game") {
 		t.Fatal("let go out of every region, the console stays in 周末联机")
 	}
@@ -160,6 +165,27 @@ func TestAllViewDropOutLeaves(t *testing.T) {
 	r.step(1200)
 	if !a.snap.LAN("weekend").Has("game") || a.device("weekend/game") == nil {
 		t.Fatal("undo did not bring the console back")
+	}
+}
+
+func TestAllViewMoveCancellationKeepsOriginalPosition(t *testing.T) {
+	r := newAllRig(t)
+	a := r.a
+	rest := a.device("weekend/game").at()
+	to := r.at("work/lindb")
+	to.X, to.Y = to.X-108, to.Y+196
+	r.drag(r.at("weekend/game"), to)
+	r.step(1200)
+	if a.confirming == nil || !a.snap.LAN("weekend").Has("game") || a.snap.LAN("work").Has("game") {
+		t.Fatal("move changed membership before confirmation")
+	}
+	if err := r.tt.Click("取消"); err != nil {
+		t.Fatal(err)
+	}
+	r.step(1200)
+	d := a.device("weekend/game")
+	if a.confirming != nil || d == nil || dist(d.at(), rest) > 1 || !a.snap.LAN("weekend").Has("game") || a.snap.LAN("work").Has("game") {
+		t.Fatalf("cancel failed to restore position/membership: device=%+v rest=%v", d, rest)
 	}
 }
 

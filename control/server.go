@@ -149,7 +149,8 @@ type Server struct {
 
 	sweeps sweeper
 	// relayLive is which relays checked in lately (M4).
-	relayLive *relayLive
+	relayLive     *relayLive
+	deviceSamples deviceSamples
 	// versions wakes the relays' watches at every change (M4).
 	versions *versionWaiter
 	// keepAlive is how often a stream sends a keep-alive frame
@@ -450,6 +451,8 @@ func (s *Server) routes() {
 	m.HandleFunc("POST "+proto.PathLoginWait, s.device(s.handleLoginWait, false))
 	m.HandleFunc("POST "+proto.PathLogout, s.device(s.handleLogout, true))
 	m.HandleFunc("GET "+proto.PathStream, s.device(s.handleStream, true))
+	m.HandleFunc("GET "+proto.PathDeviceMetrics, s.device(s.handleDeviceMetrics, true))
+	m.HandleFunc("POST "+proto.PathDeviceMetrics, s.device(s.handleDeviceMetrics, true))
 	m.HandleFunc("POST "+proto.PathReport, s.device(s.handleReport, true))
 	m.HandleFunc("POST "+proto.PathOps, s.device(s.handleOps, true))
 	m.HandleFunc("GET "+proto.PathUserView, s.device(s.handleUserView, true))

@@ -152,7 +152,7 @@ func m6diag(r *realRig) {
 	at := r.at(self)
 	r.tt.ClickAt(at.X, at.Y)
 	r.tick()
-	r.until("this computer's card", func() bool { return r.tt.HasText("这就是你正在用的电脑") })
+	r.until("this computer's card", func() bool { return r.tt.HasText("本机") })
 	r.hold(800 * time.Millisecond)
 	r.click("更多")
 	r.until("its more", func() bool { return r.tt.HasText("导出诊断包") })

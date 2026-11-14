@@ -212,7 +212,7 @@ func TestShareFromTray(t *testing.T) {
 	b := r.ball("jie")
 	r.tt.ClickAt(b.X, b.Y)
 	r.run(600 * time.Millisecond)
-	for _, want := range []string{"周末联机的成员", "你分享给阿杰的", "我的 NAS", "只有阿杰能连你，反过来不行"} {
+	for _, want := range []string{"周末联机的成员", "你分享给阿杰的", "我的 NAS", "仅允许阿杰访问"} {
 		if !r.has(want) {
 			t.Errorf("his card lacks %q: %q", want, r.tt.Texts())
 		}
@@ -270,7 +270,7 @@ func TestShareCardRevokeUndoRelease(t *testing.T) {
 	r.run(4500 * time.Millisecond) // the toast goes
 	r.tt.ClickAt(r.tile("mac").X, r.tile("mac").Y)
 	r.run(600 * time.Millisecond)
-	if !r.has("分享给") || !r.has("只有阿明能连你，反过来不行") {
+	if !r.has("分享给") || !r.has("仅允许阿明访问") {
 		t.Fatalf("the card does not say it: %q", r.tt.Texts())
 	}
 	r.click("分享给阿明")
@@ -311,11 +311,12 @@ func (r *m3rig) revoke(t *testing.T, dev, who string) {
 	if err := r.tt.Click("收回"); err != nil {
 		t.Fatalf("no ×: %v", err)
 	}
+	acceptConfirmation(t, r.tt, "收回共享")
 	r.run(500 * time.Millisecond)
 }
 
 // The devices given to me, on their own canvas: where each comes from and
-// how it is connected, its card one way; "不要了" gives it back, with undo.
+// how it is connected, its card one way; "取消共享" gives it back, with undo.
 func TestSharedWithMe(t *testing.T) {
 	r := newM3Rig(t)
 	r.click("共享给我")
@@ -336,12 +337,13 @@ func TestSharedWithMe(t *testing.T) {
 	}
 	r.tt.ClickAt(r.tile("gpu").X, r.tile("gpu").Y)
 	r.run(600 * time.Millisecond)
-	for _, want := range []string{"设计部的设备", "你可以用", "远程桌面", "只有你能连它，反过来不行", "不要了"} {
+	for _, want := range []string{"设计部的设备", "可用服务", "远程桌面", "仅允许你访问此设备", "取消共享"} {
 		if !r.has(want) {
 			t.Errorf("the card lacks %q: %q", want, r.tt.Texts())
 		}
 	}
-	r.click("不要了")
+	r.click("取消共享")
+	acceptConfirmation(t, r.tt, "取消共享")
 	r.run(600 * time.Millisecond)
 	if r.a.device("gpu") != nil && r.a.device("gpu").gone.IsZero() {
 		t.Error("it stays on the canvas")
@@ -357,7 +359,8 @@ func TestSharedWithMe(t *testing.T) {
 	r.run(600 * time.Millisecond)
 	r.tt.ClickAt(r.tile("gpu").X, r.tile("gpu").Y)
 	r.run(600 * time.Millisecond)
-	r.click("不要了")
+	r.click("取消共享")
+	acceptConfirmation(t, r.tt, "取消共享")
 	r.run(4500 * time.Millisecond)
 	if r.d.Snapshot().SharedOf("gpu") != nil {
 		t.Error("not given back once the toast went")
@@ -430,6 +433,8 @@ func TestSeats(t *testing.T) {
 	if err := r.tt.Click("移出Leo"); err != nil {
 		t.Fatalf("no × on Leo: %v", err)
 	}
+	r.run(500 * time.Millisecond)
+	acceptConfirmation(t, r.tt, "移出成员")
 	r.run(500 * time.Millisecond)
 	if !r.has("已移出 Leo") || !r.has("还能加 1 人") {
 		t.Fatalf("freeing Leo: %q", r.tt.Texts())

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -303,6 +304,8 @@ var opHandlers = map[proto.OpType]opHandler{
 	proto.OpDeviceRefuse:    opDeviceRefuse,
 	proto.OpDeviceRename:    opDeviceRename,
 	proto.OpDeviceSetKind:   opDeviceSetKind,
+	proto.OpDeviceSetAvatar: opDeviceSetAvatar,
+	proto.OpServiceRemove:   opServiceRemove,
 	proto.OpMemberRemove:    opMemberRemove,
 	proto.OpLANLeave:        opLANLeave,
 
@@ -811,10 +814,10 @@ func opDeviceSetKind(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
 	if !a.Kind.Valid() {
 		return errInvalid("不认识的设备种类：" + string(a.Kind))
 	}
-	if a.Kind == d.Kind {
+	if a.Kind == d.Kind && len(d.Avatar) == 0 {
 		return errNoChange
 	}
-	return c.exec(`UPDATE devices SET kind = ? WHERE id = ?`, a.Kind, d.ID)
+	return c.exec(`UPDATE devices SET kind = ?, avatar = X'' WHERE id = ?`, a.Kind, d.ID)
 }
 
 // dropMember takes person p out of LAN l with all their devices.
@@ -1001,4 +1004,41 @@ func opDeviceSetDNSName(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
 		}
 	}
 	return c.exec(`UPDATE devices SET name = ?, name_pinned = 1 WHERE id = ?`, name, d.ID)
+}
+
+// Avatar writes use the same ownership boundary as device names and kinds.
+func opDeviceSetAvatar(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
+	d, err := c.ownDevice(a.Device, "更换头像")
+	if err != nil {
+		return err
+	}
+	avatar, err := proto.NormalizeDeviceAvatar(a.Avatar)
+	if err != nil {
+		return errInvalid(err.Error())
+	}
+	if bytes.Equal(avatar, d.Avatar) {
+		return errNoChange
+	}
+	if avatar == nil {
+		avatar = []byte{}
+	}
+	return c.exec(`UPDATE devices SET avatar = ? WHERE id = ?`, avatar, d.ID)
+}
+
+func opServiceRemove(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
+	d, err := c.ownDevice(a.Device, "移除服务")
+	if err != nil {
+		return err
+	}
+	if a.Service == nil {
+		return errInvalid("缺少要移除的服务")
+	}
+	if err := a.Service.Validate(); err != nil {
+		return errInvalid(err.Error())
+	}
+	key := a.Service.Key()
+	if !slices.ContainsFunc(d.services, func(s proto.Service) bool { return s.Key() == key }) {
+		return errNoChange
+	}
+	return c.exec(`DELETE FROM services WHERE device = ? AND key = ?`, d.ID, key)
 }

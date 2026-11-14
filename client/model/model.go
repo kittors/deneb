@@ -11,6 +11,7 @@
 package model
 
 import (
+	"github.com/kittors/deneb/proto"
 	"hash/fnv"
 	"slices"
 	"time"
@@ -54,8 +55,12 @@ type Snapshot struct {
 	Devices map[DeviceID]*Device
 	// Mine are my own devices in a fixed order, the ones in no LAN too: the
 	// tray of a LAN is those of them not in it, in this order.
-	Mine   []DeviceID
-	Relays map[RelayID]*Relay
+	DeviceLatencies map[DeviceID]LatencySample
+	DeviceMetrics   map[DeviceID]proto.DeviceMetrics
+	MetricsError    string
+	MetricsLoading  bool
+	Mine            []DeviceID
+	Relays          map[RelayID]*Relay
 	// Paths is how this computer reaches each device now, debounced (§2.7
 	// step 7). A device missing here is reached as Path tells.
 	Paths map[DeviceID]Path
@@ -251,14 +256,15 @@ func (l *LAN) Has(dev DeviceID) bool { return slices.Contains(l.Devices, dev) }
 
 // Device is a computer, NAS, console or server.
 type Device struct {
-	ID    DeviceID
-	Owner PersonID
-	Name  string // what people call it: "阿杰的 NAS"
-	Kind  string // laptop, desktop, mini, server, nas, console, phone, tablet or other
-	OS    string
-	Addr  string // its IPv4 address, the same in every LAN
-	Addr6 string
-	FQDN  string // its full name: nas.jie.deneb.internal
+	ID     DeviceID
+	Owner  PersonID
+	Avatar []byte
+	Name   string // what people call it: "阿杰的 NAS"
+	Kind   string // laptop, desktop, mini, server, nas, console, phone, tablet or other
+	OS     string
+	Addr   string // its IPv4 address, the same in every LAN
+	Addr6  string
+	FQDN   string // its full name: nas.jie.deneb.internal
 	// Online is what the control server last heard; Paths says whether this
 	// computer reaches it.
 	Online bool
@@ -481,3 +487,10 @@ const (
 	ErrTimeout     ErrorCode = "timeout"
 	ErrInternal    ErrorCode = "internal"
 )
+
+// LatencySample is an actual ICMP round trip measured from this client.
+type LatencySample struct {
+	At     time.Time
+	RTT    time.Duration
+	Failed bool
+}

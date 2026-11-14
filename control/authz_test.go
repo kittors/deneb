@@ -82,6 +82,8 @@ func TestNoOneActsOnOthers(t *testing.T) {
 		{w.jdesk, proto.OpDeviceRefuse, proto.OpArgs{Device: w.mac.id, Person: leoID, Refuse: true}},
 		{mia, proto.OpDeviceRename, proto.OpArgs{Device: w.build.id, Name: "我的了"}},
 		{w.jdesk, proto.OpDeviceRename, proto.OpArgs{Device: w.mac.id, Name: "我的了"}},
+		{mia, proto.OpDeviceSetAvatar, proto.OpArgs{Device: w.build.id, Avatar: []byte("bad")}},
+		{mia, proto.OpServiceRemove, proto.OpArgs{Device: w.build.id, Service: svc}},
 		{mia, proto.OpDeviceSetKind, proto.OpArgs{Device: w.build.id, Kind: proto.KindPhone}},
 		{w.jdesk, proto.OpDeviceSetKind, proto.OpArgs{Device: w.mac.id, Kind: proto.KindPhone}},
 		{mia, proto.OpDeviceSetDNSName, proto.OpArgs{Device: w.build.id, Name: "mine"}},

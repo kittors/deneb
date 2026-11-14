@@ -108,6 +108,18 @@ func (a *app) landed(c *ui.Context, d *device) {
 // takeOut takes my device d out of the LAN: it flies into the tray as the
 // op goes out (startLeave).
 func (a *app) takeOut(c *ui.Context, d *device, toast, byHand bool) {
+	lan := d.lan
+	if byHand {
+		d.off = ui.Point{X: d.rest.X - d.base.X, Y: d.rest.Y - d.base.Y}
+		d.flying = true
+	}
+	a.askConfirm("移出局域网", a.snap.Device(d.dev).Name, "设备将断开此局域网。", func(c *ui.Context) {
+		if d.lan == lan {
+			a.takeOutNow(c, d, toast, false)
+		}
+	})
+}
+func (a *app) takeOutNow(c *ui.Context, d *device, toast, byHand bool) {
 	a.startLeave(c, d, toast, byHand)
 	a.send(c, model.Op{Kind: model.OpLANRemoveDevice, LAN: d.lan, Device: d.dev})
 }
@@ -403,7 +415,7 @@ func (a *app) trayTile(c *ui.Context, p *palette, d *device, off *ui.Point, home
 		pose = ui.Pose{Y: -2}
 	}
 	item.Children(func() {
-		deviceTile(c, p, d.kind, a.tileColor(d), slotTile, false).AnimatePose(pose, ui.Snappy)
+		a.profileTile(c, p, d.dev, d.kind, a.tileColor(d), slotTile, false, 0).AnimatePose(pose, ui.Snappy)
 	})
 }
 
@@ -416,15 +428,18 @@ func (a *app) trayTile(c *ui.Context, p *palette, d *device, off *ui.Point, home
 func (a *app) toastView(c *ui.Context, p *palette, w, h float32, now time.Time) {
 	tn := a.toast
 	if tn != nil && !now.Before(tn.until) {
+		// The commit may synchronously replace the toast with a refusal.
+		// Retire this toast first so its cleanup cannot erase the new one.
+		a.toast = nil
 		if tn.commit != nil {
 			tn.commit(c)
 		}
-		a.toast, tn = nil, nil
+		tn = a.toast
 	}
 	right := a.bottomRight(h)
 	// Both places are built in every frame, so that a toast comes in and
 	// goes out where it shows: Enter and Exit play in a parent that stays.
-	above := a.trayShows() || a.trayUp
+	above := !a.myDevicesOpen && (a.trayShows() || a.trayUp)
 	for _, top := range []bool{false, true} {
 		holder := ui.Row(c.Key(fmt.Sprint("toast-holder-", top))).Absolute().Left(0).Right(right).Justify(ui.Center).PassThrough()
 		if top {
@@ -473,7 +488,7 @@ func (a *app) toastView(c *ui.Context, p *palette, w, h float32, now time.Time) 
 				body.Transition(ui.ElementTransition{Duration: 150 * time.Millisecond, Enter: &ui.Motion{}, Exit: &ui.Motion{}})
 				body.Children(func() {
 					if tn.dev != nil {
-						deviceTile(c, p, tn.dev.kind, a.tileColor(tn.dev), 28, false)
+						a.profileTile(c, p, tn.dev.dev, tn.dev.kind, a.tileColor(tn.dev), 28, false, 0)
 					}
 					if tn.orb {
 						relayOrb(c, p, 28, false, 0)
@@ -614,30 +629,26 @@ func (a *app) card(c *ui.Context, p *palette) {
 			body.Children(func() {
 				// My devices take a new name and kind in place (DESIGN §6.9):
 				// a click on the name edits it, one on the tile shows the kinds.
-				named := mine && d.id != a.self
+				named := mine
 				ui.Row(c).Gap(12).AlignItems(ui.Start).Children(func() {
 					if mine {
 						kind := ui.ButtonBase(c.Key("kind")).Radius(12).FocusRing(false).Cursor(ui.CursorPointer)
 						kind.AnimatePose(pressPose(kind, 0.94), ui.Snappy)
-						kind.Children(func() { deviceTile(c, p, d.kind, a.tileColor(d), 40, false) })
+						kind.Children(func() { a.profileTile(c, p, d.dev, d.kind, a.tileColor(d), 40, false, 0) })
 						if kind.Clicked() {
-							a.picking = !a.picking
+							a.openAvatar(d.dev)
 						}
 					} else {
-						deviceTile(c, p, d.kind, a.tileColor(d), 40, false)
+						a.profileTile(c, p, d.dev, d.kind, a.tileColor(d), 40, false, 0)
 					}
 					ui.Column(c).Gap(2).Grow(1).Children(func() {
-						if r := a.renaming; r != nil && r.id == d.id {
-							a.nameField(c, p, r, 15, func(name string) {
-								a.send(c, model.Op{Kind: model.OpDeviceRename, Device: d.dev, Name: name})
-							})
-						} else if named {
+						if named {
 							name := ui.ButtonBase(c.Key("name")).FocusRing(false).Cursor(ui.CursorText).AlignSelf(ui.Start)
 							name.Children(func() {
-								ui.Text(c, d.name).FontSize(15).FontWeight(600).SingleLine().MaxWidth(cardNameWidth)
+								ui.Text(c, a.snap.Device(d.dev).Name).FontSize(15).FontWeight(600).SingleLine().MaxWidth(cardNameWidth)
 							})
 							if name.Clicked() {
-								a.renaming = &renaming{id: d.id, name: d.name}
+								a.beginRename(model.Op{Kind: model.OpDeviceRename, Device: d.dev}, a.snap.Device(d.dev).Name)
 							}
 						} else {
 							ui.Text(c, d.name).FontSize(15).FontWeight(600).SingleLine().MaxWidth(cardNameWidth)
@@ -661,7 +672,7 @@ func (a *app) card(c *ui.Context, p *palette) {
 									fix := ui.ButtonBase(c.Key("rename")).FocusRing(false).Cursor(ui.CursorPointer)
 									fix.Children(func() { ui.Text(c, "改个名字").FontSize(12).TextColor(p.primary) })
 									if fix.Clicked() {
-										a.renaming = &renaming{id: d.id, name: d.name}
+										a.beginRename(model.Op{Kind: model.OpDeviceRename, Device: d.dev}, a.snap.Device(d.dev).Name)
 									}
 								}
 							})
@@ -671,6 +682,7 @@ func (a *app) card(c *ui.Context, p *palette) {
 						a.selected, a.more, a.picking, a.renaming = "", false, false, nil
 					}
 				})
+				a.profileActions(c, p, d)
 				if mine {
 					a.kinds(c, p, d)
 				}
@@ -703,7 +715,9 @@ func (a *app) card(c *ui.Context, p *palette) {
 						words.Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{}})
 						words.Children(func() {
 							ui.Text(c, title).FontSize(13).FontWeight(500)
-							ui.Text(c, sub).FontSize(12).TextColor(p.ink2)
+							if sub != "" {
+								ui.Text(c, sub).FontSize(12).TextColor(p.ink2)
+							}
 						})
 						// What can be done about it, in a click (DESIGN §6.8). It
 						// folds in and out, its height drawn out frame by frame;
@@ -738,9 +752,9 @@ func (a *app) card(c *ui.Context, p *palette) {
 				// This computer in the "全部" view is in no one LAN: what it opens,
 				// and to whom, is each LAN's, on its own canvas.
 				perLAN := !((a.all() || a.shared()) && d.id == a.self)
-				label := "你可以用"
+				label := "可用服务"
 				if mine {
-					label = "开放给大家的"
+					label = "公开服务"
 				}
 				if perLAN {
 					ui.Text(c, label).FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(18, 4, 8, 4)
@@ -762,13 +776,8 @@ func (a *app) card(c *ui.Context, p *palette) {
 								ink = p.ink3
 							}
 							ui.Icon(c, uiGlyphs[s.icon]).Size(18, 18).TextColor(p.ink2)
-							ui.Text(c, s.name).FontSize(13).FontWeight(500).TextColor(ink).Grow(1)
-							switch {
-							case mine:
-								if toggle(c, p, s.on) {
-									a.send(c, model.Op{Kind: model.OpServiceSet, LAN: d.lan, Device: d.dev, Service: s.svc.Key, On: !s.on})
-								}
-							case s.on:
+							ui.Text(c, serviceLabel(d.services, s)).FontSize(13).FontWeight(500).TextColor(ink).Grow(1)
+							if s.on && d.dev != a.snap.Self {
 								b := ui.ButtonBase(c.Key("open")).Height(28).Padding(0, 12).Radius(999).Background(p.bg).FocusRing(false).
 									Shadow(0, 1, 2, 0, ui.RGBA(9, 9, 11, 0.06))
 								b.AnimatePose(pressPose(b, 0.94), ui.Snappy)
@@ -776,14 +785,24 @@ func (a *app) card(c *ui.Context, p *palette) {
 								if b.Clicked() {
 									a.openService(c, d, s)
 								}
-							default:
+							}
+							if mine {
+								if toggle(c, p, s.on) {
+									op := model.Op{Kind: model.OpServiceSet, LAN: d.lan, Device: d.dev, Service: s.svc.Key, On: !s.on}
+									if s.on {
+										a.askConfirm("关闭服务", s.name, d.name, func(c *ui.Context) { a.send(c, op) })
+									} else {
+										a.send(c, op)
+									}
+								}
+							} else if !s.on {
 								ui.Text(c, "没开放").FontSize(12).TextColor(p.ink3)
 							}
 						})
 					}
 				})
 				if mine && perLAN {
-					ui.Text(c, "谁能用").FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(18, 4, 8, 4)
+					ui.Text(c, "访问权限").FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(18, 4, 8, 4)
 					ui.Row(c).Gap(8).Wrap().Children(func() {
 						for _, id := range a.membersOf(d) {
 							if id == d.owner {
@@ -799,7 +818,12 @@ func (a *app) card(c *ui.Context, p *palette) {
 							chip.AnimatePose(pressPose(chip, 0.95), ui.Snappy)
 							if chip.Clicked() {
 								off = !off
-								a.send(c, model.Op{Kind: model.OpDeviceRefuse, Device: d.dev, Person: model.PersonID(id), Refuse: off})
+								op := model.Op{Kind: model.OpDeviceRefuse, Device: d.dev, Person: model.PersonID(id), Refuse: off}
+								if off {
+									a.askConfirm("撤销访问权限", a.people[id].name, "将无法访问此设备。", func(c *ui.Context) { a.send(c, op) })
+								} else {
+									a.send(c, op)
+								}
 							}
 							// Refused, the ball greys and a slash draws across it,
 							// and the name greys with it.
@@ -810,7 +834,7 @@ func (a *app) card(c *ui.Context, p *palette) {
 							})
 						}
 					})
-					ui.Text(c, "点一下头像，就不让他用了").FontSize(12).TextColor(p.ink3).Padding(8, 4, 0, 4)
+
 				}
 				if mine {
 					// Given to people one by one, and which way (DESIGN §6.11).
@@ -818,7 +842,7 @@ func (a *app) card(c *ui.Context, p *palette) {
 				}
 				given := a.snap.SharedOf(d.dev) != nil
 				if given {
-					ui.Text(c, "只有你能连它，反过来不行").FontSize(12).TextColor(p.ink3).Padding(8, 4, 0, 4)
+					ui.Text(c, "仅允许你访问此设备").FontSize(12).TextColor(p.ink3).Padding(8, 4, 0, 4)
 				}
 				ui.Row(c).Margin(12, 0, 0, 0).AlignItems(ui.Center).Children(func() {
 					more := ui.ButtonBase(c.Key("more")).Height(28).Padding(0, 4).Gap(2).Radius(8).FocusRing(false)
@@ -841,7 +865,7 @@ func (a *app) card(c *ui.Context, p *palette) {
 							out.Background(p.well)
 						}
 						out.AnimatePose(pressPose(out, 0.96), ui.Snappy)
-						out.Children(func() { ui.Text(c, "移出这个局域网").FontSize(12).TextColor(p.ink2) })
+						out.Children(func() { ui.Text(c, "移出局域网").FontSize(12).TextColor(p.ink2) })
 						if out.Clicked() {
 							a.takeOut(c, d, true, false)
 						}
@@ -853,7 +877,7 @@ func (a *app) card(c *ui.Context, p *palette) {
 							out.Background(p.well)
 						}
 						out.AnimatePose(pressPose(out, 0.96), ui.Snappy)
-						out.Children(func() { ui.Text(c, "不要了").FontSize(12).TextColor(p.ink2) })
+						out.Children(func() { ui.Text(c, "取消共享").FontSize(12).TextColor(p.ink2) })
 						if out.Clicked() {
 							a.leaveShare(c, d)
 						}
@@ -872,9 +896,6 @@ func (a *app) card(c *ui.Context, p *palette) {
 						}
 						if d.id == a.self && a.snap.Can(model.FeatureDiagnostics) {
 							a.diagnosticsRow(c, p)
-						}
-						if a.canDelete(d) {
-							a.deleteRow(c, p, d)
 						}
 					})
 				}
@@ -910,9 +931,9 @@ func (a *app) howConnected(d *device, owner *person, p *palette) (icon, title, s
 	switch d.path {
 	case "self":
 		if a.all() {
-			return "home", "这就是你正在用的电脑", a.inWhich(), owner.color
+			return "home", "本机", a.inWhich(), owner.color
 		}
-		return "home", "这就是你正在用的电脑", "别人能用你开放的服务", owner.color
+		return "home", "本机", "", owner.color
 	case "relay":
 		return "", a.viaWords(d), a.viaSub(d), grey
 	case "connecting":
@@ -930,7 +951,7 @@ func (a *app) howConnected(d *device, owner *person, p *palette) (icon, title, s
 	case "apart":
 		return "bolt", "这台电脑还没加进来", "把托盘里的这台电脑拖进来", grey
 	}
-	return "bolt", "直接连上", "很快", p.ok
+	return "bolt", "直接连上", "", p.ok
 }
 
 // details are the card's "更多": what only someone who asks needs (DESIGN
@@ -978,6 +999,13 @@ func toggle(c *ui.Context, p *palette, on bool) (flipped bool) {
 // mine that waits is taken back instead (DESIGN §6.7). It shows at once and
 // goes to the server as its toast goes, so that undo needs no server.
 func (a *app) approve(c *ui.Context, d *device, yes bool) {
+	if !yes {
+		a.askConfirm("撤回或拒绝加入", d.name, "设备将不会加入此局域网。", func(c *ui.Context) { a.approveNow(c, d, false) })
+		return
+	}
+	a.approveNow(c, d, yes)
+}
+func (a *app) approveNow(c *ui.Context, d *device, yes bool) {
 	if !d.pending {
 		return
 	}
@@ -996,38 +1024,6 @@ func (a *app) approve(c *ui.Context, d *device, yes bool) {
 func (a *app) renew(c *ui.Context, d *device) {
 	a.send(c, model.Op{Kind: model.OpDeviceRenew, Device: d.dev})
 	a.notify(c, d, "已续上", nil)
-}
-
-// renaming is a name being edited in place: a device's, or the LAN's
-// (DESIGN §6.9).
-type renaming struct {
-	id       string // the device's, or the LAN's
-	name     string
-	focused  bool // the field had the focus, so losing it keeps the name
-	selected bool // the old name was selected, as the field came
-}
-
-// nameField edits r's name in place, the old name selected: Enter, or a
-// click elsewhere, keeps it; Escape puts the old one back.
-func (a *app) nameField(c *ui.Context, p *palette, r *renaming, size float32, done func(name string)) {
-	f := ui.TextInputBase(c.Key("rename-"+r.id), &r.name).FontSize(size).FontWeight(600).Grow(1).AutoFocus()
-	if !r.selected {
-		f.SetTextSelection(0, utf8.RuneCountInString(r.name))
-		r.selected = true
-	}
-	if f.Focused() {
-		r.focused = true
-	}
-	if f.Shortcut(0, ui.KeyEscape) {
-		a.renaming = nil
-		return
-	}
-	if f.Submitted() || r.focused && !f.Focused() {
-		a.renaming = nil
-		if name := strings.TrimSpace(r.name); name != "" {
-			done(name)
-		}
-	}
 }
 
 // deviceKinds are the kinds a device of mine can be told to be, in the
@@ -1074,7 +1070,7 @@ func (a *app) kindRow(c *ui.Context, p *palette, d *device, row ui.Element) {
 			b.Children(func() { ui.Icon(c, deviceGlyphs[k.glyph]).Size(18, 18).TextColor(p.ink2) })
 			if b.Clicked() {
 				a.picking = false
-				if k.glyph != d.kind {
+				if k.glyph != d.kind || len(a.snap.Device(d.dev).Avatar) > 0 {
 					a.send(c, model.Op{Kind: model.OpDeviceSetKind, Device: d.dev, DevKind: k.kind})
 				}
 			}
@@ -1190,17 +1186,13 @@ func (a *app) lanCard(c *ui.Context, p *palette) {
 					})
 				})
 				ui.Column(c).Gap(2).Grow(1).Children(func() {
-					if r := a.renaming; r != nil && r.id == string(l.ID) {
-						a.nameField(c, p, r, 15, func(name string) {
-							a.send(c, model.Op{Kind: model.OpLANRename, LAN: l.ID, Name: name})
-						})
-					} else if mine {
+					if mine {
 						name := ui.ButtonBase(c.Key("lan-name")).FocusRing(false).Cursor(ui.CursorText).AlignSelf(ui.Start)
 						name.Children(func() {
 							ui.Text(c, l.Name).FontSize(15).FontWeight(600).SingleLine().MaxWidth(cardNameWidth)
 						})
 						if name.Clicked() {
-							a.renaming = &renaming{id: string(l.ID), name: l.Name}
+							a.beginRename(model.Op{Kind: model.OpLANRename, LAN: l.ID}, l.Name)
 						}
 					} else {
 						ui.Text(c, l.Name).FontSize(15).FontWeight(600).SingleLine().MaxWidth(cardNameWidth)
@@ -1228,15 +1220,15 @@ func (a *app) lanCard(c *ui.Context, p *palette) {
 				// Not mine, or a server that cannot ask me: no switches.
 				return
 			}
-			ui.Text(c, "新来的").FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(18, 4, 8, 4)
+			ui.Text(c, "加入审批").FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(18, 4, 8, 4)
 			ui.Column(c).Radius(14).Background(p.well).Padding(0, 12).Dividers(1, p.line).Children(func() {
 				for _, sw := range []struct {
 					key, label string
 					on         bool
 					kind       model.OpKind
 				}{
-					{"approve-devices", "新设备要我同意", l.ApproveDevices, model.OpLANSetApproveDevices},
-					{"approve-members", "新成员要我同意", l.ApproveMembers, model.OpLANSetApproveMembers},
+					{"approve-devices", "审批新设备", l.ApproveDevices, model.OpLANSetApproveDevices},
+					{"approve-members", "审批新成员", l.ApproveMembers, model.OpLANSetApproveMembers},
 				} {
 					ui.Row(c.Key(sw.key)).Height(44).Gap(10).Children(func() {
 						ui.Text(c, sw.label).FontSize(13).FontWeight(500).Grow(1)
@@ -1246,7 +1238,7 @@ func (a *app) lanCard(c *ui.Context, p *palette) {
 					})
 				}
 			})
-			ui.Text(c, "打开后，新来的要你点一下才进来").FontSize(12).TextColor(p.ink3).Padding(8, 4, 0, 4)
+
 			if !a.snap.Can(model.FeatureShareMode) {
 				return
 			}
@@ -1256,20 +1248,20 @@ func (a *app) lanCard(c *ui.Context, p *palette) {
 			ui.Text(c, "设备共享").FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(18, 4, 8, 4)
 			ui.Column(c).Radius(14).Background(p.well).Padding(0, 12).Children(func() {
 				ui.Row(c.Key("share-mode")).Height(44).Gap(10).Children(func() {
-					ui.Text(c, "成员只用分到的设备").FontSize(13).FontWeight(500).Grow(1)
+					ui.Text(c, "按成员分配设备").FontSize(13).FontWeight(500).Grow(1)
 					on := l.Mode == model.ModeShare
 					if toggle(c, p, on) {
 						mode, text := model.ModeShare, say("「"+short(l.Name)+"」", "改成成员只用分到的设备")
 						if on {
 							mode, text = model.ModeLAN, say("「"+short(l.Name)+"」", "改回大家的设备互相看得见")
 						}
-						a.holdFor(c, model.Op{Kind: model.OpLANSetMode, LAN: l.ID, Mode: mode}, text)
+						a.askConfirm("更改共享模式", l.Name, "现有设备连接与访问范围将改变。", func(c *ui.Context) { a.holdFor(c, model.Op{Kind: model.OpLANSetMode, LAN: l.ID, Mode: mode}, text) })
 					}
 				})
 			})
-			line := "打开后，成员的设备移出去，你把设备拖到成员身上分给他"
+			line := "仅能访问分配的设备"
 			if l.Mode == model.ModeShare {
-				line = "关掉后，成员要自己把设备拖进来"
+				line = "关闭后恢复设备互联"
 			}
 			ui.Text(c, line).FontSize(12).TextColor(p.ink3).Padding(8, 4, 0, 4)
 		})
@@ -1382,10 +1374,14 @@ func (a *app) stackBall(c *ui.Context, p *palette, l *model.LAN, id string, how 
 			if x.Clicked() {
 				switch how {
 				case waitsForMe:
-					a.holdFor(c, model.Op{Kind: model.OpMemberReject, LAN: l.ID, Person: model.PersonID(id)}, "已拒绝"+spaced(who.name))
+					a.askConfirm("拒绝加入", who.name, l.Name, func(c *ui.Context) {
+						a.holdFor(c, model.Op{Kind: model.OpMemberReject, LAN: l.ID, Person: model.PersonID(id)}, "已拒绝"+spaced(who.name))
+					})
 				case invitedByMe:
-					a.send(c, model.Op{Kind: model.OpInviteRevoke, LAN: l.ID, Person: model.PersonID(id), Invite: invited.Invite})
-					a.notify(c, nil, "已收回给"+spaced(who.name)+"的邀请", nil)
+					a.askConfirm("撤回邀请", who.name, l.Name, func(c *ui.Context) {
+						a.send(c, model.Op{Kind: model.OpInviteRevoke, LAN: l.ID, Person: model.PersonID(id), Invite: invited.Invite})
+						a.notify(c, nil, "已收回给"+spaced(who.name)+"的邀请", nil)
+					})
 				}
 			}
 		}

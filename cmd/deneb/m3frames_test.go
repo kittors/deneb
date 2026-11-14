@@ -101,6 +101,10 @@ func (r *m3rig) tap(to func() ui.Point) {
 	r.tt.Press(r.px, r.py)
 	r.run(70 * time.Millisecond)
 	r.tt.Release(r.px, r.py)
+	if r.a.confirming != nil {
+		r.run(300 * time.Millisecond)
+		r.tap(r.text("确认" + r.a.confirming.title))
+	}
 }
 
 // text is where the element showing s is, for tap.
@@ -206,7 +210,7 @@ func playShareCard(r *m3rig) {
 }
 
 // Scene: "共享给我": the canvas of the devices given to me, where each
-// comes from; a card, one way, and "不要了" with undo.
+// comes from; a card, one way, and "取消共享" with undo.
 func playSharedWithMe(r *m3rig) {
 	r.tap(r.text("共享给我"))
 	r.run(1500 * time.Millisecond)
@@ -214,9 +218,9 @@ func playSharedWithMe(r *m3rig) {
 	r.tap(func() ui.Point { return r.tile("gpu") })
 	r.run(900 * time.Millisecond)
 	r.shot("卡片")
-	r.tap(r.text("不要了"))
+	r.tap(r.text("取消共享"))
 	r.run(1200 * time.Millisecond)
-	r.shot("不要了")
+	r.shot("取消共享")
 	r.tap(r.text("撤销"))
 	r.run(1500 * time.Millisecond)
 	r.shot("撤销")
@@ -328,7 +332,7 @@ func playShareMode(r *m3rig) {
 	r.run(900 * time.Millisecond)
 	r.shot("局域网卡片")
 	r.tap(func() ui.Point {
-		b, _ := r.tt.Find("成员只用分到的设备")
+		b, _ := r.tt.Find("按成员分配设备")
 		return ui.Point{X: r.a.origin.X + r.a.cardAt.X + r.a.cardAt.W - 40, Y: b.Y + b.H/2}
 	})
 	r.run(1200 * time.Millisecond)

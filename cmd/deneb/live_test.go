@@ -153,7 +153,7 @@ func TestLiveFirstOpen(t *testing.T) {
 	r.until("the LANs", func() bool { return r.tt.HasText("新建局域网") })
 	r.settle(400 * time.Millisecond)
 	r.shot("logged-in")
-	if !r.tt.HasText("kittors") || !r.tt.HasText("还没有局域网") {
+	if !r.tt.HasText("账号") || !r.tt.HasText("还没有局域网") {
 		t.Errorf("after the login the window shows %q", r.tt.Texts())
 	}
 }
@@ -282,6 +282,7 @@ func TestLiveDeviceInAndOut(t *testing.T) {
 		t.Fatal("构建服务器 is not on the canvas")
 	}
 	drag(r.tt, r.at(b), ui.Point{X: r.at(b).X, Y: 740 - 40})
+	acceptConfirmation(t, r.tt, "移出局域网")
 	r.until("构建服务器 out", func() bool { return !in() })
 	r.settle(1500 * time.Millisecond)
 	r.shot("out")
@@ -307,11 +308,12 @@ func TestLiveRefuse(t *testing.T) {
 	r.settle(600 * time.Millisecond)
 	me := r.a.device(r.a.self)
 	r.tt.ClickAt(r.at(me).X, r.at(me).Y)
-	r.until("this computer's card", func() bool { return r.tt.HasText("谁能用") })
+	r.until("this computer's card", func() bool { return r.tt.HasText("访问权限") })
 	r.settle(400 * time.Millisecond)
 	r.shot("card")
 	refused := func() bool { return r.store().Devices[model.DeviceID(r.a.self)].Refused[model.PersonID(fakeworld.Jie)] }
 	r.click("阿杰")
+	acceptConfirmation(t, r.tt, "撤销访问权限")
 	r.until("阿杰 refused", refused)
 	// The store shows the refusal as soon as the world has it, before the
 	// op's answer: the fake engine then hands the watch a State of its own,
@@ -423,7 +425,7 @@ func TestLiveOldServerHidesM2(t *testing.T) {
 	if r.a.selected != lanCard {
 		t.Fatalf("the LAN's card did not open: %q", r.a.selected)
 	}
-	if r.tt.HasText("新设备要我同意") || r.tt.HasText("新成员要我同意") {
+	if r.tt.HasText("审批新设备") || r.tt.HasText("审批新成员") {
 		t.Error("the LAN's card offers switches the server cannot keep")
 	}
 	r.tt.ClickAt(sidebarWidth+300, headerHeight+600)
@@ -492,6 +494,7 @@ func TestLiveAllView(t *testing.T) {
 		r.tt.Advance(16 * time.Millisecond)
 	}
 	r.tt.Release(to.X, to.Y)
+	acceptConfirmation(t, r.tt, "移动设备")
 	r.until("构建服务器 in 周末联机", func() bool {
 		s := r.store()
 		return s.LAN(weekend).Has(model.DeviceID(build)) && !s.LAN(model.LANID("studio")).Has(model.DeviceID(build))
@@ -502,6 +505,7 @@ func TestLiveAllView(t *testing.T) {
 		t.Fatal("构建服务器 is not in 周末联机's region")
 	}
 	r.click("撤销")
+	acceptConfirmation(t, r.tt, "移回设备")
 	r.until("构建服务器 back in 工作室", func() bool {
 		s := r.store()
 		return s.LAN(model.LANID("studio")).Has(model.DeviceID(build)) && !s.LAN(weekend).Has(model.DeviceID(build))

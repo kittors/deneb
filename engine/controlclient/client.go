@@ -490,3 +490,12 @@ func (c *Client) Stream(ctx context.Context, since uint64, userView bool, fn fun
 
 // TLSConfigFor is exposed for tests that run a pinned server.
 func TLSConfigFor(pin string) (*tls.Config, error) { return proto.PinnedTLSConfig(pin) }
+
+// ReportDeviceMetrics publishes only this authenticated host's sample.
+func (c *Client) ReportDeviceMetrics(ctx context.Context, sample proto.DeviceMetrics) error {
+	return c.call(ctx, c.conns.Load().hc, "POST", proto.PathDeviceMetrics, sample, nil, true)
+}
+func (c *Client) DeviceMetrics(ctx context.Context) (json.RawMessage, error) {
+	var raw json.RawMessage
+	return raw, c.call(ctx, c.conns.Load().hc, "GET", proto.PathDeviceMetrics, nil, &raw, true)
+}

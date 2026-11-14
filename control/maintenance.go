@@ -55,6 +55,7 @@ func (s *Server) sweep() bool {
 
 	st := s.state.Load()
 	s.sweepSessions(now)
+	s.pruneDeviceMetrics(now)
 	var ran []*device
 	for _, d := range st.w.devices {
 		if d.usable() && !d.ExpiresAt.IsZero() && !now.Before(d.ExpiresAt) {

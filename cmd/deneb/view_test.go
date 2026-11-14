@@ -18,7 +18,7 @@ import (
 func TestViewShowsTheLAN(t *testing.T) {
 	a, _ := newDemoApp()
 	tt := ui.NewTester(a.view, 1180, 740)
-	for _, s := range []string{"Deneb", "周末联机", "这台电脑", "阿杰的 NAS", "拖出来，加进局域网", "开放给大家的"} {
+	for _, s := range []string{"Deneb", "周末联机", "这台电脑", "阿杰的 NAS", "拖出来，加进局域网", "公开服务"} {
 		if !tt.HasText(s) {
 			t.Errorf("%q missing, texts %q", s, tt.Texts())
 		}

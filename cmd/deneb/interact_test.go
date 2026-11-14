@@ -14,7 +14,7 @@ func TestCardStepsAsideWhileDragging(t *testing.T) {
 	tt := ui.NewTester(a.view, 1180, 740)
 	tt.Frame()
 	tt.Advance(800 * time.Millisecond)
-	if !tt.HasText("开放给大家的") {
+	if !tt.HasText("公开服务") {
 		t.Fatal("the card for this computer is not open")
 	}
 	mia := a.device("mia")
@@ -25,12 +25,12 @@ func TestCardStepsAsideWhileDragging(t *testing.T) {
 		tt.Advance(16 * time.Millisecond)
 	}
 	tt.Advance(400 * time.Millisecond)
-	if tt.HasText("开放给大家的") {
+	if tt.HasText("公开服务") {
 		t.Error("the card stayed while a device was dragged")
 	}
 	tt.Release(from.X+240, from.Y+96)
 	tt.Advance(1500 * time.Millisecond)
-	if !tt.HasText("开放给大家的") {
+	if !tt.HasText("公开服务") {
 		t.Error("the card did not come back after the drop")
 	}
 	if a.cardAt.W > 0 && overlaps(footprint(mia.at()), a.cardAt) {
@@ -72,6 +72,7 @@ func TestRefusalIsPerDevice(t *testing.T) {
 		t.Fatal("no chip for Mia")
 	}
 	tt.ClickAt(r.X+r.W/2, r.Y+r.H/2)
+	acceptConfirmation(t, tt, "撤销访问权限")
 	tt.Advance(400 * time.Millisecond)
 	if !game.refused["mia"] {
 		t.Fatal("Mia is not refused on the console")

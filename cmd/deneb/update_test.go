@@ -118,3 +118,13 @@ func TestDirSource(t *testing.T) {
 		t.Error("opened a file outside the folder")
 	}
 }
+
+func TestHTTPSUpdateSourceRejectsOtherOrigins(t *testing.T) {
+	source := httpsUpdateSource("https://deneb.example/download/")
+	for _, url := range []string{"http://deneb.example/download/update.json", "https://other.example/download/update.json", "https://deneb.example/elsewhere/update.json", "https://user@deneb.example/download/update.json"} {
+		if body, err := source.Open(context.Background(), url); err == nil {
+			body.Close()
+			t.Fatalf("accepted untrusted URL %s", url)
+		}
+	}
+}

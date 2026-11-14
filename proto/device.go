@@ -41,6 +41,7 @@ const (
 	PathLoginWait     = "/device/v1/login/wait"     // POST (no body) → LoginState, long poll
 	PathLogout        = "/device/v1/logout"         // POST (no body) → LoginState
 	PathStream        = "/device/v1/stream"         // GET ?since=<version>&userView=1 → NDJSON of StreamFrame
+	PathDeviceMetrics = "/device/v1/metrics"        // GET own samples, POST authenticated self sample
 	PathReport        = "/device/v1/report"         // POST Report → ReportResult
 	PathOps           = "/device/v1/ops"            // POST Op → OpResult
 	PathUserView      = "/device/v1/userview"       // GET → UserView, for engines that do not stream it

@@ -291,9 +291,10 @@ func (a *app) load() {
 // joined here comes in (pop): its devices pop in one after the other, their
 // tracks growing out from this computer (scene 3's 加入).
 func (a *app) show(c *ui.Context, id model.LANID, pop bool) {
-	if id == a.lan || id != allLANs && a.snap.LAN(id) == nil {
+	if id == a.lan && !a.myDevicesOpen || id != allLANs && a.snap.LAN(id) == nil {
 		return
 	}
+	a.setMyDevices(false)
 	a.keepPlaces()
 	a.lan = id
 	a.selected, a.more = "", false

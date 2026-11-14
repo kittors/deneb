@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/kittors/deneb/client/fakeworld"
+	"github.com/kittors/deneb/client/model"
 	"github.com/kittors/deneb/engine/localapi/apitype"
 	"github.com/kittors/deneb/proto"
 )
@@ -26,26 +27,15 @@ func m7LiveRig(t *testing.T, name string) *liveRig {
 	return r
 }
 
-// deleteThisComputer opens this computer's card, "更多", and clicks
-// 删除这台电脑, scrolling the card to it.
+// deleteThisComputer uses the account-level entry on My Devices.
 func (r *liveRig) deleteThisComputer() {
-	r.t.Helper()
-	p := r.at(r.a.device(r.a.self))
-	r.tt.ClickAt(p.X, p.Y)
-	r.until("its card", func() bool { return r.a.selected == r.a.self && r.a.cardAt.W > 0 })
+	r.click("我的设备")
+	r.until("my devices", func() bool { return r.a.myDevicesOpen })
 	r.settle(400 * time.Millisecond)
-	r.click("更多")
-	r.until("its more", func() bool { return r.tt.HasText("删除这台电脑") })
-	at := r.a.cardAt
-	for i := 0; i < 40; i++ {
-		if b, ok := r.tt.Find("删除这台电脑"); ok && b.Y+b.H < 740-12 {
-			break
-		}
-		r.tt.Wheel(at.X+at.W/2, at.Y+at.H/2, 0, 20)
-		r.settle(16 * time.Millisecond)
-	}
-	r.settle(300 * time.Millisecond)
-	r.click("删除这台电脑")
+	r.click("详情" + r.a.snap.Device(r.a.snap.Self).Name)
+	r.settle(400 * time.Millisecond)
+	clickVisibleDeviceAction(r.t, r.tt, "删除这台电脑", 740)
+	acceptConfirmation(r.t, r.tt, "删除设备")
 	r.until("the toast", func() bool { return r.tt.HasText("这台电脑会被删掉") })
 }
 
@@ -131,8 +121,8 @@ func TestM7DeleteAccountLive(t *testing.T) {
 		<-release
 		return &apitype.OpResult{Result: res}, nil
 	})
-	r.click("账号")
-	r.until("the account card", func() bool { return r.tt.HasText("注销账号") && r.tt.HasText("kittors@example.com") })
+	r.click("设置")
+	r.until("settings", func() bool { return r.a.settingsOpen && r.tt.HasText("注销账号") })
 	r.settle(300 * time.Millisecond)
 	r.click("注销账号")
 	r.until("what goes", func() bool { return r.a.deleting != nil && r.a.deleting.acc != nil })
@@ -154,5 +144,50 @@ func TestM7DeleteAccountLive(t *testing.T) {
 	r.settle(800 * time.Millisecond)
 	if !r.tt.HasText("账号已经注销") || r.a.deleting != nil || r.a.onboard == nil {
 		t.Errorf("once the engine answered: %q", r.tt.Texts())
+	}
+}
+
+// The page survives a delayed refusal; an in-flight delete cannot be queued
+// again even if a new view still lists the same device before its response.
+func TestMyDevicesRemoteDeletionDelayedRefusalLive(t *testing.T) {
+	r := m7LiveRig(t, "device-page-delayed-refusal")
+	release := make(chan struct{})
+	var once sync.Once
+	t.Cleanup(func() { once.Do(func() { close(release) }) })
+	var calls int
+	var mu sync.Mutex
+	r.w.E.HandleOps(func(op apitype.OpRequest) (*apitype.OpResult, *apitype.Error) {
+		if op.Op != "device.delete" {
+			return nil, nil
+		}
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		<-release
+		return nil, &apitype.Error{Code: apitype.ErrForbidden, Message: "服务器拒绝删除远端测试设备"}
+	})
+	r.click("我的设备")
+	r.settle(300 * time.Millisecond)
+	name := r.a.snap.Device(model.DeviceID(build)).Name
+	r.click("详情" + name)
+	r.settle(400 * time.Millisecond)
+	clickVisibleDeviceAction(t, r.tt, "删除这台设备", 740)
+	acceptConfirmation(t, r.tt, "删除设备")
+	r.tt.Move(300, 100)
+	r.until("delete sent", func() bool { mu.Lock(); defer mu.Unlock(); return calls == 1 })
+	if r.a.canDelete(model.DeviceID(build)) {
+		t.Fatal("pending delete can be queued twice")
+	}
+	once.Do(func() { close(release) })
+	r.until("refused device restored on page", func() bool {
+		return r.a.snap.Device(model.DeviceID(build)) != nil && r.tt.HasText("服务器拒绝删除远端测试设备")
+	})
+	if !r.a.myDevicesOpen || !r.a.snap.LoggedIn {
+		t.Fatal("refusal left device page")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if calls != 1 {
+		t.Fatalf("duplicate boundary calls: %d", calls)
 	}
 }

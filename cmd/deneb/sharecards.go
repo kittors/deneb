@@ -46,9 +46,9 @@ func oneWay(a *app, m *model.Device) string {
 	case 0:
 		return ""
 	case 1:
-		return say("只有", a.people[string(m.Shares[0].Person)].name, "能连你，反过来不行")
+		return say("仅允许", a.people[string(m.Shares[0].Person)].name, "访问")
 	}
-	return "只有他们能连你，反过来不行"
+	return "仅允许已分享成员访问"
 }
 
 // refusedK is how far a person's ball on a share chip is greyed: refused on
@@ -232,7 +232,7 @@ func (a *app) shareServices(c *ui.Context, p *palette, m *model.Device) {
 		ui.Column(c).Radius(14).Background(p.well).Padding(0, 12).Dividers(1, p.line).Children(func() {
 			if len(sh.Services) == 0 {
 				ui.Row(c).Height(44).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, "这台设备还没有能开放的服务").FontSize(13).TextColor(p.ink3)
+					ui.Text(c, "暂无服务").FontSize(13).TextColor(p.ink3)
 				})
 			}
 			for _, v := range sh.Services {
@@ -241,7 +241,12 @@ func (a *app) shareServices(c *ui.Context, p *palette, m *model.Device) {
 					ui.Icon(c, uiGlyphs[s.icon]).Size(18, 18).TextColor(p.ink2)
 					ui.Text(c, s.name).FontSize(13).FontWeight(500).Grow(1)
 					if toggle(c, p, s.on) {
-						a.send(c, model.Op{Kind: model.OpServiceSet, Device: m.ID, Share: sh.ID, Person: sh.Person, Service: v.Key, On: !s.on})
+						op := model.Op{Kind: model.OpServiceSet, Device: m.ID, Share: sh.ID, Person: sh.Person, Service: v.Key, On: !s.on}
+						if s.on {
+							a.askConfirm("关闭共享服务", s.name, a.people[who].name, func(c *ui.Context) { a.send(c, op) })
+						} else {
+							a.send(c, op)
+						}
 					}
 				})
 			}
@@ -277,13 +282,13 @@ func (a *app) personCardView(c *ui.Context, p *palette, id string) {
 			}
 		}
 		if len(mine) == 0 {
-			ui.Text(c, say("把你的设备拖到", who.name, "身上，就只给", who.name, "用那一台")).FontSize(12).TextColor(p.ink3).Padding(0, 4, 0, 4)
+			ui.Text(c, say("拖入设备以共享给", who.name)).FontSize(12).TextColor(p.ink3).Padding(0, 4, 0, 4)
 		}
 		ui.Row(c).Gap(8).Wrap().Children(func() {
 			for _, m := range mine {
 				m := m
 				a.shareChip(c, p, m.ID, pid, func() {
-					deviceTile(c, p, glyphFor(m.Kind), a.people[string(m.Owner)].color, 26, false)
+					a.profileTile(c, p, m.ID, glyphFor(m.Kind), a.people[string(m.Owner)].color, 26, false, 0)
 				}, a.nameOf(m), say("分享了", a.nameOf(m)))
 			}
 		})
@@ -291,7 +296,7 @@ func (a *app) personCardView(c *ui.Context, p *palette, id string) {
 			a.shareServices(c, p, m)
 		}
 		if len(mine) > 0 {
-			ui.Text(c, say("只有", who.name, "能连你，反过来不行")).FontSize(12).TextColor(p.ink3).Padding(8, 4, 0, 4)
+			ui.Text(c, say("仅允许", who.name, "访问")).FontSize(12).TextColor(p.ink3).Padding(8, 4, 0, 4)
 		}
 		var theirs []model.SharedDevice
 		for _, sh := range a.snap.Shared {
@@ -315,7 +320,7 @@ func (a *app) personCardView(c *ui.Context, p *palette, id string) {
 				}
 				b.AnimatePose(pressPose(b, 0.95), ui.Snappy)
 				b.Children(func() {
-					deviceTile(c, p, glyphFor(m.Kind), who.color, 26, false)
+					a.profileTile(c, p, m.ID, glyphFor(m.Kind), who.color, 26, false, 0)
 					ui.Text(c, short(m.Name)).FontSize(13).FontWeight(500).SingleLine().MaxWidth(150)
 				})
 				if b.Clicked() {
@@ -397,7 +402,7 @@ func (a *app) seatCardView(c *ui.Context, p *palette) {
 			}
 		})
 		if a.seatFreeing && full {
-			ui.Text(c, "移出的人离开你的局域网，分给他的设备也收回").FontSize(12).TextColor(p.ink3).Padding(12, 0, 0, 0)
+			ui.Text(c, "移出成员并撤销其设备共享").FontSize(12).TextColor(p.ink3).Padding(12, 0, 0, 0)
 		}
 		ui.Row(c).Gap(8).Margin(16, 0, 0, 0).Children(func() {
 			ui.Spacer(c)

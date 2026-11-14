@@ -15,6 +15,7 @@ mygo_windows_*.syso
 # app's resources while it builds (it takes them away again when done).
 /deploy/out/
 /cmd/deneb/resources/*/denebd.exe
+/cmd/deneb/resources/*/denebd
 /cmd/deneb/resources/*/wintun.dll
 /cmd/deneb/resources/*/LICENSE.txt
 /cmd/deneb/resources/*/THIRD_PARTY_NOTICES.txt

@@ -76,7 +76,9 @@ func TestAdapterNoticeDeclined(t *testing.T) {
 	r.until("the card", func() bool { return r.tt.HasText("装网卡") })
 	r.settle(300 * time.Millisecond)
 	r.click("装网卡")
-	r.until("said no", func() bool { return r.tt.HasText("没装上也能照常用，想装时再点「装网卡」") })
+	r.until("said no", func() bool {
+		return r.tt.HasText("没装上可以先在 Deneb 里点「打开」访问，想装时再试一次")
+	})
 	r.settle(300 * time.Millisecond)
 	if !r.tt.HasText("装网卡") || !r.tt.HasText("以后再说") || r.tt.HasText("正在装网卡…") {
 		t.Errorf("declined: %q", r.tt.Texts())
@@ -173,4 +175,25 @@ func TestPutAdapterIn(t *testing.T) {
 	if err := a.putAdapterIn(ctx); err != nil {
 		t.Error(err)
 	}
+}
+
+// macOS must offer the existing install flow to a signed-in userspace
+// engine, with its own system authentication wording instead of Windows UAC.
+func TestMacAdapterNoticeLive(t *testing.T) {
+	r := newLiveRig(t, fakeworld.Ready, "mac-adapter")
+	r.a.signer, r.a.platform, r.a.onboarded = &fakeSigner{}, "darwin", true
+	r.a.adapter = func(context.Context) error { return errors.New("cancelled") }
+	r.until("macOS adapter notice", func() bool { return r.tt.HasText("还没装网卡") })
+	r.click("还没装网卡")
+	r.until("macOS administrator explanation", func() bool {
+		return r.tt.HasText("系统会请你输入开机密码或使用触控 ID，允许 Deneb 安装系统网卡。")
+	})
+	if r.tt.HasText("Windows 会弹窗问你，点「是」就行。") {
+		t.Fatal("macOS asks with Windows instructions")
+	}
+	r.settle(300 * time.Millisecond)
+	r.click("装网卡")
+	r.until("cancellation permits retry", func() bool {
+		return r.tt.HasText("没装上可以先在 Deneb 里点「打开」访问，想装时再试一次")
+	})
 }

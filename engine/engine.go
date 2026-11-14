@@ -167,16 +167,19 @@ type Engine struct {
 	versionCh chan struct{} // closed and replaced at every new version
 	userView  json.RawMessage
 
-	cc         *controlclient.Client
-	ccRunning  bool
-	ccGen      int // which control loop is the current one
-	ccCancel   context.CancelFunc
-	loginURL   string
-	controlUp  bool
-	problems   map[string]apitype.Problem
-	socksOn    bool
-	portmaps   map[string]*portmap
-	lastReport string
+	cc            *controlclient.Client
+	ccRunning     bool
+	ccGen         int // which control loop is the current one
+	ccCancel      context.CancelFunc
+	loginURL      string
+	controlUp     bool
+	problems      map[string]apitype.Problem
+	socksOn       bool
+	portmaps      map[string]*portmap
+	lastReport    string
+	metricsMu     sync.Mutex
+	metricsSample *proto.DeviceMetrics
+	metricsDevice proto.DeviceID
 
 	subs      map[int]func(apitype.Event)
 	nextSub   int
@@ -337,6 +340,7 @@ func (e *Engine) Start() {
 	go e.gcLoop()
 	go e.pathLoop()
 	go e.reportLoop()
+	go e.metricsLoop()
 	go e.proxyLoop()
 	e.mu.Lock()
 	// With a control server configured, the control loop always runs: a

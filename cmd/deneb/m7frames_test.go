@@ -77,6 +77,10 @@ func playAccountCard(r *m3rig) {
 	r.tap(r.text("账号"))
 	r.run(900 * time.Millisecond)
 	r.shot("账号卡片")
+	r.tt.Key(0, ui.KeyEscape)
+	r.run(300 * time.Millisecond)
+	r.tap(r.text("设置"))
+	r.run(600 * time.Millisecond)
 	r.glide(r.text("隐私说明"), 20)
 	r.run(700 * time.Millisecond)
 	r.shot("指着隐私说明")
@@ -93,41 +97,36 @@ func playAccountCard(r *m3rig) {
 	r.run(500 * time.Millisecond)
 }
 
-// Scene M7-02: 我的游戏主机's card, "更多", 删除这台设备 and how that differs
-// from logging it out; it goes, the toast offers undo, undo brings it back;
-// deleted again, the toast goes and the server hears of it. This
-// computer's "更多" says 删除这台电脑.
+// Scene M7-02: My Devices owns account deletion and its undo toast.
 func playDeleteDevice(r *m3rig) {
 	r.run(400 * time.Millisecond)
-	r.tap(r.device("game"))
-	r.run(1000 * time.Millisecond)
-	r.tap(r.text("更多"))
-	r.run(900 * time.Millisecond)
-	r.shot("更多里的删除")
-	r.tap(r.text("删除这台设备"))
-	r.run(900 * time.Millisecond)
+	r.tap(r.text("我的设备"))
+	r.run(600 * time.Millisecond)
+	r.tap(r.text("详情我的游戏主机"))
+	r.run(600 * time.Millisecond)
+	clickVisibleDeviceAction(r.t, r.tt, "删除这台设备", 740)
+	r.run(400 * time.Millisecond)
+	r.shot("删除确认")
+	r.tap(r.text("确认删除设备"))
+	r.run(600 * time.Millisecond)
 	r.shot("删掉了")
 	r.tap(r.text("撤销"))
-	r.run(1200 * time.Millisecond)
+	r.run(800 * time.Millisecond)
 	r.shot("撤销")
-	r.tap(r.device("game"))
-	r.run(1000 * time.Millisecond)
-	r.tap(r.text("更多"))
-	r.run(800 * time.Millisecond)
-	r.tap(r.text("删除这台设备"))
-	r.run(800 * time.Millisecond)
+	r.tap(r.text("详情我的游戏主机"))
+	r.run(600 * time.Millisecond)
+	clickVisibleDeviceAction(r.t, r.tt, "删除这台设备", 740)
+	r.run(400 * time.Millisecond)
+	r.tap(r.text("确认删除设备"))
+	r.run(600 * time.Millisecond)
 	r.park()
 	r.run(4600 * time.Millisecond)
 	r.shot("提示条走了")
-	r.tap(r.device("mac"))
-	r.run(1000 * time.Millisecond)
-	r.tap(r.text("更多"))
-	r.run(900 * time.Millisecond)
-	// The card is taller than the window now: it scrolls in itself.
-	r.glide(at(1010, 520), 16)
-	r.wheelAt(1010, 520, 300, 24)
+	r.wheelAt(850, 400, -1200, 24)
+	r.run(500 * time.Millisecond)
+	r.tap(r.text("详情kittors 的 MacBook"))
 	r.run(600 * time.Millisecond)
-	r.shot("删除这台电脑")
+	r.shot("我的设备里的本机删除")
 	r.park()
 	r.run(500 * time.Millisecond)
 }
@@ -149,7 +148,7 @@ func (r *m3rig) wheelAt(x, y, dy float32, steps int) {
 // the window goes to the sign-in, which says so, and how to stop my relay.
 func playDeleteAccount(r *m3rig) {
 	r.run(400 * time.Millisecond)
-	r.tap(r.text("账号"))
+	r.tap(r.text("设置"))
 	r.run(900 * time.Millisecond)
 	r.tap(r.text("注销账号"))
 	r.run(300 * time.Millisecond)
@@ -179,7 +178,7 @@ func playDeleteAccount(r *m3rig) {
 // and what it means for the people in them; back to handing them over.
 func playDeleteAccountAll(r *m3rig) {
 	r.run(400 * time.Millisecond)
-	r.tap(r.text("账号"))
+	r.tap(r.text("设置"))
 	r.run(900 * time.Millisecond)
 	r.tap(r.text("注销账号"))
 	r.run(1500 * time.Millisecond)
@@ -201,7 +200,7 @@ func playDeleteAccountAll(r *m3rig) {
 func playSeedAccount(r *m3rig) {
 	r.d.Simulate("m7-seed")
 	r.run(400 * time.Millisecond)
-	r.tap(r.text("账号"))
+	r.tap(r.text("设置"))
 	r.run(900 * time.Millisecond)
 	r.tap(r.text("注销账号"))
 	r.run(1600 * time.Millisecond)

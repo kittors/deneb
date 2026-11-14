@@ -57,6 +57,7 @@ type Node struct {
 	ID               DeviceID   `json:"id"`
 	Name             string     `json:"name"`
 	DisplayName      string     `json:"displayName"`
+	Avatar           []byte     `json:"avatar,omitempty"`
 	Owner            PersonID   `json:"owner"`
 	OwnerName        string     `json:"ownerName"`
 	OwnerDisplayName string     `json:"ownerDisplayName"`

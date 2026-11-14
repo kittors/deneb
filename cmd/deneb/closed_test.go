@@ -29,6 +29,7 @@ func closeScreenShare(t *testing.T, a *app, tt *ui.Tester) {
 		t.Fatalf("no 远程桌面 in this computer's card: %q", tt.Texts())
 	}
 	tt.ClickAt(a.origin.X+a.cardAt.X+a.cardAt.W-16-12-19, box.Y+box.H/2)
+	acceptConfirmation(t, tt, "关闭服务")
 	tt.Frame()
 }
 

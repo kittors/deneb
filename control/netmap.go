@@ -249,20 +249,20 @@ func (w *World) node(d *device, isOnline online) proto.Node {
 	n := proto.Node{
 		ID:          d.ID,
 		Name:        d.Name,
-		DisplayName: d.DisplayName,
-		Owner:       d.Owner,
-		FQDN:        proto.FQDN(d.Name, ""),
-		Kind:        d.Kind,
-		OS:          d.OS,
-		NodeKey:     d.NodeKey,
-		DiscoKey:    d.DiscoKey,
-		Addrs:       d.addrs(),
-		Endpoints:   slices.Clone(d.Endpoints),
-		HomeRelay:   d.HomeRelay,
-		Online:      isOnline != nil && isOnline(d.ID),
-		LastSeen:    d.LastSeen,
-		PublicLAN:   d.PublicLAN,
-		Caps:        slices.Clone(d.Caps),
+		DisplayName: d.DisplayName, Avatar: slices.Clone(d.Avatar),
+		Owner:     d.Owner,
+		FQDN:      proto.FQDN(d.Name, ""),
+		Kind:      d.Kind,
+		OS:        d.OS,
+		NodeKey:   d.NodeKey,
+		DiscoKey:  d.DiscoKey,
+		Addrs:     d.addrs(),
+		Endpoints: slices.Clone(d.Endpoints),
+		HomeRelay: d.HomeRelay,
+		Online:    isOnline != nil && isOnline(d.ID),
+		LastSeen:  d.LastSeen,
+		PublicLAN: d.PublicLAN,
+		Caps:      slices.Clone(d.Caps),
 	}
 	if owner != nil {
 		n.OwnerName = owner.Name
@@ -449,7 +449,7 @@ func (w *World) userView(me proto.PersonID, version uint64, isOnline online, now
 		sd := proto.SharedDevice{
 			Share: proto.ShareID(sh.ID),
 			Device: proto.DeviceView{
-				ID: d.ID, Owner: d.Owner, Name: d.Name, DisplayName: d.DisplayName, FQDN: n.FQDN,
+				ID: d.ID, Owner: d.Owner, Name: d.Name, DisplayName: d.DisplayName, Avatar: slices.Clone(d.Avatar), FQDN: n.FQDN,
 				Kind: d.Kind, OS: d.OS, Addrs: d.addrs(), Online: n.Online, LastSeen: d.LastSeen,
 				LANs: []proto.LANID{}, Login: proto.LoginInfo{Expired: d.expired}, PublicLAN: d.PublicLAN,
 			},
@@ -494,14 +494,14 @@ func (w *World) userView(me proto.PersonID, version uint64, isOnline online, now
 			ID:          d.ID,
 			Owner:       d.Owner,
 			Name:        d.Name,
-			DisplayName: d.DisplayName,
-			FQDN:        n.FQDN,
-			Kind:        d.Kind,
-			OS:          d.OS,
-			Addrs:       d.addrs(),
-			Online:      n.Online,
-			LastSeen:    d.LastSeen,
-			LANs:        []proto.LANID{},
+			DisplayName: d.DisplayName, Avatar: slices.Clone(d.Avatar),
+			FQDN:     n.FQDN,
+			Kind:     d.Kind,
+			OS:       d.OS,
+			Addrs:    d.addrs(),
+			Online:   n.Online,
+			LastSeen: d.LastSeen,
+			LANs:     []proto.LANID{},
 			// Others' devices say only whether their login ran out, for
 			// "连不上：登录过期"; when is their owner's business.
 			Login: proto.LoginInfo{Expired: d.expired},
@@ -547,7 +547,7 @@ func (w *World) userView(me proto.PersonID, version uint64, isOnline online, now
 			continue
 		}
 		dv := proto.DeviceView{
-			ID: d.ID, Owner: d.Owner, Name: d.Name, DisplayName: d.DisplayName, FQDN: w.node(d, nil).FQDN,
+			ID: d.ID, Owner: d.Owner, Name: d.Name, DisplayName: d.DisplayName, Avatar: slices.Clone(d.Avatar), FQDN: w.node(d, nil).FQDN,
 			Kind: d.Kind, OS: d.OS, Addrs: d.addrs(), LastSeen: d.LastSeen, LANs: []proto.LANID{}, PublicLAN: d.PublicLAN,
 		}
 		for l := range d.lans {
