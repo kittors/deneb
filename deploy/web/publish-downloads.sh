@@ -28,7 +28,10 @@
 #
 # Nothing is overwritten that the apps may be reading: every file goes up
 # under a temporary name and is renamed in place, after its SHA-256 on the
-# site has been compared with the one here. The manifest a version replaces
+# site has been compared with the one here; no manifest changes before every
+# file it names is on the site. (ssh -n everywhere: in the loop that reads
+# the list, an ssh reading stdin ate the list on 11-14, and the manifests
+# went up naming archives that were not there.) The manifest a version replaces
 # is kept as update-<os>-<arch>.before-<version>.json. Signatures are
 # checked with the key of cmd/deneb/mygo.json before anything goes up, and
 # again on the site's copies, downloaded over HTTPS, at the end.
@@ -151,31 +154,49 @@ fi
 put() {
 	f=$1 n=$2
 	sum=$(shasum -a 256 "$f" | cut -d' ' -f1)
-	have=$(ssh "$HOST" "sha256sum '$DOWNLOAD_DIR/$n' 2>/dev/null | cut -d' ' -f1" || true)
+	have=$(ssh -n "$HOST" "sha256sum '$DOWNLOAD_DIR/$n' 2>/dev/null | cut -d' ' -f1" || true)
 	if [ "$have" = "$sum" ]; then
 		echo "  $n: already there"
 		return
 	fi
 	scp -q "$f" "$HOST:$DOWNLOAD_DIR/.$n.up"
-	got=$(ssh "$HOST" "sha256sum '$DOWNLOAD_DIR/.$n.up' | cut -d' ' -f1")
+	got=$(ssh -n "$HOST" "sha256sum '$DOWNLOAD_DIR/.$n.up' | cut -d' ' -f1")
 	if [ "$got" != "$sum" ]; then
-		ssh "$HOST" "rm -f '$DOWNLOAD_DIR/.$n.up'"
+		ssh -n "$HOST" "rm -f '$DOWNLOAD_DIR/.$n.up'"
 		echo "$n: the copy on the site is not the file sent" >&2
 		exit 1
 	fi
-	ssh "$HOST" "chmod 0644 '$DOWNLOAD_DIR/.$n.up' && mv -f '$DOWNLOAD_DIR/.$n.up' '$DOWNLOAD_DIR/$n'"
+	ssh -n "$HOST" "chmod 0644 '$DOWNLOAD_DIR/.$n.up' && mv -f '$DOWNLOAD_DIR/.$n.up' '$DOWNLOAD_DIR/$n'"
 	echo "  $n: up"
 }
 
-ssh "$HOST" "test -d '$DOWNLOAD_DIR'" || {
+ssh -n "$HOST" "test -d '$DOWNLOAD_DIR'" || {
 	echo "no $DOWNLOAD_DIR on $HOST: run deploy/web/nginx-hkspare.sh install first" >&2
 	exit 1
 }
 while read -r f n; do
 	put "$f" "$n"
 done <"$list"
+# Before any manifest changes: every file a manifest names must be on the
+# site already, byte for byte, or the apps would be sent to a 404.
 for plat in $manifests; do
-	ssh "$HOST" "cd '$DOWNLOAD_DIR' && if [ -f update-$plat.json ] && [ ! -f update-$plat.before-$version.json ]; then cp -p update-$plat.json update-$plat.before-$version.json; fi"
+	python3 -I - "$stage/update-$plat.json" <<'PY' | while read -r n; do
+import json, sys, posixpath
+m = json.load(open(sys.argv[1], encoding="utf-8"))
+for s in [m] + (m.get("deltas") or []):
+    print(posixpath.basename(s["url"]))
+PY
+		f=$(awk -v n="$n" '$2 == n { print $1; exit }' "$list")
+		sum=$(shasum -a 256 "$f" | cut -d' ' -f1)
+		have=$(ssh -n "$HOST" "sha256sum '$DOWNLOAD_DIR/$n' 2>/dev/null | cut -d' ' -f1" || true)
+		if [ "$have" != "$sum" ]; then
+			echo "$n is not on the site as built: the manifests stay as they are" >&2
+			exit 1
+		fi
+	done || exit 1
+done
+for plat in $manifests; do
+	ssh -n "$HOST" "cd '$DOWNLOAD_DIR' && if [ -f update-$plat.json ] && [ ! -f update-$plat.before-$version.json ]; then cp -p update-$plat.json update-$plat.before-$version.json; fi"
 	put "$stage/update-$plat.json" "update-$plat.json"
 done
 
