@@ -379,7 +379,10 @@ func (a *app) arm(c *ui.Context, key string) {
 // once it asked in place, red, "再点一下，<off>" (原地确认).
 func (a *app) toggleChip(c *ui.Context, p *palette, key, name, label, tip, off string, st chipState, extra string) bool {
 	b := ui.ButtonBase(c.Key(key)).Height(28).Padding(0, 12, 0, 8).Gap(4).Radius(999).FocusRing(false).Shrink(0).Label(label).Tooltip(tip)
-	b.Transition(ui.ElementTransition{Animation: &ui.Smooth, Size: true, Colors: true})
+	// Its words keep their width while it grows or shrinks, clipped to it
+	// on the way: laid out at its size on the way, they were cut short,
+	// "✓ 周末联…", and stayed so where the growing stopped a hair short.
+	b.Transition(ui.ElementTransition{Animation: &ui.Smooth, Size: true, Colors: true}).Clip()
 	hover := b.Hovered()
 	asking := st == chipOn && a.armed(c, key)
 	if asking && !hover && !b.Focused() {
@@ -426,7 +429,7 @@ func (a *app) toggleChip(c *ui.Context, p *palette, key, name, label, tip, off s
 	b.Children(func() {
 		switch {
 		case asking:
-			ui.Text(c.Key("ask"), "再点一下，"+off).FontSize(12).FontWeight(500).TextColor(danger).SingleLine().
+			ui.Text(c.Key("ask"), "再点一下，"+off).FontSize(12).FontWeight(500).TextColor(danger).SingleLine().Shrink(0).
 				Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{}, Exit: &ui.Motion{}})
 		case st == chipOn || st == chipFixed:
 			ink := p.primary
@@ -434,13 +437,13 @@ func (a *app) toggleChip(c *ui.Context, p *palette, key, name, label, tip, off s
 				ink = p.ink2
 			}
 			checkMark(c, ink, 12)
-			ui.Text(c.Key("name"), name).FontSize(12).FontWeight(500).TextColor(ink).MaxWidth(220).SingleLine()
+			ui.Text(c.Key("name"), name).FontSize(12).FontWeight(500).TextColor(ink).MaxWidth(220).SingleLine().Shrink(0)
 		default:
 			ink := p.ink2
 			if hover {
 				ink = p.primary
 			}
-			ui.Text(c.Key("name"), name).FontSize(12).FontWeight(500).TextColor(ink).MaxWidth(220).SingleLine()
+			ui.Text(c.Key("name"), name).FontSize(12).FontWeight(500).TextColor(ink).MaxWidth(220).SingleLine().Shrink(0)
 			if extra != "" {
 				ui.Text(c, extra).FontSize(12).TextColor(p.ink3).SingleLine()
 			}
