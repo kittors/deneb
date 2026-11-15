@@ -25,6 +25,15 @@ server {
 	error_log /var/log/nginx/deneb-web.error.log crit;
 	client_max_body_size 1m;
 
+	# The relays' install script (deploy/relay/release.sh puts it in the
+	# download folder's relay/): `curl -fsSL https://@WEB_HOST@/relay | sh`.
+	location = /relay {
+		alias @DOWNLOAD_DIR@/relay/install.sh;
+		default_type "text/plain; charset=utf-8";
+		add_header Cache-Control "no-cache" always;
+		add_header X-Content-Type-Options "nosniff" always;
+	}
+
 	# The installers, which deploy/web/publish-downloads.sh puts in
 	# @DOWNLOAD_DIR@: nginx sends them itself, ranges and all, so a
 	# download that breaks can go on. The names stay the same from version

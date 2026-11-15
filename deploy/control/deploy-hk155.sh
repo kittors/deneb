@@ -45,6 +45,10 @@ if [ -f "$WEB_SITE" ]; then
 	. "$WEB_SITE"
 	if [ "${WEB_LIVE:-no}" = yes ]; then
 		WEB_FLAGS="-web-url https://${WEB_HOST:?in $WEB_SITE} -trust-proxy ${WEB_PROXY_IP:?in $WEB_SITE}"
+		# The relays' one-line install (design/plan/m7/relay-install.md):
+		# the programs on the same site's /download/relay/, the script at
+		# its /relay (deploy/web/nginx.conf.template).
+		WEB_FLAGS="$WEB_FLAGS -relay-download https://$WEB_HOST/download/relay/"
 	fi
 fi
 # Sign-up: open on hk-155 since 2026-11-12 (the user: "都可以"), with the
