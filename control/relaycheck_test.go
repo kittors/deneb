@@ -609,6 +609,19 @@ func TestRelayCheckWhilePublished(t *testing.T) {
 	}
 }
 
+// TestSeenSkipped: a place that did not check an address (the prober,
+// which checks only addresses on the Internet) says nothing about it: with
+// no route from here either, it is untested, not blocked.
+func TestSeenSkipped(t *testing.T) {
+	f := seen([]proto.RelayProbe{
+		{From: fromControl, Family: "ipv6", Addr: relay6, TCP: proto.RelayProbeNoRoute, UDP: proto.RelayProbeNoRoute},
+		{From: "hk-spare", Family: "ipv6", Addr: relay6, TCP: proto.RelayProbeSkipped, UDP: proto.RelayProbeSkipped},
+	}, relay6)
+	if f.tested || f.tcpOK || f.udpTried || f.udpOK {
+		t.Fatalf("%+v", f)
+	}
+}
+
 // TestPublicRelayUnreachableAlert: a public relay the checks cannot reach
 // is an alert for the operators.
 func TestPublicRelayUnreachableAlert(t *testing.T) {

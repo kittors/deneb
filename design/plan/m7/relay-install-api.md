@@ -122,7 +122,7 @@
 
 ### 3.3 一个位置看到的（`probes[].tcp`、`.udp`）
 
-`ok`（通，TCP 还要证书对得上）、`refused`（端口上没有程序在听）、`timeout`（被挡了）、`unreachable`（网络说到不了）、`tls`（有回应，但不是 TLS）、`pin`（TLS 证书不是它的）、`none`（中转站没开 STUN）、`noroute`（这个位置自己没有这种地址的路由，比如没有 IPv6，不算中转站的问题）、`error`。
+`ok`（通，TCP 还要证书对得上）、`refused`（端口上没有程序在听）、`timeout`（被挡了）、`unreachable`（网络说到不了）、`tls`（有回应，但不是 TLS）、`pin`（TLS 证书不是它的）、`none`（中转站没开 STUN）、`noroute`（这个位置自己没有这种地址的路由，比如没有 IPv6，不算中转站的问题）、`skipped`（这个位置没查：不是公网地址，看门狗不查；也不算中转站的问题）、`error`。
 
 `from` 是 `control`（控制服务器），或者第二个位置的名字（`hk-spare`）。
 
@@ -142,6 +142,7 @@
 - 看门狗用长轮询向控制服务器要活：`POST /probe/v1/next`，带部署的探测密钥。
 - 有中转站要查时，控制服务器把地址、端口、证书指纹交给它；它从 hk-spare 查完，`POST /probe/v1/done` 交回结果。
 - 看门狗最近一分钟里来要过活，才算连着。没连着时只用控制服务器自己的结果，`probes` 里就只有 `control` 的。
+- 看门狗自己也只查公网地址，谁派的活都一样：不是公网地址的，回 `skipped`，一个包也不发。控制服务器平时只派公网地址，但开发版会派本机地址，hk-spare 本机和它所在的网络还有别的服务。
 
 探测本身是同一份代码 `control/probe`：控制服务器和看门狗都用它。
 
@@ -255,7 +256,10 @@ docker run -d --name deneb-relay … --join <加入码> --region auto
   - `TestPublicRelayUnreachableAlert`：公共中转站连不上发运营提醒。
   - `TestInstallCommand`：读下载站、命令带版本和哈希、wget 和 Docker 的、下载站坏了沿用上一次。
   - 原有的 `TestRelays`、`TestRelayJoin`、越权测试照旧通过：重新登记后旧密钥原来回 401，现在回 410。
-- `cmd/deneb-watchdog`：`TestProber`：看门狗兼做第二个位置，控制服务器连不上、它连得上，算能用。
+- `cmd/deneb-watchdog`：
+  - `TestProber`：看门狗兼做第二个位置，控制服务器连不上、它连得上，算能用。
+  - `TestProberOnlyPublic`：本机、私网、运营商 NAT 的地址都回 `skipped`，不去探。
+- `control` 的 `TestSeenSkipped`：`skipped` 不算查过，不会被当成"被挡了"。
 
 ## 11. 没做的
 

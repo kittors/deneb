@@ -22,7 +22,9 @@ import (
 // design/plan/m7/relay-install-api.md §5): it asks the control server for
 // relays to check, checks them from this machine as a device would reach
 // them (control/probe), and posts back what it saw, so a relay is not
-// called unreachable for a trouble on the control server's own route.
+// called unreachable for a trouble on the control server's own route. It
+// checks only addresses on the Internet, whoever asks: this machine and
+// the networks around it are not for others to look into.
 
 // ProberConfig is the file's "prober": the control server to ask, its
 // certificate's pin, and the deployment's probe secret (also
@@ -104,6 +106,13 @@ func (p *prober) do(ctx context.Context, j proto.ProbeJob) {
 	results := make([]proto.RelayProbe, len(j.Targets))
 	var wg sync.WaitGroup
 	for i, t := range j.Targets {
+		if !probe.Public(t.Addr) {
+			// A development control server hands out this machine's
+			// addresses, say: not checked.
+			p.logf("prober: job %s: %s is no address on the Internet: not checked", j.ID, t.Addr)
+			results[i] = proto.RelayProbe{Family: t.Family, Addr: t.Addr, TCP: proto.RelayProbeSkipped, UDP: proto.RelayProbeSkipped}
+			continue
+		}
 		wg.Go(func() {
 			r := p.check(ctx, t)
 			r.Family, r.Addr = t.Family, t.Addr

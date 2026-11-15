@@ -451,13 +451,13 @@ func seen(probes []proto.RelayProbe, a netip.Addr) famSeen {
 		case proto.RelayProbePin:
 			f.pin = true
 		}
-		if p.TCP != proto.RelayProbeNoRoute {
+		if p.TCP != proto.RelayProbeNoRoute && p.TCP != proto.RelayProbeSkipped {
 			f.tested = true
 		}
 		switch p.UDP {
 		case proto.RelayProbeOK:
 			f.udpOK, f.udpTried, f.stun = true, true, true
-		case proto.RelayProbeNone, "":
+		case proto.RelayProbeNone, proto.RelayProbeSkipped, "":
 		case proto.RelayProbeNoRoute:
 			f.stun = true
 		default:

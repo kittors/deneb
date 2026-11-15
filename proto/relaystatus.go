@@ -161,6 +161,10 @@ const (
 	// RelayProbeNoRoute: the place itself has no route to the address's
 	// family (a place with no IPv6): it says nothing about the relay.
 	RelayProbeNoRoute = "noroute"
+	// RelayProbeSkipped: the place did not check it, for it is no address
+	// on the Internet: a prober checks only those, whoever asks. It says
+	// nothing about the relay.
+	RelayProbeSkipped = "skipped"
 	RelayProbeError   = "error" // anything else
 )
 
