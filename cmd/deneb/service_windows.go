@@ -37,6 +37,10 @@ var ownEngineArgs = []string{"run", "-relay-only"}
 // elsewhere; when the service has one already, the engine skips that. The
 // engine the window ran must have stopped before a first install; on an
 // update the running engine is the service, which the install stops itself.
+// updateService is installService: UAC's window has no line of ours to say
+// it is an update.
+func updateService(ctx context.Context, exe string) error { return installService(ctx, exe) }
+
 func installService(ctx context.Context, exe string) error {
 	state := filepath.Join(os.Getenv("LOCALAPPDATA"), "Deneb")
 	code, err := runElevated(ctx, exe, fmt.Sprintf(`service install -import-state "%s"`, state))

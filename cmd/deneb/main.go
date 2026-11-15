@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -33,6 +34,13 @@ func main() {
 	store, at, sims, lc := pickStore()
 	a := newApp(store, at)
 	a.sims = sims
+	if k, ok := map[string]ui.Key{"quick": ui.Key6, "slow": ui.Key7, "rollback": ui.Key8, "badsig": ui.Key9}[os.Getenv("DENEB_FAKE_SWAP")]; ok && sims[k] != nil {
+		// A recording's engine change, unattended (DENEB_FAKE; engine-self-update.md §5).
+		go func() {
+			time.Sleep(5 * time.Second)
+			a.post(func(c *ui.Context) { sims[k](c, a) })
+		}()
+	}
 	if lc != nil {
 		go keepEngine(a, lc)
 		// This computer's diagnostics package, from the engine (M6, DESIGN
@@ -195,13 +203,60 @@ func pickStore() (client.Store, *places, map[ui.Key]func(c *ui.Context, a *app),
 			log.Fatal(err)
 		}
 		path := filepath.Join(dir, "d.sock")
-		if _, err := w.E.Listen(path); err != nil {
+		stop, err := w.E.Listen(path)
+		if err != nil {
 			log.Fatal(err)
 		}
 		l := client.NewLive(localclient.New(path))
 		l.Start()
 		nasIn, pcRelay, nasOn := true, false, true
+		// The engine changed for the one shipped (engine-self-update.md §5):
+		// it goes away for away, comes back with every device connecting
+		// for 2 s, then after runs.
+		var stopMu sync.Mutex
+		change := func(a *app, away time.Duration, after func(c *ui.Context)) {
+			a.beginSwap(time.Now())
+			stopMu.Lock()
+			stop()
+			stopMu.Unlock()
+			go func() {
+				time.Sleep(away)
+				paths := w.E.Snapshot().Paths
+				for _, p := range paths {
+					w.E.PushPaths(apitype.PeerPath{DeviceID: p.DeviceID, Kind: apitype.PathConnecting, Since: time.Now()})
+				}
+				stopMu.Lock()
+				s, err := w.E.Listen(path)
+				if err == nil {
+					stop = s
+				}
+				stopMu.Unlock()
+				if err != nil {
+					log.Printf("deneb: the fake engine back: %v", err)
+					return
+				}
+				time.Sleep(2 * time.Second)
+				for _, p := range paths {
+					p.Since = time.Now()
+					w.E.PushPaths(p)
+				}
+				if after != nil {
+					a.post(after)
+				}
+			}()
+		}
 		return l, &places{at: map[model.LANID]map[string]ui.Point{}}, map[ui.Key]func(*ui.Context, *app){
+			ui.Key6: func(_ *ui.Context, a *app) { change(a, 2*time.Second, nil) },  // quickly
+			ui.Key7: func(_ *ui.Context, a *app) { change(a, 14*time.Second, nil) }, // slowly: 正在更新网卡…
+			ui.Key8: func(_ *ui.Context, a *app) { // the new one does not get going: the old one back
+				change(a, 2*time.Second, func(c *ui.Context) {
+					a.endSwap()
+					a.notify(c, nil, "网卡没更新成功，用回了原来的版本", nil)
+				})
+			},
+			ui.Key9: func(c *ui.Context, a *app) {
+				a.notify(c, nil, "安装包里的系统网卡不对，请重新下载 Deneb", nil)
+			},
 			ui.Key1: func(*ui.Context, *app) { nasIn = !nasIn; w.JieTakesOut(fakeworld.JieNAS, nasIn) },
 			ui.Key2: func(*ui.Context, *app) {
 				pcRelay = !pcRelay
@@ -253,7 +308,7 @@ func keepEngine(a *app, lc *localclient.Client) {
 	bin := bundledEngine()
 	said, followed := "", false
 	for {
-		if installing.Load() {
+		if installing.Load() || swapping() {
 			time.Sleep(3 * time.Second)
 			continue
 		}

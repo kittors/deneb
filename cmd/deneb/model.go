@@ -459,6 +459,9 @@ type app struct {
 	loginErr  string // why the login did not start
 	engineErr string // why this computer's engine could not be started
 
+	// swap: the engine is being changed for the one shipped (engineswap.go).
+	swap *engineSwap
+
 	// sims are the outside events ⌥⌘1 to ⌥⌘5 play, in the demo and in the
 	// fake world: someone takes a device out elsewhere, the network changes,
 	// an invite comes.

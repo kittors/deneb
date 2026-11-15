@@ -252,6 +252,8 @@ const demoInviteLAN model.LANID = "boardgame"
 //   - "waiting": I asked into Leo's 读书会 on a member's invite, and wait
 //     for Leo.
 //   - "engine": this computer's Deneb stops answering, or answers again.
+//   - "engine-away", "engine-loading", "engine-new": the engine changed for
+//     the one shipped, in its three steps; "nonet-back" ends it.
 func (d *Demo) Simulate(event string) {
 	now := time.Now()
 	d.update(func(s *model.Snapshot) *model.Snapshot {
@@ -307,6 +309,21 @@ func (d *Demo) Simulate(event string) {
 				n.Paths[id] = p
 			}
 			d.netPaths = nil
+		case "engine-away":
+			// The engine changed for the one shipped (design/plan/m7/
+			// engine-self-update.md §5): the old one goes away; then the new
+			// one answers, logged in, without its LANs yet ("engine-loading");
+			// then with them, every device connecting ("engine-new"), until
+			// "nonet-back" has them as they were.
+			n.Engine = false
+			d.netPaths = maps(s.Paths)
+		case "engine-loading":
+			n.Engine, n.Loaded = true, false
+		case "engine-new":
+			n.Engine, n.Loaded = true, true
+			for id := range d.netPaths {
+				n.Paths[id] = model.Path{Kind: model.PathConnecting, Since: now}
+			}
 		case "connected":
 			n.Paths["jdesk"] = model.Path{Kind: model.PathDirect, RTT: 11 * time.Millisecond, Since: now}
 		case "catalogs-closed":

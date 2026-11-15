@@ -525,6 +525,11 @@ func (a *app) summary(p *palette) (ui.Color, string) {
 		// the service: no trouble to tell of (DESIGN §7.3).
 		return p.ink3, "正在装网卡…"
 	}
+	if line, ok := a.swapLine(); ok {
+		// The engine is changed for the one shipped, and takes long, or the
+		// system asks for the password (engine-self-update.md §5).
+		return p.ink3, line
+	}
 	if a.snap.NoNetwork && a.snap.Engine {
 		// The trouble is here, not over there (DESIGN §6.10).
 		return p.ink3, "这台电脑没联网，联网后会自动连上"

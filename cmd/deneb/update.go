@@ -152,23 +152,101 @@ func followEngine(ctx context.Context, lc engineAPI, bundled, want string, insta
 // computer's identity while the service is stopped.
 var installing atomic.Bool
 
-// followEngineOnce runs followEngine for this launch's engine.
+// followEngineOnce runs followEngine for this launch's engine, the window
+// holding its picture through the change (design/plan/m7/
+// engine-self-update.md §5), and says what came of it where that is news:
+// the shipped engine's signature does not check out; the new engine could
+// not start, and the old one is back.
 func followEngineOnce(a *app, lc engineAPI) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
+	before, _ := lc.Version(ctx)
+	api := &swapAPI{engineAPI: lc, a: a}
 	install := func(ctx context.Context, exe string) error {
 		installing.Store(true)
 		defer installing.Store(false)
-		return installService(ctx, exe)
-	}
-	result := followEngine(ctx, lc, bundledEngine(), mygo.App.Version(), install)
-	log.Printf("deneb: %s", result)
-	v, err := lc.Version(ctx)
-	if err != nil || v.Engine != mygo.App.Version() {
-		a.post(func(*ui.Context) {
-			a.engineErr = "系统引擎还未更新，请在系统认证窗口中允许安装，或重新打开 Deneb 重试"
+		a.postWait(func(*ui.Context) {
+			if a.swap != nil {
+				a.swap.asked = true
+			}
 		})
+		err := updateService(ctx, exe)
+		if err != nil {
+			// Not given the password, or it did not go in: the engine is the
+			// one it was, and the next launch asks again.
+			a.post(func(*ui.Context) { a.endSwap() })
+		}
+		return err
 	}
+	want := mygo.App.Version()
+	result := followEngine(ctx, api, bundledEngine(), want, install)
+	log.Printf("deneb: %s", result)
+	switch api.result {
+	case apitype.UpdateBadSignature:
+		a.post(func(c *ui.Context) {
+			a.notify(c, nil, "安装包里的系统网卡不对，请重新下载 Deneb", nil)
+		})
+	case apitype.UpdateDone:
+		// The new engine is a new process: once one answers, it says
+		// whether it is the new version, or the old one put back.
+		v := waitRestarted(ctx, lc, before, swapGiveUp)
+		if v == nil || v.Engine == want {
+			return
+		}
+		r, err := lc.UpdateEngine(ctx, bundledEngine())
+		log.Printf("deneb: engine %s after the change to %s: %v %v", v.Engine, want, r, err)
+		if err == nil && r.Result == apitype.UpdateRolledBack {
+			a.post(func(c *ui.Context) {
+				a.endSwap()
+				a.notify(c, nil, "网卡没更新成功，用回了原来的版本", nil)
+			})
+		}
+	}
+}
+
+// swapAPI is the engine followEngine asks, the window holding its picture
+// from just before the engine is asked to change; result is what it said.
+type swapAPI struct {
+	engineAPI
+	a      *app
+	result string
+}
+
+func (s *swapAPI) UpdateEngine(ctx context.Context, path string) (*apitype.UpdateResult, error) {
+	s.a.postWait(func(c *ui.Context) {
+		now := time.Now()
+		if c != nil {
+			now = c.Now()
+		}
+		s.a.beginSwap(now)
+	})
+	r, err := s.engineAPI.UpdateEngine(ctx, path)
+	if err == nil {
+		s.result = r.Result
+	}
+	if err != nil || r.Result != apitype.UpdateDone && r.Result != apitype.UpdateNeedsInstall {
+		// Nothing changes: the picture goes on as it is.
+		s.a.post(func(*ui.Context) { s.a.endSwap() })
+	}
+	return r, err
+}
+
+// waitRestarted waits, up to within, for an engine other than before (a
+// process of its own) to answer, and returns what it says it is.
+func waitRestarted(ctx context.Context, lc engineAPI, before *apitype.VersionInfo, within time.Duration) *apitype.VersionInfo {
+	deadline := time.Now().Add(within)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(500 * time.Millisecond):
+		}
+		v, err := lc.Version(ctx)
+		if err == nil && (before == nil || v.PID != before.PID) {
+			return v
+		}
+	}
+	return nil
 }
 
 // updateFeed is the folder of the download site that holds the signed
