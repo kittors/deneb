@@ -40,12 +40,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/kittors/deneb/proto"
 	"tailscale.com/derp/derpserver"
-	"tailscale.com/net/stunserver"
 )
 
 // config is what the flags say.
@@ -260,8 +260,13 @@ func (cfg *config) useJoin(code string) error {
 type listening func(derp net.Addr, stun net.Addr, r *relay)
 
 // run runs the relay until ctx ends, or until the control server no longer
-// knows it.
+// knows it. When it returns, all it opened is closed: its ports are free,
+// its router's forwarding taken back, and nothing of it still runs, even
+// when its process stays (cmdRun: one Deneb no longer uses waits for a
+// signal).
 func run(ctx context.Context, cfg config, logf func(string, ...any), ready listening) error {
+	ctx, stop := context.WithCancel(ctx)
+	defer stop()
 	if err := os.MkdirAll(cfg.data, 0o700); err != nil {
 		return err
 	}
@@ -274,16 +279,13 @@ func run(ctx context.Context, cfg config, logf func(string, ...any), ready liste
 	if err := writeFile(cfg.data, listenFile, []byte(ln.Addr().String())); err != nil {
 		return err
 	}
-	// STUN stops with run, even if the process stays: one Deneb no longer
-	// uses waits for a signal holding no port (cmdRun).
-	stunCtx, stopSTUN := context.WithCancel(ctx)
-	defer stopSTUN()
-	var stun *stunserver.STUNServer
+	// STUN's port is free once run returns (stunServer.close).
+	var stun *stunServer
 	if cfg.stun != "" {
-		stun = stunserver.New(stunCtx)
-		if err := stun.Listen(cfg.stun); err != nil {
+		if stun, err = listenSTUN(cfg.stun, logf); err != nil {
 			return fmt.Errorf("STUN: %w", err)
 		}
+		defer stun.close()
 	}
 	info := proto.RelayInfo{HostName: cfg.host, IPv4: cfg.ipv4, IPv6: cfg.ipv6, DERPPort: cfg.derpPort, STUNPort: cfg.stunPort, Version: version(),
 		Install: cfg.install, Firewall: cfg.firewall, FirewallOpen: cfg.firewallOpen, Restarts: cfg.restarts}
@@ -346,11 +348,8 @@ func run(ctx context.Context, cfg config, logf func(string, ...any), ready liste
 		ErrorLog:     log.New(logWriter(logf), "http: ", 0),
 	}
 	defer srv.Close()
-	errc := make(chan error, 4)
+	errc := make(chan error, 3)
 	go func() { errc <- srv.ServeTLS(ln, "", "") }()
-	if stun != nil {
-		go func() { errc <- stun.Serve() }()
-	}
 
 	ctl, err := newControlClient(cfg.control, cfg.controlPin)
 	if err != nil {
@@ -397,15 +396,24 @@ func run(ctx context.Context, cfg config, logf func(string, ...any), ready liste
 
 	handler = r.handler()
 	close(up)
-	go func() { errc <- r.syncLoop(ctx, cfg.syncEvery) }()
-	go r.watch(ctx)
+	// Its own goroutines end before run returns, first of all that it
+	// closes: a relay Deneb no longer uses stops asking the control server,
+	// takes its router's forwarding back (keep) and stops watching its
+	// addresses, while its process waits for a signal.
+	var bg sync.WaitGroup
+	defer func() {
+		stop()
+		bg.Wait()
+	}()
+	bg.Go(func() { errc <- r.syncLoop(ctx, cfg.syncEvery) })
+	bg.Go(func() { r.watch(ctx) })
 	find := findAddrs
 	// Behind a router (no public IPv4 here, none given, no forwarding set
 	// by hand): ask it to forward the ports, in the background, so that a
 	// cloud's machine with no router to ask does not start late.
 	if cfg.portMap && !info.IPv4.IsValid() && !cfg.ipv4.IsValid() && cfg.derpPort == 0 && info.STUNPort != 0 {
 		pm := &portMapper{logf: logf, tcpLocal: info.DERPPort, udpLocal: info.STUNPort, mapPorts: mapPorts}
-		go r.mapPortsFor(ctx, pm, cfg.data)
+		bg.Go(func() { r.mapPortsFor(ctx, pm, cfg.data) })
 		find = func() (netip.Addr, netip.Addr, []netip.Addr) {
 			v4, v6, local := findAddrs()
 			if ip, _, _, ok := pm.external(); ok && !v4.IsValid() {
@@ -417,14 +425,14 @@ func run(ctx context.Context, cfg config, logf func(string, ...any), ready liste
 		writePortMap(cfg.data, nil)
 	}
 	if cfg.findAddrs {
-		go r.watchAddrs(ctx, time.Minute, cfg.ipv4.IsValid(), cfg.ipv6.IsValid(), find)
+		bg.Go(func() { r.watchAddrs(ctx, time.Minute, cfg.ipv4.IsValid(), cfg.ipv6.IsValid(), find) })
 	}
 	if cfg.autoUpdate {
-		go func() {
+		bg.Go(func() {
 			if autoUpdate(ctx, logf) {
 				errc <- errUpdated
 			}
-		}()
+		})
 	}
 	if ready != nil {
 		var sa net.Addr
