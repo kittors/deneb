@@ -251,6 +251,7 @@ docker run -d --name deneb-relay … --join <加入码> --region auto
   - `TestRelayJoinLasts`：24 小时内能用，只能用一次，过期的说法。
   - `TestRelayFailuresReported`：设备上报的清理。
   - `TestRelayCheckOp`：主人点"重新检查"，卡片先"正在检查"再出结果；没装好的 409；`GET /relay/v1/check` 回上次的结果，不再查。
+  - `TestRelayCheckWhilePublished`：一次检查查完、还没发布时来问的，要等卡片发布了才回答。
   - `TestPublicRelayUnreachableAlert`：公共中转站连不上发运营提醒。
   - `TestInstallCommand`：读下载站、命令带版本和哈希、wget 和 Docker 的、下载站坏了沿用上一次。
   - 原有的 `TestRelays`、`TestRelayJoin`、越权测试照旧通过：重新登记后旧密钥原来回 401，现在回 410。

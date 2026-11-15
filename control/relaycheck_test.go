@@ -564,6 +564,51 @@ func TestRelayCheckOp(t *testing.T) {
 	w.mac.refused(proto.ErrConflict, proto.OpRelayCheck, proto.OpArgs{Relay: rc2.Relay})
 }
 
+// TestRelayCheckWhilePublished: who asks while a check publishes what it
+// found waits for it, and hears of it once the card says it: its card
+// usable, since when written down.
+func TestRelayCheckWhilePublished(t *testing.T) {
+	probes := &fakeProbes{}
+	w := newCheckWorld(t, func(c *Config) { c.ProbeRelay = probes.probe })
+	found := make(chan struct{}, 1)
+	gate := make(chan struct{})
+	w.s.checks.mu.Lock()
+	w.s.checks.publishing = func(proto.RelayID) {
+		select {
+		case found <- struct{}{}:
+		default:
+		}
+		<-gate
+	}
+	w.s.checks.mu.Unlock()
+	rc := w.mac.must(proto.OpRelayCreate, proto.OpArgs{Name: "东京"}).Result
+	relay, _ := registerRelay(t, w.mac.url, rc.RelayToken)
+	<-found // the check it set up found it usable, and has not said so
+
+	answered := make(chan proto.RelayStatus, 1)
+	go func() {
+		var st proto.RelayStatus
+		req, _ := http.NewRequest("POST", relay.url+proto.PathRelayCheck, strings.NewReader("{}"))
+		req.Header.Set("Authorization", "Bearer "+relay.secret)
+		if resp, err := http.DefaultClient.Do(req); err == nil {
+			json.NewDecoder(resp.Body).Decode(&st)
+			resp.Body.Close()
+		}
+		answered <- st
+	}()
+	select {
+	case st := <-answered:
+		t.Fatalf("answered before its card said it: %+v", st)
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(gate)
+	st := <-answered
+	w.mac.auth()
+	if mv := myRelay(w.mac.view(), rc.Relay); st.State != proto.RelayOK || mv.Status == nil || mv.Status.UsableAt.IsZero() {
+		t.Fatalf("checked: %+v; its card: %+v", st, mv.Status)
+	}
+}
+
 // TestPublicRelayUnreachableAlert: a public relay the checks cannot reach
 // is an alert for the operators.
 func TestPublicRelayUnreachableAlert(t *testing.T) {

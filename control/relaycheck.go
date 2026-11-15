@@ -77,6 +77,9 @@ type relayChecks struct {
 	mu      sync.Mutex
 	byRelay map[proto.RelayID]*relayCheck
 	slots   chan struct{} // checksAtOnce tokens
+	// publishing, in tests, runs when a check has found what it found,
+	// before it publishes it.
+	publishing func(proto.RelayID)
 }
 
 func newRelayChecks() *relayChecks {
@@ -224,7 +227,11 @@ func (s *Server) runCheck(id proto.RelayID, done chan struct{}, why string) {
 		rc.at, rc.probes, rc.done, wasShown = s.now(), probes, true, rc.shown
 		rc.probing, rc.shown = false, false
 	}
+	hook := c.publishing
 	c.mu.Unlock()
+	if hook != nil {
+		hook(id)
+	}
 	if mine {
 		s.publishCheck(id, before, wasShown, why)
 	}
