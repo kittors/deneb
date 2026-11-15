@@ -25,11 +25,11 @@ const usageMonths = 3
 
 // cleaned is what one cleanup removed.
 type cleaned struct {
-	invites, shares, kicks, usage, addresses, records int64
+	invites, shares, kicks, usage, addresses, records, tombstones int64
 }
 
 func (c cleaned) any() bool {
-	return c.invites+c.shares+c.kicks+c.usage+c.addresses+c.records > 0
+	return c.invites+c.shares+c.kicks+c.usage+c.addresses+c.records+c.tombstones > 0
 }
 
 // cleanup removes what is over, as above, and logs how much.
@@ -112,9 +112,15 @@ func (s *Server) cleanup() (cleaned, error) {
 	if c.records, err = s.dropOldRecords(now); err != nil {
 		return c, err
 	}
+	// A deleted relay's secret, a month (relaycheck.go).
+	if res, err := s.db.Exec(`DELETE FROM relay_tombstones WHERE at <= ?`, ms(now.Add(-tombstoneKeep))); err != nil {
+		return c, err
+	} else {
+		c.tombstones, _ = res.RowsAffected()
+	}
 	if c.any() {
-		s.logf("cleanup: %d invites, %d shares, %d kicks, %d rows of relay usage, %d devices' addresses, %d lines of the operators' record",
-			c.invites, c.shares, c.kicks, c.usage, c.addresses, c.records)
+		s.logf("cleanup: %d invites, %d shares, %d kicks, %d rows of relay usage, %d devices' addresses, %d lines of the operators' record, %d deleted relays' secrets",
+			c.invites, c.shares, c.kicks, c.usage, c.addresses, c.records, c.tombstones)
 	}
 	return c, nil
 }

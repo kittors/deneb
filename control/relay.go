@@ -6,11 +6,14 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"net/netip"
 	"slices"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/kittors/deneb/proto"
 )
@@ -37,6 +40,62 @@ type relayMeta struct {
 	// Weight and Capacity are its owner's settings (the plan's §16).
 	Weight   int
 	Capacity int
+	// Facts are what its program last said of the machine (M7).
+	Facts relayFacts
+	// UsableAt is when the checks last found it usable after it was not:
+	// zero if they never did since it was set up. LeftAt is when its
+	// program said it was uninstalled; zero once it is set up again.
+	UsableAt time.Time
+	LeftAt   time.Time
+}
+
+// relayFacts are what a relay's program says of the machine it runs on
+// (proto.RelayInfo's M7 fields), kept as JSON in its row: the checks turn
+// them into reasons and advice.
+type relayFacts struct {
+	Version      string              `json:"version,omitempty"`
+	Region       string              `json:"region,omitempty"`
+	Install      string              `json:"install,omitempty"`
+	Local        []netip.Addr        `json:"local,omitempty"`
+	PortMap      *proto.RelayPortMap `json:"portMap,omitempty"`
+	Firewall     string              `json:"firewall,omitempty"`
+	FirewallOpen bool                `json:"firewallOpen,omitempty"`
+	Restarts     int                 `json:"restarts,omitempty"`
+	// FromSource: it gave no address, and the one its requests come from
+	// is taken; a sync from another moves it there.
+	FromSource bool `json:"fromSource,omitempty"`
+}
+
+// factsOf takes what a relay says of the machine, cleaned up.
+func factsOf(in proto.RelayInfo) relayFacts {
+	f := relayFacts{Version: clip(in.Version, 64), Region: clip(in.Region, 64), Install: clip(in.Install, 32),
+		Firewall: clip(in.Firewall, 32), FirewallOpen: in.FirewallOpen, Restarts: min(max(in.Restarts, 0), 1000)}
+	for _, a := range in.Local {
+		if a.IsValid() && !a.IsLoopback() && !a.IsUnspecified() && len(f.Local) < 16 && !slices.Contains(f.Local, a.Unmap()) {
+			f.Local = append(f.Local, a.Unmap())
+		}
+	}
+	if pm := in.PortMap; pm != nil {
+		f.PortMap = &proto.RelayPortMap{Method: clip(pm.Method, 16), External: pm.External.Unmap(), DERPPort: pm.DERPPort, STUNPort: pm.STUNPort, Error: clip(pm.Error, 200)}
+	}
+	return f
+}
+
+// clip cuts s to n bytes at most, on a character's edge.
+func clip(s string, n int) string {
+	s = strings.ToValidUTF8(strings.TrimSpace(s), "")
+	for len(s) > n {
+		_, size := utf8.DecodeLastRuneInString(s)
+		s = s[:len(s)-size]
+	}
+	return s
+}
+
+// equal reports whether f says what g does.
+func (f relayFacts) equal(g relayFacts) bool {
+	a, _ := json.Marshal(f)
+	b, _ := json.Marshal(g)
+	return string(a) == string(b)
 }
 
 // relayJoin is a join code not used yet (relay.join, relay.create,
@@ -192,6 +251,11 @@ func (w *World) relayView(id proto.RelayID, p proto.PersonID, now time.Time, isO
 			rv.LastSeen = seen
 		}
 	}
+	// Whether it can be used from outside, and what it says it is (M7).
+	rv.Status = w.statusOf(rl, now, isOnline)
+	if m != nil {
+		rv.Version, rv.Install = m.Facts.Version, m.Facts.Install
+	}
 	return rv
 }
 
@@ -217,10 +281,10 @@ func (w *World) inUse(id proto.RelayID, isOnline online) bool {
 // maxRelays is how many relays one person may have.
 const maxRelays = 10
 
-// relayJoinLife is how long a join code works: long enough to paste it
-// on the server, short enough that a code seen over a shoulder is soon
-// worthless (implementation.md §3 M4, the plan's §13).
-const relayJoinLife = time.Hour
+// relayJoinLife is how long a join code works: a day, to get to the
+// server, open its ports and paste it there (M7, relay-install.md §8; an
+// hour until then), and it works once.
+const relayJoinLife = 24 * time.Hour
 
 // maxPendingJoins is how many unused join codes for new relays one
 // person may have. A relay has one code to set it up again at most: a
@@ -261,22 +325,12 @@ func newJoin(tx *sql.Tx, j relayJoin) (*relayJoin, string, error) {
 }
 
 // joinView is a join code as relay.join's result carries it: the code,
-// and the command that takes it to the server.
+// and the commands that take it to the server (relayinstall.go).
 func (s *Server) joinView(j *relayJoin, tok string) *proto.RelayJoin {
 	code := proto.MakeRelayJoinCode(s.cfg.PublicURL, s.cfg.Pin, tok)
-	return &proto.RelayJoin{ID: j.ID, Code: code, Command: s.relayCommand(code), Relay: j.Relay, ExpiresAt: j.ExpiresAt.UTC()}
-}
-
-// relayCommand is the one line that sets a relay up on a server with
-// Docker: host network, its data in a volume that outlives the container,
-// back up by itself after a reboot.
-func (s *Server) relayCommand(code string) string {
-	// The log is kept to 3 files of 10 MB: it has the addresses that
-	// connect, and on the owner's machine it would otherwise grow for as
-	// long as the relay runs (PRIVACY.md).
-	return "docker run -d --name deneb-relay --restart unless-stopped --network host " +
-		"--log-opt max-size=10m --log-opt max-file=3 -v deneb-relay:/data " +
-		s.cfg.RelayImage + " --join " + code + " --region auto"
+	v := &proto.RelayJoin{ID: j.ID, Code: code, Relay: j.Relay, ExpiresAt: j.ExpiresAt.UTC()}
+	v.Command, v.WgetCommand, v.DockerCommand, v.Version, v.SHA256 = s.installCommands(code)
+	return v
 }
 
 // pendingJoins counts p's join codes for new relays that still work.
@@ -457,6 +511,14 @@ func opRelayDelete(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
 	if err != nil {
 		return err
 	}
+	// Its program hears 410 at its next call and stops (M7).
+	if m := c.w.relayMeta[rl.ID]; m != nil {
+		if err := tombstone(c.tx, m.SecretHash, rl.ID, "deleted", c.now); err != nil {
+			return err
+		}
+	}
+	id, s := rl.ID, c.s
+	c.after = append(c.after, func() { s.checks.forget(id); s.relayLive.forget(id) })
 	// Its LANs' lists and its usage go with it (ON DELETE CASCADE).
 	return c.exec(`DELETE FROM relays WHERE id = ?`, rl.ID)
 }
@@ -629,6 +691,16 @@ func (l *relayLive) expire(now time.Time) []proto.RelayID {
 	}
 	slices.Sort(gone)
 	return gone
+}
+
+// forget drops what is known of a relay's syncs: it was uninstalled.
+func (l *relayLive) forget(id proto.RelayID) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.online, id)
+	delete(l.seen, id)
+	delete(l.load, id)
+	delete(l.full, id)
 }
 
 // status is whether the relay is online, as last published, and when it

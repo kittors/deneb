@@ -48,6 +48,22 @@ type Config struct {
 	// like that machine, and shares the per-address limits on login codes.
 	// From anywhere else the header counts for nothing.
 	TrustProxies []netip.Prefix
+	// ProbeRelay checks one address of a relay from this server, as
+	// control/probe.Relay does (M7, relaycheck.go); nil checks nothing, and
+	// relays stay 检查中 (the tests, which set their own).
+	ProbeRelay func(ctx context.Context, t proto.ProbeTarget) proto.RelayProbe
+	// ProbeSecret lets a second place check relays too (the prober API,
+	// proto/probe.go): the watchdog on another machine, with the same
+	// secret in its file. Empty, relays are checked from here only.
+	ProbeSecret string
+	// RelayDownload is the download site's folder of relay programs
+	// (relayinstall.go), as https://deneb.app/download/relay/: from the
+	// deployment's settings, never the repository. Empty, the install
+	// command is the Docker one (a development server).
+	RelayDownload string
+	// RelayScript is the install script's address, default the download
+	// site's /relay.
+	RelayScript string
 	// Dev turns on what only a development server may have: POST
 	// /dev/approve, which completes a device login without a browser.
 	Dev bool
@@ -148,8 +164,13 @@ type Server struct {
 	ops   opCache // guarded by mu
 
 	sweeps sweeper
-	// relayLive is which relays checked in lately (M4).
+	// relayLive is which relays checked in lately (M4); checks, what the
+	// checks from outside found, and probers, the second place's jobs (M7).
 	relayLive     *relayLive
+	checks        *relayChecks
+	probers       *probers
+	relayBuild    relayBuild
+	relayClient   *http.Client // reads the download site; nil: the default (tests set it)
 	deviceSamples deviceSamples
 	// versions wakes the relays' watches at every change (M4).
 	versions *versionWaiter
@@ -188,6 +209,16 @@ func New(cfg Config) (*Server, error) {
 	if cfg.PublicURL == "" {
 		return nil, errors.New("control: PublicURL is required")
 	}
+	var err error
+	if cfg.RelayDownload, err = checkDownloadURL(cfg.RelayDownload); err != nil {
+		return nil, err
+	}
+	if cfg.RelayScript != "" {
+		if u, err := url.Parse(cfg.RelayScript); err != nil || u.Scheme != "https" && u.Scheme != "http" || u.Host == "" ||
+			strings.ContainsAny(cfg.RelayScript, " \t\n'\"`$\\;&|<>()") {
+			return nil, fmt.Errorf("control: RelayScript %q: want https://<site>/<path>", cfg.RelayScript)
+		}
+	}
 	cfg.WebURL = strings.TrimRight(cfg.WebURL, "/")
 	if cfg.WebURL != "" {
 		u, err := url.Parse(cfg.WebURL)
@@ -224,6 +255,8 @@ func New(cfg Config) (*Server, error) {
 		logKey:        randomKey(),
 		keepAlive:     proto.StreamKeepAlive,
 		relayLive:     newRelayLive(),
+		checks:        newRelayChecks(),
+		probers:       newProbers(),
 		versions:      newVersionWaiter(),
 	}
 	s.started = s.now()
@@ -319,6 +352,7 @@ func (s *Server) load(q querier, network proto.Network) (*World, error) {
 	w.seatLimit = max(s.cfg.SeatLimit, 0)
 	w.relayStatus = s.relayLive.status
 	w.relayOffline, w.relayFull = s.relayLive.offline, s.relayLive.isFull
+	w.relayChecked, w.probeAny = s.checks.snapshot, s.cfg.Dev
 	return w, nil
 }
 

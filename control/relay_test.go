@@ -2,6 +2,8 @@ package control
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -310,8 +313,9 @@ func TestRelays(t *testing.T) {
 		t.Fatal("a new token stopped the old secret before it was used")
 	}
 	relay2, _ := registerRelay(t, url, tok)
-	if code, _ := relayCall(t, url, relay.secret, proto.PathRelaySync, proto.RelaySyncRequest{}, nil); code != 401 {
-		t.Fatalf("the old program's secret, after setting up again: %d", code)
+	// The old program hears it is to stop (M7), not that it is unknown.
+	if code, err := relayCall(t, url, relay.secret, proto.PathRelaySync, proto.RelaySyncRequest{}, nil); code != 410 || err.Code != proto.ErrRelayRemoved {
+		t.Fatalf("the old program's secret, after setting up again: %d %v", code, err)
 	}
 
 	// Leaving a LAN takes my relay out of it.
@@ -326,8 +330,8 @@ func TestRelays(t *testing.T) {
 	if relayOf(netMapOf(s, w.build.id), r) != nil || relayIn(w.mac.view(), r) != nil || myRelay(w.mac.view(), r) != nil || monthOf(w.mac.relayUsage(), r) != nil {
 		t.Fatal("a deleted relay is still about")
 	}
-	if code, _ := relayCall(t, url, relay2.secret, proto.PathRelayAdmit, proto.RelayAdmitRequest{NodePublic: w.build.nk}, nil); code != 401 {
-		t.Fatalf("a deleted relay's secret: %d", code)
+	if code, err := relayCall(t, url, relay2.secret, proto.PathRelayAdmit, proto.RelayAdmitRequest{NodePublic: w.build.nk}, nil); code != 410 || err.Code != proto.ErrRelayRemoved {
+		t.Fatalf("a deleted relay's secret: %d %v", code, err)
 	}
 
 	// The deployment's relay is not the client's to change, and its owner
@@ -462,17 +466,24 @@ func TestAdminRelays(t *testing.T) {
 
 // joinRegister registers a relay the way deneb-relay --join does: the
 // token out of the code, the place it found out about itself.
+// joinMachines numbers the machines joinRegister makes up.
+var joinMachines atomic.Int32
+
 func joinRegister(t *testing.T, s *Server, code string, info proto.RelayInfo) (int, proto.RelayRegisterResult) {
 	t.Helper()
 	control, pin, token, err := proto.ParseRelayJoinCode(code)
 	if err != nil || control != s.cfg.PublicURL || pin != s.cfg.Pin {
 		t.Fatalf("the code carries %q %q: %v", control, pin, err)
 	}
+	// Each code a machine of its own, unless the test says: its own port
+	// and certificate, as two relays on this machine would have (the same
+	// address, port or certificate is the same machine again, M7).
 	if info.DERPPort == 0 {
-		info.DERPPort = 47445
+		info.DERPPort = uint16(47445 + joinMachines.Add(1))
 	}
 	if info.Pin == "" {
-		info.Pin = testPin
+		sum := sha256.Sum256([]byte(token))
+		info.Pin = "sha256:" + hex.EncodeToString(sum[:])
 	}
 	var res proto.RelayRegisterResult
 	code2, _ := relayCall(t, control, "", proto.PathRelayRegister, proto.RelayRegisterRequest{Token: token, RelayInfo: info}, &res)
@@ -549,7 +560,7 @@ func TestRelayJoin(t *testing.T) {
 	if re.Relay != r || re.Name != "香港" {
 		t.Fatalf("set up again: %+v", re)
 	}
-	if code, _ := relayCall(t, s.cfg.PublicURL, reg.Secret, proto.PathRelaySync, proto.RelaySyncRequest{}, nil); code != 401 {
+	if code, _ := relayCall(t, s.cfg.PublicURL, reg.Secret, proto.PathRelaySync, proto.RelaySyncRequest{}, nil); code != 410 {
 		t.Fatalf("the old program's secret: %d", code)
 	}
 	if lv := lanByName(w.mac.view(), "工作室"); !slices.Contains(lv.AddedRelays, r) {

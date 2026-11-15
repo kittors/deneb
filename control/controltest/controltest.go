@@ -34,14 +34,22 @@ type Server struct {
 }
 
 // New starts a server for the test; it stops when the test ends.
-func New(t testing.TB) *Server {
+func New(t testing.TB) *Server { return NewWith(t, nil) }
+
+// NewWith starts a server set up by mod too: its relays' checks, the
+// probe secret (M7).
+func NewWith(t testing.TB, mod func(*control.Config)) *Server {
 	t.Helper()
 	ts := httptest.NewUnstartedServer(nil)
 	s := &Server{URL: "http://" + ts.Listener.Addr().String()}
-	cs, err := control.New(control.Config{
+	cfg := control.Config{
 		DataDir: t.TempDir(), PublicURL: s.URL, Dev: true, Seed: control.DevSeed(),
 		Logf: func(f string, a ...any) { s.mu.Lock(); s.logs = append(s.logs, fmt.Sprintf(f, a...)); s.mu.Unlock() },
-	})
+	}
+	if mod != nil {
+		mod(&cfg)
+	}
+	cs, err := control.New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

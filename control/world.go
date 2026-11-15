@@ -52,9 +52,15 @@ type World struct {
 	// relayStatus says whether a relay is online and when it last checked
 	// in; the server sets it, a test world may leave it nil.
 	relayStatus func(proto.RelayID) (bool, time.Time)
-	invites     map[proto.InviteID]*invite
-	byToken     map[string]*invite
-	shares      map[string]*share // every share, revoked ones too
+	// relayChecked is what the checks of a relay found (relaycheck.go);
+	// the server sets it, a test world may leave it nil. probeAny: a
+	// development server, whose relays on this machine are not "no public
+	// address".
+	relayChecked func(proto.RelayID) checkSnapshot
+	probeAny     bool
+	invites      map[proto.InviteID]*invite
+	byToken      map[string]*invite
+	shares       map[string]*share // every share, revoked ones too
 	// seatLimit is the deployment's seats per person; 0 means no limit.
 	seatLimit int
 }
@@ -178,8 +184,9 @@ type device struct {
 	Endpoints   []netip.AddrPort
 	HomeRelay   proto.RelayID
 	// Relays are the relays the engine says it is connected to, HomeRelay
-	// first (M4).
+	// first (M4); RelayFailures those it tried and could not use (M7).
 	Relays        []proto.RelayID
+	RelayFailures []proto.RelayFailure
 	Paused        map[proto.ScopeID]bool
 	EngineVersion string
 	// Caps are what its engine claimed at its last login (checkCaps'd),
@@ -346,7 +353,8 @@ func loadWorld(q querier, network proto.Network, publicURL string, now time.Time
 	}
 
 	err = each(`SELECT id, owner, machine_key, node_key, disco_key, name, display_name, kind, os, hostname,
-			ipv4, ipv6, endpoints, home_relay, relays, paused, engine_version, caps, logged_out, created_at, last_seen, expires_at, name_pinned, public_lan, avatar FROM devices`,
+			ipv4, ipv6, endpoints, home_relay, relays, paused, engine_version, caps, logged_out, created_at, last_seen, expires_at, name_pinned, public_lan, avatar,
+			relay_failures FROM devices`,
 		func(r *sql.Rows) error {
 			d := &device{
 				Paused:  map[proto.ScopeID]bool{},
@@ -355,10 +363,14 @@ func loadWorld(q querier, network proto.Network, publicURL string, now time.Time
 				opens:   map[proto.ScopeID]map[proto.ServiceKey]bool{},
 				refused: map[proto.PersonID]bool{},
 			}
-			var mk, nk, dk, v4, v6, eps, relays, paused, caps string
+			var mk, nk, dk, v4, v6, eps, relays, paused, caps, failures string
 			var created, seen, expires int64
 			if err := r.Scan(&d.ID, &d.Owner, &mk, &nk, &dk, &d.Name, &d.DisplayName, &d.Kind, &d.OS, &d.Hostname,
-				&v4, &v6, &eps, &d.HomeRelay, &relays, &paused, &d.EngineVersion, &caps, &d.LoggedOut, &created, &seen, &expires, &d.NamePinned, &d.PublicLAN, &d.Avatar); err != nil {
+				&v4, &v6, &eps, &d.HomeRelay, &relays, &paused, &d.EngineVersion, &caps, &d.LoggedOut, &created, &seen, &expires, &d.NamePinned, &d.PublicLAN, &d.Avatar,
+				&failures); err != nil {
+				return err
+			}
+			if err := json.Unmarshal([]byte(failures), &d.RelayFailures); err != nil {
 				return err
 			}
 			d.ExpiresAt = fromMS(expires)
@@ -541,17 +553,20 @@ func loadWorld(q querier, network proto.Network, publicURL string, now time.Time
 	}
 	var defaults []pos
 	err = each(`SELECT id, name, source, owner, host_name, ipv4, ipv6, derp_port, stun_port, default_pos,
-			pin, rate_limit, secret_hash, created_at, registered_at, weight, capacity FROM relays`, func(r *sql.Rows) error {
+			pin, rate_limit, secret_hash, created_at, registered_at, weight, capacity, facts, usable_at, left_at FROM relays`, func(r *sql.Rows) error {
 		var rl proto.Relay
 		var m relayMeta
-		var v4, v6 string
+		var v4, v6, facts string
 		var dpos int
-		var created, registered int64
+		var created, registered, usable, left int64
 		if err := r.Scan(&rl.ID, &rl.Name, &rl.Source, &rl.Owner, &rl.HostName, &v4, &v6, &rl.DERPPort, &rl.STUNPort, &dpos,
-			&rl.Pin, &rl.RateLimit, &m.SecretHash, &created, &registered, &m.Weight, &m.Capacity); err != nil {
+			&rl.Pin, &rl.RateLimit, &m.SecretHash, &created, &registered, &m.Weight, &m.Capacity, &facts, &usable, &left); err != nil {
 			return err
 		}
-		m.CreatedAt, m.RegisteredAt = fromMS(created), fromMS(registered)
+		m.CreatedAt, m.RegisteredAt, m.UsableAt, m.LeftAt = fromMS(created), fromMS(registered), fromMS(usable), fromMS(left)
+		if err := json.Unmarshal([]byte(facts), &m.Facts); err != nil {
+			return fmt.Errorf("relay %s facts: %w", rl.ID, err)
+		}
 		w.relayMeta[rl.ID] = &m
 		if m.SecretHash != "" {
 			w.bySecret[m.SecretHash] = rl.ID

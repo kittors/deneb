@@ -621,6 +621,7 @@ func (s *Server) handleReport(w http.ResponseWriter, r *http.Request, c *caller)
 		// An engine from before M4 reports only its home.
 		relays = nil
 	}
+	failures := relayFailuresOf(rep.RelayFailures, relays, c.st.w)
 	v, err := s.change(c.dev.ID, func(tx *sql.Tx, w *World) error {
 		d := w.devices[c.dev.ID]
 		if d == nil {
@@ -631,14 +632,17 @@ func (s *Server) handleReport(w http.ResponseWriter, r *http.Request, c *caller)
 			was = append(was, sc)
 		}
 		slices.Sort(was)
-		if slices.Equal(d.Endpoints, eps) && d.HomeRelay == home && slices.Equal(was, paused) && slices.Equal(d.Relays, relays) {
+		failuresJSON, _ := json.Marshal(nonNil(failures))
+		wasJSON, _ := json.Marshal(nonNil(d.RelayFailures))
+		if slices.Equal(d.Endpoints, eps) && d.HomeRelay == home && slices.Equal(was, paused) && slices.Equal(d.Relays, relays) &&
+			string(wasJSON) == string(failuresJSON) {
 			return errNoChange
 		}
 		epsJSON, _ := json.Marshal(nonNil(eps))
 		pausedJSON, _ := json.Marshal(nonNil(paused))
 		relaysJSON, _ := json.Marshal(nonNil(relays))
-		_, err := tx.Exec(`UPDATE devices SET endpoints = ?, home_relay = ?, relays = ?, paused = ? WHERE id = ?`,
-			string(epsJSON), home, string(relaysJSON), string(pausedJSON), d.ID)
+		_, err := tx.Exec(`UPDATE devices SET endpoints = ?, home_relay = ?, relays = ?, relay_failures = ?, paused = ? WHERE id = ?`,
+			string(epsJSON), home, string(relaysJSON), string(failuresJSON), string(pausedJSON), d.ID)
 		return err
 	})
 	if err != nil {
@@ -646,6 +650,32 @@ func (s *Server) handleReport(w http.ResponseWriter, r *http.Request, c *caller)
 		return
 	}
 	writeJSON(w, http.StatusOK, proto.ReportResult{Version: v})
+}
+
+// relayFailuresOf cleans up what a device says of the relays it could not
+// use (M7): relays that exist and that it is not connected to, one entry
+// each, with a reason it may give, sorted by relay.
+func relayFailuresOf(in []proto.RelayFailure, connected []proto.RelayID, w *World) []proto.RelayFailure {
+	var out []proto.RelayFailure
+	for _, f := range in {
+		switch {
+		case w.relays[f.Relay] == nil, slices.Contains(connected, f.Relay), len(out) >= maxReportRelays,
+			slices.ContainsFunc(out, func(g proto.RelayFailure) bool { return g.Relay == f.Relay }):
+			continue
+		}
+		switch f.Reason {
+		case proto.RelayFailConnect, proto.RelayFailTimeout, proto.RelayFailTLS:
+			f.Refused = ""
+		case proto.RelayFailRefused:
+			f.Refused = clip(f.Refused, 32)
+		default:
+			continue
+		}
+		f.Since = f.Since.UTC().Truncate(time.Second)
+		out = append(out, f)
+	}
+	slices.SortFunc(out, func(a, b proto.RelayFailure) int { return strings.Compare(string(a.Relay), string(b.Relay)) })
+	return out
 }
 
 func nonNil[T any](s []T) []T {

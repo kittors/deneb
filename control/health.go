@@ -138,6 +138,13 @@ func (s *Server) checkHealth() {
 			delete(h.fullSince, id)
 			s.alerts.Resolve(key, name+"不满了", "")
 		}
+		// Reachable from outside, as the checks found (M7, relaycheck.go).
+		key = fmt.Sprintf(healthKeyFmt, "relay-unreachable", id)
+		if st := w.statusOf(w.relays[id], now, isOnline); st != nil && st.State == proto.RelayUnreachable && len(st.Problems) > 0 {
+			s.alerts.Fire(key, name+"从外网连不上了", st.Problems[0].Message+"。"+st.Problems[0].Advice)
+		} else {
+			s.alerts.Resolve(key, name+"从外网又连得上了", "")
+		}
 	}
 
 	// The backups.

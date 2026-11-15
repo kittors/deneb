@@ -289,6 +289,24 @@ var migrations = []string{
 	);
 	CREATE INDEX ops_records_at ON ops_records (at);`,
 	`ALTER TABLE devices ADD COLUMN avatar BLOB NOT NULL DEFAULT X'';`,
+	// 13 (M7): relay install, redone (design/plan/m7/relay-install-api.md):
+	// what a relay says of how it was set up (its program's version, how it
+	// runs, the addresses on its own interfaces, the router's port mapping,
+	// the host firewall), as JSON; when the checks last found it usable,
+	// for the alert when it no longer is; when its program said it was
+	// uninstalled; the relays each device tried and could not use; and the
+	// secrets of relays deleted or uninstalled, kept a month, so their
+	// programs hear to stop rather than start again and again.
+	`ALTER TABLE relays ADD COLUMN facts TEXT NOT NULL DEFAULT '{}';
+	ALTER TABLE relays ADD COLUMN usable_at INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE relays ADD COLUMN left_at INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE devices ADD COLUMN relay_failures TEXT NOT NULL DEFAULT '[]';
+	CREATE TABLE relay_tombstones (
+		secret_hash TEXT PRIMARY KEY,
+		relay       TEXT NOT NULL,
+		why         TEXT NOT NULL, -- deleted, uninstalled
+		at          INTEGER NOT NULL
+	);`,
 }
 
 func migrate(db *sql.DB) error {

@@ -230,6 +230,14 @@ func (c *opCtx) deleteAccount(p *person, pl accountPlan, v *proto.AccountDeletio
 			return err
 		}
 	}
+	// Their relays' programs hear 410 at their next call and stop (M7).
+	for _, id := range pl.relays {
+		if m := c.w.relayMeta[id]; m != nil {
+			if err := tombstone(c.tx, m.SecretHash, id, "deleted", c.now); err != nil {
+				return err
+			}
+		}
+	}
 	// Each ? is the person.
 	for _, q := range []string{
 		// Invites they made, those made out to them and those they used.

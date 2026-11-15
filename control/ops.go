@@ -340,6 +340,7 @@ var opHandlers = map[proto.OpType]opHandler{
 	proto.OpRelaySetCapacity: opRelaySetCapacity,
 	proto.OpRelayKick:        opRelayKick,
 	proto.OpRelayUnkick:      opRelayUnkick,
+	proto.OpRelayCheck:       opRelayCheck,
 }
 
 func opShareRelease(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {

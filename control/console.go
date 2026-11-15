@@ -394,7 +394,7 @@ func (s *Server) relayBusy(w *World, id proto.RelayID) bool {
 
 // alertLevel: what is broken is "bad" (red), what is tight "warn".
 func alertLevel(key string) string {
-	if strings.HasPrefix(key, "relay-offline/") || key == "backup-failed" {
+	if strings.HasPrefix(key, "relay-offline/") || strings.HasPrefix(key, "relay-unreachable/") || key == "backup-failed" {
 		return "bad"
 	}
 	return "warn"

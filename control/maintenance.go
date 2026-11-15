@@ -56,6 +56,10 @@ func (s *Server) sweep() bool {
 	st := s.state.Load()
 	s.sweepSessions(now)
 	s.pruneDeviceMetrics(now)
+	// The relays due a check from outside, and the relay program the
+	// install command installs (M7).
+	s.scheduleChecks()
+	go s.refreshRelayBuild(context.Background())
 	var ran []*device
 	for _, d := range st.w.devices {
 		if d.usable() && !d.ExpiresAt.IsZero() && !now.Before(d.ExpiresAt) {

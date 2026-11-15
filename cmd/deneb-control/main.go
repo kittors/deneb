@@ -54,6 +54,7 @@ import (
 
 	"github.com/kittors/deneb/control"
 	"github.com/kittors/deneb/control/alert"
+	"github.com/kittors/deneb/control/probe"
 	"github.com/kittors/deneb/proto"
 )
 
@@ -127,6 +128,8 @@ func main() {
 		lifetime    = flag.Duration("login-lifetime", control.DefaultLoginLifetime, "how long a device's login lasts if the device does not come back; shorten it to see logins run out")
 		seatLimit   = flag.Int("seat-limit", control.DefaultSeatLimit, "people each person's LANs and shares may hold, themselves included; -1 for no limit")
 		relayImage  = flag.String("relay-image", control.DefaultRelayImage, "the Docker image the relays' one-line install command runs")
+		relayDL     = flag.String("relay-download", os.Getenv("DENEB_RELAY_DOWNLOAD"), "the download site's folder of relay programs, as https://deneb.app/download/relay/ (or $DENEB_RELAY_DOWNLOAD): the install command downloads the install script and the program from there; empty, it is the Docker one")
+		relayScript = flag.String("relay-script", "", "the install script's address (default: the download site's /relay)")
 		mailMode    = flag.String("mail", "auto", "how login codes go out: smtp, log (with -dev only: into the log), none, or auto (smtp if a host is set, log with -dev, else none)")
 		smtpHost    = flag.String("smtp-host", "", "SMTP server for the login codes; also DENEB_SMTP_HOST or <data>/mail.json, where the password goes (never a flag)")
 		smtpPort    = flag.Int("smtp-port", 0, "SMTP port (default 465 with -smtp-tls tls, else 587)")
@@ -265,6 +268,17 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// A second place checks relays too when it has the secret (the
+	// watchdog on another machine).
+	probeSecret, err := control.LoadProbeSecret(*dataDir, os.Getenv)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if probeSecret == "" {
+		log.Printf("relays are checked from here only: no probe secret (%s, or DENEB_PROBE_SECRET)", control.ProbeConfigFile)
+	} else {
+		log.Printf("relays are checked from here, and by a prober with the probe secret")
+	}
 
 	srv, err := control.New(control.Config{
 		DataDir:       *dataDir,
@@ -277,6 +291,10 @@ func main() {
 		SeatLimit:     *seatLimit,
 		Pin:           pin,
 		RelayImage:    *relayImage,
+		RelayDownload: *relayDL,
+		RelayScript:   *relayScript,
+		ProbeRelay:    probe.Relay,
+		ProbeSecret:   probeSecret,
 		LogDir:        *logDir,
 		Mailer:        mailer,
 		OpenSignup:    *openSignup,

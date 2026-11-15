@@ -3,6 +3,7 @@ package control
 import (
 	"cmp"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/netip"
@@ -24,7 +25,15 @@ func (s *Server) relayRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST "+proto.PathRelayAdmit, s.relay(s.handleRelayAdmit))
 	m.HandleFunc("POST "+proto.PathRelaySync, s.relay(s.handleRelaySync))
 	m.HandleFunc("GET "+proto.PathRelayWatch, s.relay(s.handleRelayWatch))
+	m.HandleFunc("POST "+proto.PathRelayCheck, s.relay(s.handleRelayCheck))
+	m.HandleFunc("GET "+proto.PathRelayCheck, s.relay(s.handleRelayStatus))
+	m.HandleFunc("POST "+proto.PathRelayLeave, s.relay(s.handleRelayLeave))
 	m.HandleFunc("/relay/", func(w http.ResponseWriter, r *http.Request) {
+		s.writeErr(w, r, errNotFound("没有这个接口"))
+	})
+	m.HandleFunc("POST "+proto.PathProbeNext, s.prober(s.handleProbeNext))
+	m.HandleFunc("POST "+proto.PathProbeDone, s.prober(s.handleProbeDone))
+	m.HandleFunc("/probe/", func(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, r, errNotFound("没有这个接口"))
 	})
 }
@@ -33,10 +42,23 @@ func (s *Server) relayRoutes(m *http.ServeMux) {
 func (s *Server) relay(h func(http.ResponseWriter, *http.Request, *proto.Relay, *World)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		secret, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		hash := hashSecret(strings.TrimSpace(secret))
 		st := s.state.Load()
-		id, found := st.w.bySecret[hashSecret(strings.TrimSpace(secret))]
+		id, found := st.w.bySecret[hash]
 		if !ok || !found || st.w.relays[id] == nil {
-			// Deleted, set up again elsewhere, or never registered.
+			// Deleted in Deneb, or uninstalled: its program is to stop
+			// (M7). Otherwise set up again elsewhere, or never registered.
+			if why, gone := s.removedRelay(hash); ok && gone {
+				msg := "这个中转站已经在 Deneb 里删掉了"
+				switch why {
+				case "uninstalled":
+					msg = "这个中转站已经卸载了"
+				case "replaced":
+					msg = "这个中转站已经重新安装过，这一份不再用了"
+				}
+				s.writeErr(w, r, newErr(http.StatusGone, proto.ErrRelayRemoved, msg))
+				return
+			}
 			s.writeErr(w, r, newErr(http.StatusUnauthorized, proto.ErrUnauthorized, "中转站的密钥不对：它被删除了，或者在别处重新登记了"))
 			return
 		}
@@ -57,6 +79,10 @@ type relayPlace struct {
 	pin     string
 	version string
 	region  string // the relay's clue, for a new relay's name
+	// fromSource: it gave no address, so the one its request came from is
+	// taken; a later sync from another follows it (a home line's address
+	// changes).
+	fromSource bool
 }
 
 // relayPlaceOf checks what a relay says of itself. With no address it takes the
@@ -64,6 +90,7 @@ type relayPlace struct {
 // its own, which is the usual server.
 func relayPlaceOf(r *http.Request, in proto.RelayInfo) (relayPlace, error) {
 	p := relayPlace{v4: in.IPv4.Unmap(), v6: in.IPv6, derp: in.DERPPort, stun: in.STUNPort, version: in.Version, region: in.Region}
+	p.fromSource = !p.v4.IsValid() && !p.v6.IsValid()
 	if p.derp == 0 {
 		return p, errInvalid("缺少 DERP 端口")
 	}
@@ -103,6 +130,14 @@ func (p relayPlace) String() string {
 	return fmt.Sprintf("%s %v %v derp %d stun %d, %s, program %q", p.host, p.v4, p.v6, p.derp, p.stun, p.pin, p.version)
 }
 
+// addrText is an address as a row keeps it: "" for none.
+func addrText(a netip.Addr) string {
+	if !a.IsValid() {
+		return ""
+	}
+	return a.String()
+}
+
 // write puts p in relay id's row.
 func (p relayPlace) write(tx *sql.Tx, id proto.RelayID) error {
 	v4, v6 := "", ""
@@ -128,6 +163,9 @@ func (s *Server) handleRelayRegister(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, r, err)
 		return
 	}
+	facts := factsOf(req.RelayInfo)
+	facts.FromSource = place.fromSource
+	factsJSON, _ := json.Marshal(facts)
 	tokenHash := hashSecret(strings.TrimSpace(req.Token))
 	secret := newRelaySecret()
 	now := s.now()
@@ -140,12 +178,19 @@ func (s *Server) handleRelayRegister(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if j == nil {
-			return newErr(http.StatusUnauthorized, proto.ErrUnauthorized, "加入码不对，或者已经用过、撤销了")
+			return newErr(http.StatusUnauthorized, proto.ErrUnauthorized, "加入码不对，或者已经用过、撤销了：请在 Deneb 里重新生成")
 		}
 		if !j.live(now) {
-			return newErr(http.StatusUnauthorized, proto.ErrUnauthorized, "加入码过期了（一小时内有效），请在管理端重新拿一个")
+			return newErr(http.StatusUnauthorized, proto.ErrUnauthorized, "加入码已过期，请在 Deneb 里重新生成")
 		}
 		id := j.Relay
+		if id == "" {
+			// The same machine again (M7): set that one up again rather
+			// than make another.
+			if same := w.sameRelay(j.Owner, j.Source, place); same != "" {
+				id, res.Existing = same, true
+			}
+		}
 		if id == "" {
 			// A new relay: its name is the place it says it is, unless
 			// one was given; failing both, its address, which its owner
@@ -168,15 +213,23 @@ func (s *Server) handleRelayRegister(w http.ResponseWriter, r *http.Request) {
 			res = proto.RelayRegisterResult{Relay: id, Name: name, Source: j.Source, RateLimit: j.RateLimit}
 		} else {
 			rl := w.relays[id]
-			res = proto.RelayRegisterResult{Relay: id, Name: rl.Name, Source: rl.Source, RateLimit: rl.RateLimit}
+			res = proto.RelayRegisterResult{Relay: id, Name: rl.Name, Source: rl.Source, RateLimit: rl.RateLimit, Existing: res.Existing}
+			// A secret from an earlier registration stops working; a copy
+			// of the program still using it hears 410 and stops (M7).
+			if m := w.relayMeta[id]; m != nil {
+				if err := tombstone(tx, m.SecretHash, id, "replaced", now); err != nil {
+					return err
+				}
+			}
 		}
 		if err := place.write(tx, id); err != nil {
 			return err
 		}
-		// The code is used up, and a secret from an earlier registration
-		// stops working: the relay was set up again.
-		if _, err := tx.Exec(`UPDATE relays SET secret_hash = ?, registered_at = CASE WHEN registered_at = 0 THEN ? ELSE registered_at END WHERE id = ?`,
-			hashSecret(secret), ms(now), id); err != nil {
+		// The code is used up. Set up again, it starts anew: no longer
+		// uninstalled, and not usable until the checks find it so.
+		if _, err := tx.Exec(`UPDATE relays SET secret_hash = ?, facts = ?, left_at = 0, usable_at = 0,
+				registered_at = CASE WHEN registered_at = 0 THEN ? ELSE registered_at END WHERE id = ?`,
+			hashSecret(secret), string(factsJSON), ms(now), id); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(`DELETE FROM relay_joins WHERE id = ?`, j.ID); err != nil {
@@ -190,9 +243,42 @@ func (s *Server) handleRelayRegister(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, r, err)
 		return
 	}
-	s.logf("relay %s (%s) registered from %s: %s", res.Relay, res.Name, remoteIP(r), place)
+	again := ""
+	if res.Existing {
+		again = ", the same machine again"
+	}
+	s.logf("relay %s (%s) registered from %s%s: %s", res.Relay, res.Name, remoteIP(r), again, place)
+	s.checks.forget(res.Relay)
 	s.relayCheckedIn(res.Relay)
+	s.checkRelay(res.Relay, true, 0, "registered")
 	writeJSON(w, http.StatusOK, res)
+}
+
+// sameRelay is the relay of owner's (a public one, for a public code)
+// that the machine at p already is: the same certificate, or the same
+// address with the same port (or with none: it was uninstalled). "" if
+// none.
+func (w *World) sameRelay(owner proto.PersonID, source proto.RelaySource, p relayPlace) proto.RelayID {
+	var byAddr []proto.RelayID
+	for id, rl := range w.relays {
+		m := w.relayMeta[id]
+		if m == nil || m.CreatedAt.IsZero() || (rl.Source == proto.RelayPublic) != (source == proto.RelayPublic) ||
+			source != proto.RelayPublic && rl.Owner != owner {
+			continue
+		}
+		if rl.Pin != "" && rl.Pin == p.pin {
+			return id
+		}
+		sameAddr := p.v4.IsValid() && rl.IPv4 == p.v4 || p.v6.IsValid() && rl.IPv6 == p.v6
+		if sameAddr && (rl.DERPPort == p.derp || rl.DERPPort == 0) {
+			byAddr = append(byAddr, id)
+		}
+	}
+	if len(byAddr) == 0 {
+		return ""
+	}
+	slices.Sort(byAddr)
+	return byAddr[0]
 }
 
 // admission is whether relay id lets in the device with node key k, and
@@ -250,17 +336,27 @@ func (s *Server) handleRelaySync(w http.ResponseWriter, r *http.Request, rl *pro
 		s.writeErr(w, r, errInvalid("一次同步的客户端太多"))
 		return
 	}
+	moved := false
 	if req.Info != nil {
-		// Just started: where it is now, if that changed.
+		// Just started, or something about it changed: where it is now,
+		// and what it says of the machine.
 		place, err := relayPlaceOf(r, *req.Info)
 		if err != nil {
 			s.writeErr(w, r, err)
 			return
 		}
-		if !place.same(rl) {
+		facts := factsOf(*req.Info)
+		facts.FromSource = place.fromSource
+		m := wd.relayMeta[rl.ID]
+		moved = !place.same(rl)
+		if moved || m == nil || !facts.equal(m.Facts) {
+			factsJSON, _ := json.Marshal(facts)
 			v, err := s.change("", func(tx *sql.Tx, w *World) error {
 				if w.relays[rl.ID] == nil {
 					return errNotFound("中转站已经删除了")
+				}
+				if _, err := tx.Exec(`UPDATE relays SET facts = ? WHERE id = ?`, string(factsJSON), rl.ID); err != nil {
+					return err
 				}
 				return place.write(tx, rl.ID)
 			})
@@ -268,10 +364,50 @@ func (s *Server) handleRelaySync(w http.ResponseWriter, r *http.Request, rl *pro
 				s.writeErr(w, r, err)
 				return
 			}
-			s.logf("relay %s (%s) moved: %s; version %d", rl.ID, rl.Name, place, v)
+			if moved {
+				s.logf("relay %s (%s) moved: %s; version %d", rl.ID, rl.Name, place, v)
+			}
 			st := s.state.Load()
 			rl, wd = st.w.relays[rl.ID], st.w
 		}
+	} else if m := wd.relayMeta[rl.ID]; m != nil && m.Facts.FromSource {
+		// It gave no address: a sync from another one is the relay's new
+		// address (a home line's changes now and then).
+		if from, err := netip.ParseAddr(remoteIP(r)); err == nil {
+			from = from.Unmap()
+			if from.Is4() && from != rl.IPv4 || from.Is6() && !from.Is4() && from != rl.IPv6 {
+				v, err := s.change("", func(tx *sql.Tx, w *World) error {
+					cur := w.relays[rl.ID]
+					if cur == nil {
+						return errNotFound("中转站已经删除了")
+					}
+					v4, v6, host := addrText(cur.IPv4), addrText(cur.IPv6), cur.HostName
+					// Its TLS name was its address: it follows.
+					if host == cmp.Or(cur.IPv4, cur.IPv6).String() {
+						host = from.String()
+					}
+					if from.Is4() {
+						v4 = from.String()
+					} else {
+						v6 = from.String()
+					}
+					_, err := tx.Exec(`UPDATE relays SET ipv4 = ?, ipv6 = ?, host_name = ? WHERE id = ?`, v4, v6, host, rl.ID)
+					return err
+				})
+				if err != nil {
+					s.writeErr(w, r, err)
+					return
+				}
+				s.logf("relay %s (%s) moved to %s; version %d", rl.ID, rl.Name, from, v)
+				moved = true
+				st := s.state.Load()
+				rl, wd = st.w.relays[rl.ID], st.w
+			}
+		}
+	}
+	if moved {
+		s.checks.forget(rl.ID)
+		defer s.checkRelay(rl.ID, true, 0, "moved")
 	}
 	res := proto.RelaySyncResult{Deny: []proto.NodePublic{}, Name: rl.Name, RateLimit: rl.RateLimit}
 	for _, k := range req.Connected {
@@ -317,7 +453,8 @@ func (s *Server) relayReported(rl *proto.Relay, wd *World, req proto.RelaySyncRe
 }
 
 // relayCheckedIn notes that a relay synced; if it just came online, its
-// owner's view says so in a new version.
+// owner's view says so in a new version, and it is checked from outside
+// again, unless that was done a minute ago.
 func (s *Server) relayCheckedIn(id proto.RelayID) {
 	if !s.relayLive.checkIn(id, s.now()) {
 		return
@@ -328,6 +465,7 @@ func (s *Server) relayCheckedIn(id proto.RelayID) {
 		return
 	}
 	s.logf("relay %s online; version %d", id, v)
+	s.checkRelay(id, false, time.Minute, "online again")
 }
 
 // maxUsageBytes bounds one client's bytes in one sync: a minute at 100
