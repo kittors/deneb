@@ -159,6 +159,13 @@ type RelayView struct {
 	// in the seed's order before the weighted public relays; its weight
 	// moves nothing, and its name and setting up are the seed file's.
 	Default bool `json:"default,omitempty"`
+	// Status is whether it can be used from outside, and if not why (M7,
+	// RelayStatus): for a Deneb relay, not one the seed set up. Version
+	// is its program's, and Install how it runs (RelayInstall*), as it
+	// last said.
+	Status  *RelayStatus `json:"status,omitempty"`
+	Version string       `json:"version,omitempty"`
+	Install string       `json:"install,omitempty"`
 }
 
 // OperatorView is what a deployment operator manages on the ops page

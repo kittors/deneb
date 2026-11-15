@@ -20,7 +20,28 @@ const (
 	PathRelayAdmit    = "/relay/v1/admit"    // POST RelayAdmitRequest → RelayAdmitResult
 	PathRelaySync     = "/relay/v1/sync"     // POST RelaySyncRequest → RelaySyncResult, every minute
 	PathRelayWatch    = "/relay/v1/watch"    // GET ?since=<version> → RelayWatchResult, long poll
+	// PathRelayCheck has the control server check now whether the relay
+	// can be reached from outside, from each place it checks from, and
+	// answers when it knows: deneb-relay install prints the conclusion
+	// (M7, design/plan/m7/relay-install-api.md). GET checks nothing: it
+	// answers the status as the relay's card shows it, for deneb-relay
+	// status.
+	PathRelayCheck = "/relay/v1/check" // POST {} → RelayStatus, within 20 s; GET → RelayStatus now
+	// PathRelayLeave tells the control server the relay is being
+	// uninstalled: its secret stops working, and it leaves every list.
+	PathRelayLeave = "/relay/v1/leave" // POST RelayLeaveRequest → {}
 )
+
+// Once a relay is deleted in Deneb ("不用这个中转站"), or said it was
+// uninstalled, every call with its secret answers 410 with ErrRelayRemoved
+// (for a month): its program stops serving and does not start again. A 401
+// still means the secret is not known, as for a relay set up again
+// elsewhere.
+
+// RelayLeaveRequest says why a relay leaves: "uninstall".
+type RelayLeaveRequest struct {
+	Reason string `json:"reason,omitempty"`
+}
 
 // RelayWatchResult answers a watch: the version now. It comes back as
 // soon as the version passes since, or after half a minute; either way
@@ -58,14 +79,84 @@ type RelayInfo struct {
 	// -region), "aliyun:cn-hongkong", "aws:ap-east-1" (a cloud's metadata),
 	// "tz:Asia/Hong_Kong" ($TZ). Empty when it found nothing.
 	Region string `json:"region,omitempty"`
+
+	// What the relay found out about the machine as it set itself up (M7,
+	// design/plan/m7/relay-install-api.md §2): the checks turn it into
+	// reasons and advice. A relay sends it all again whenever any of it
+	// changes. All may be missing, from a program before M7.
+	//
+	// Install is how it runs (RelayInstall*).
+	Install string `json:"install,omitempty"`
+	// Local are the addresses on its own interfaces, loopback left out: a
+	// machine with its public address there, one behind a cloud's 1:1 NAT,
+	// one behind a router at home.
+	Local []netip.Addr `json:"local,omitempty"`
+	// PortMap is what it got from the router by UPnP, NAT-PMP or PCP, if
+	// it tried.
+	PortMap *RelayPortMap `json:"portMap,omitempty"`
+	// Firewall is the host firewall it found in front of its ports
+	// (RelayFirewall*), and FirewallOpen whether the ports are open there
+	// (it opened them, or they were).
+	Firewall     string `json:"firewall,omitempty"`
+	FirewallOpen bool   `json:"firewallOpen,omitempty"`
+	// Restarts are how many times it started within the last hour before
+	// this run, not counting it: 0 for one that runs on, and for one just
+	// started. Past a few, its card says it keeps failing.
+	Restarts int `json:"restarts,omitempty"`
+}
+
+// How a relay program runs (RelayInfo.Install).
+const (
+	RelayInstallSystemd     = "systemd"      // a system service
+	RelayInstallSystemdUser = "systemd-user" // a user's service, with linger: no root
+	RelayInstallOpenRC      = "openrc"       // Alpine
+	RelayInstallProcd       = "procd"        // OpenWrt
+	RelayInstallCron        = "cron"         // no init it knows: cron's @reboot
+	RelayInstallDocker      = "docker"       // a container
+	RelayInstallForeground  = "foreground"   // run by hand
+)
+
+// The host firewalls a relay knows (RelayInfo.Firewall).
+const (
+	RelayFirewallUFW       = "ufw"
+	RelayFirewallFirewalld = "firewalld"
+	RelayFirewallNftables  = "nftables"
+	RelayFirewallIptables  = "iptables"
+)
+
+// RelayPortMap is what a relay's port mapping got from the router.
+type RelayPortMap struct {
+	// Method is how: "upnp", "natpmp" or "pcp"; empty when none worked.
+	Method string `json:"method,omitempty"`
+	// External is the router's address on the Internet, as the router
+	// says it: a private or 100.64/10 one is a carrier's NAT.
+	External netip.Addr `json:"external,omitzero"`
+	// DERPPort and STUNPort are the ports mapped on the router to the
+	// relay's.
+	DERPPort uint16 `json:"derpPort,omitempty"`
+	STUNPort uint16 `json:"stunPort,omitempty"`
+	// Error says why no mapping was made, when it tried.
+	Error string `json:"error,omitempty"`
 }
 
 // RelayJoin is a join code and the one-line install command that carries
 // it (relay.join, M4): shown once, to be pasted on the owner's server.
 type RelayJoin struct {
-	ID      string `json:"id"`
-	Code    string `json:"code"`
-	Command string `json:"command"`
+	ID   string `json:"id"`
+	Code string `json:"code"`
+	// Command is the line to paste (M7): the install script, by curl,
+	// which downloads the relay program, checks it against SHA256 and
+	// installs it as a service. WgetCommand is the same with wget, for a
+	// machine with no curl; DockerCommand the container, for those who
+	// would rather. With no download site set up (a development server),
+	// Command is the Docker one, as before M7.
+	Command       string `json:"command"`
+	WgetCommand   string `json:"wgetCommand,omitempty"`
+	DockerCommand string `json:"dockerCommand,omitempty"`
+	// Version is the relay program's the command installs, and SHA256 the
+	// hash of that version's SHA256SUMS, which the command carries.
+	Version string `json:"version,omitempty"`
+	SHA256  string `json:"sha256,omitempty"`
 	// Relay is the relay it sets up again; empty for a new one.
 	Relay     RelayID   `json:"relay,omitempty"`
 	ExpiresAt time.Time `json:"expiresAt"`
@@ -124,6 +215,11 @@ type RelayRegisterResult struct {
 	// keeps only its hash.
 	Secret    string `json:"secret"`
 	RateLimit int64  `json:"rateLimit,omitempty"` // bytes a second for each connection; zero is none
+	// Existing: the machine was already one of its owner's relays (the
+	// same certificate, or the same address and port), so a code for a new
+	// relay set that one up again instead of making another (M7): "这台已经
+	// 是中转站'东京'了".
+	Existing bool `json:"existing,omitempty"`
 }
 
 // RelayAdmitRequest asks whether a client may use the relay, once it has

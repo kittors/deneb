@@ -157,6 +157,10 @@ type Report struct {
 	// for a device in several scopes: it keeps, for each scope, the first
 	// relay on the scope's list it could connect to.
 	Relays []RelayID `json:"relays,omitempty"`
+	// RelayFailures are the relays on its lists it tried and could not
+	// use (M7): their owners' cards say which of their devices cannot
+	// reach them. One it reaches again leaves the list.
+	RelayFailures []RelayFailure `json:"relayFailures,omitempty"`
 }
 
 // ReportResult answers a report.

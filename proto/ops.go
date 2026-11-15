@@ -258,6 +258,11 @@ const (
 	OpRelayKick OpType = "relay.kick"
 	// Kick. The relay's owner: the kick is lifted, and recorded so.
 	OpRelayUnkick OpType = "relay.unkick"
+	// Relay. Its owner (an operator, for a public relay): check now whether
+	// it can be reached from outside (the card's "重新检查", M7). It
+	// changes nothing; the card says 正在检查 and then what was found, in
+	// the versions that follow.
+	OpRelayCheck OpType = "relay.check"
 )
 
 // OpResult is the answer to an op that went through. One that did not
@@ -354,4 +359,8 @@ const (
 	ErrConflict     ErrorCode = "conflict"      // 409: it clashes with how things are: a used invite, a taken name
 	ErrSeatsFull    ErrorCode = "seats_full"    // 403: from M3
 	ErrInternal     ErrorCode = "internal"      // 500
+
+	// ErrRelayRemoved (410): the relay was deleted in Deneb, or said it was
+	// uninstalled; its program stops serving and does not start again (M7).
+	ErrRelayRemoved ErrorCode = "relay_removed"
 )
