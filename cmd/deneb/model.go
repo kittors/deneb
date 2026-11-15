@@ -325,6 +325,11 @@ type app struct {
 	heldAt        ui.Point  // where it is, in the canvas
 	trayUp        bool      // the tray shows, or is going away
 	trayOut       time.Time // when the tray, going away, is gone
+	trayWords     swapper   // the tray's words, one line at a time (swap.go)
+	trayKids      trayKids  // the tray's slots as they open and close (swap.go)
+	toastBody     swapper   // the toast's notice, one at a time
+	toastShown    *notice   // the notice the toast shows, fading out while the next waits
+	toastWas      [2]bool   // the toast showed at the bottom, at the top, in the frame before
 
 	cardAt    ui.Rect               // where the card shows, in the canvas, from the last layout: drops keep clear of it
 	cardLeft  bool                  // the card shows at the canvas's left (cardOnLeft)

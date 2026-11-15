@@ -30,8 +30,9 @@ type relayChips struct {
 }
 
 // relayFlight is a relay on its way between the tray and the canvas: from
-// where it was, to where it goes, since when. into: to the tray, where it
-// goes out of sight as it arrives.
+// where it was, to where it goes, since when. into: to the tray, its slot
+// there, which it follows as the tray makes room, and where the tray's own
+// ball takes over as it lands.
 type relayFlight struct {
 	from, to ui.Point
 	at       time.Time
@@ -83,7 +84,7 @@ func (a *app) relayRefusal(r *relayStop) string {
 }
 
 // trayRelayItems are the tray's relays, its install commands and its "+".
-func (a *app) trayRelayItems(c *ui.Context, p *palette, w, h float32) {
+func (a *app) trayRelayItems(c *ui.Context, p *palette, w, h float32, kv func(kid, float32, ui.Animation) float32) {
 	if !a.relayTray() {
 		return
 	}
@@ -95,19 +96,57 @@ func (a *app) trayRelayItems(c *ui.Context, p *palette, w, h float32) {
 			c.AnimationFrame()
 		}
 	}()
-	// The thin line between my devices and my relays.
+	// The thin line between my devices and my relays; my relays and the
+	// install commands waiting, each opening and closing with the tray's
+	// spring (trayKid); a relay just set up springs in where its command
+	// closes (Bouncy).
+	var rule []string
 	if len(a.tray) > 0 {
-		ui.Box(c.Key("relay-rule")).Size(1, 26).Margin(0, 0, 0, slotGap+2).Background(p.line).Shrink(0)
+		rule = []string{"rule"}
 	}
+	for _, kd := range a.trayKids.order("rule", rule, map[string]kidLook{"rule": lookRule}) {
+		k := kv(kd, b2f(!kd.gone), soft)
+		if kd.gone && k < 0.01 {
+			continue
+		}
+		a.trayKids.shown("rule", kd.key)
+		trayKid(c, kd.key, k, 1+slotGap+2, func() { a.trayGhost(c, p, lookRule) })
+	}
+	var keys []string
+	looks := map[string]kidLook{}
+	relays := map[string]*model.Relay{}
+	joins := map[string]model.RelayJoin{}
 	for _, rl := range a.trayRelays() {
-		a.trayRelayItem(c, p, rl, w, h)
+		key := "relay:" + string(rl.ID)
+		keys, looks[key], relays[key] = append(keys, key), lookRound, rl
 	}
 	for _, j := range a.snap.RelayJoins {
-		a.trayJoinItem(c, p, j)
+		key := "join:" + j.ID
+		keys, looks[key], joins[key] = append(keys, key), lookJoin, j
+	}
+	for _, kd := range a.trayKids.order("relay", keys, looks) {
+		anim := soft
+		if rl := relays[kd.key]; rl != nil {
+			if fresh := a.newRelays[rl.ID]; !fresh.IsZero() && a.now().Sub(fresh) <= 900*time.Millisecond {
+				anim = ui.Bouncy
+			}
+		}
+		k := kv(kd, b2f(!kd.gone), anim)
+		if kd.gone && k < 0.01 {
+			continue
+		}
+		a.trayKids.shown("relay", kd.key)
+		switch rl, j := relays[kd.key], joins[kd.key]; {
+		case kd.gone:
+			trayKid(c, kd.key, k, relaySlotBall+slotGap, func() { a.trayGhost(c, p, a.trayKids.looks[kd.key]) })
+		case rl != nil:
+			trayKid(c, kd.key, k, relaySlotBall+slotGap, func() { a.trayRelayItem(c, p, rl, w, h) })
+		default:
+			trayKid(c, kd.key, k, relaySlotBall+slotGap, func() { a.trayJoinItem(c, p, j) })
+		}
 	}
 	plus := ui.ButtonBase(c.Key("relay-plus")).Size(relaySlotBall+slotGap, slotTile).Padding(0, 0, 0, slotGap).Center().
 		FocusRing(false).Cursor(ui.CursorPointer).Label("用我自己的服务器").Shrink(0)
-	plus.Transition(ui.ElementTransition{Animation: &soft, Position: true})
 	if b := plus.Bounds(); b.W > 0 {
 		a.slots["relay:+"] = ui.Point{X: b.X - a.origin.X + slotGap + relaySlotBall/2, Y: b.Y - a.origin.Y + b.H/2}
 	}
@@ -137,13 +176,6 @@ func (a *app) trayRelayItem(c *ui.Context, p *palette, rl *model.Relay, w, h flo
 	key := "relay:" + string(rl.ID)
 	slot := ui.Box(c.Key("tray-"+key)).Size(relaySlotBall+slotGap, slotTile).Padding(0, 0, 0, slotGap).Shrink(0)
 	fresh := a.newRelays[rl.ID]
-	if fresh.IsZero() || a.now().Sub(fresh) > 900*time.Millisecond {
-		slot.Transition(ui.ElementTransition{Animation: &soft, Position: true, Enter: &ui.Motion{Collapse: true, Scale: 0.6}})
-	} else {
-		// Just set up: it opens where its install command closes, and
-		// springs in (Bouncy).
-		slot.Transition(ui.ElementTransition{Animation: &ui.Bouncy, Position: true, Enter: &ui.Motion{Collapse: true, Scale: 0.4}})
-	}
 	home, known := a.slots[key]
 	if b := slot.Bounds(); b.W > 0 {
 		home, known = ui.Point{X: b.X - a.origin.X + slotGap + relaySlotBall/2, Y: b.Y - a.origin.Y + b.H/2}, true
@@ -220,8 +252,6 @@ func (a *app) trayJoinItem(c *ui.Context, p *palette, j model.RelayJoin) {
 	key := "join:" + j.ID
 	b := ui.ButtonBase(c.Key("tray-"+key)).Size(relaySlotBall+slotGap, slotTile).Padding(0, 0, 0, slotGap).Center().
 		FocusRing(false).Cursor(ui.CursorPointer).Label("等待安装").Shrink(0)
-	b.Transition(ui.ElementTransition{Animation: &soft, Position: true,
-		Enter: &ui.Motion{Collapse: true, Scale: 0.6}, Exit: &ui.Motion{Collapse: true, Scale: 0.6}})
 	b.AnimatePose(pressPose(b, 0.92), ui.Snappy)
 	if bb := b.Bounds(); bb.W > 0 {
 		a.slots[key] = ui.Point{X: bb.X - a.origin.X + slotGap + relaySlotBall/2, Y: bb.Y - a.origin.Y + bb.H/2}
@@ -433,7 +463,9 @@ func (f *relayFlight) look(now time.Time) (at ui.Point, scale, fade float32, don
 	at = ui.Point{X: f.from.X + (f.to.X-f.from.X)*e, Y: f.from.Y + (f.to.Y-f.from.Y)*e}
 	small := float32(relaySlotBall) / relayBall
 	if f.into {
-		return at, 1 + (small-1)*e, max(0, (e-0.7)/0.3), false
+		// It lands in its slot as large as the tray's ball, and stays in
+		// sight: the tray's own ball takes over where it is.
+		return at, 1 + (small-1)*e, 0, false
 	}
 	return at, small + (1-small)*e, 0, false
 }

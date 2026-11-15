@@ -908,9 +908,10 @@ func (a *app) relayName(c *ui.Context, p *palette, r *relayStop, off float32) ui
 
 // relayFlying shows r on its way between the tray and the canvas, and
 // reports whether it is: it grows to a canvas ball as it comes out, or
-// shrinks and fades as it goes in, its name out of sight meanwhile.
+// shrinks to the tray's ball as it goes in, its name out of sight meanwhile.
 func (a *app) relayFlying(c *ui.Context, p *palette, r *relayStop) bool {
-	if f := r.flight; f.into && !f.held {
+	f := r.flight
+	if f.into && !f.held {
 		// Going into the tray: it waits for the line that went through it
 		// to fade, so that the line never bends at nothing (scene 1).
 		f.held = true
@@ -918,25 +919,35 @@ func (a *app) relayFlying(c *ui.Context, p *palette, r *relayStop) bool {
 			f.at = hold
 		}
 	}
-	at, scale, fade, done := r.flight.look(c.Now())
-	if done {
-		into := r.flight.into
-		r.flight = nil
-		if into {
-			r.shown, r.leftAt = false, time.Time{}
+	if f.into {
+		// Into its slot as the tray opens it: where it is now.
+		if at, ok := a.slots["relay:"+string(r.id)]; ok {
+			f.to = at
 		}
-		return into
 	}
-	c.AnimationFrame()
+	at, scale, fade, done := f.look(c.Now())
+	if done {
+		r.flight = nil
+		if !f.into {
+			return false
+		}
+		r.shown, r.leftAt = false, time.Time{}
+		// Shown once more where it landed, as large as the tray's ball:
+		// the tray's own takes over from the next frame, never a frame
+		// with neither.
+		scale, fade = float32(relaySlotBall)/relayBall, 0
+	} else {
+		c.AnimationFrame()
+	}
 	r.live = at
 	el := ui.Box(c.Key("relay\x00"+string(r.id))).Absolute().Left(r.base.X-20).Top(r.base.Y-20).Size(40, 40).PassThrough()
 	el.Translate(at.X-r.base.X, at.Y-r.base.Y)
 	el.Children(func() {
 		relayOrb(c, p, 40, r.down, 0).Scale(scale, scale).Opacity(1 - fade)
 		// Its name fades out as it sets off, and in as it lands.
-		k := min(1, float32(c.Now().Sub(r.flight.made))/float32(150*time.Millisecond))
-		if !r.flight.into {
-			k = 1 - min(1, max(0, float32(c.Now().Sub(r.flight.at)-relayFly+150*time.Millisecond)/float32(150*time.Millisecond)))
+		k := min(1, float32(c.Now().Sub(f.made))/float32(150*time.Millisecond))
+		if !f.into {
+			k = 1 - min(1, max(0, float32(c.Now().Sub(f.at)-relayFly+150*time.Millisecond)/float32(150*time.Millisecond)))
 		}
 		if k < 1 {
 			a.relayName(c, p, r, map[bool]float32{false: 0, true: 1}[r.down]).Opacity(1 - k)

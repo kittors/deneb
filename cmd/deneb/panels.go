@@ -96,6 +96,8 @@ func (a *app) landed(c *ui.Context, d *device) {
 		if a.slotOK {
 			a.slots[d.id] = a.slot
 		}
+		// The slot opened for it becomes its own, where it is (trayKids).
+		a.trayKids.landed = d.id
 	}
 	a.devices = slices.DeleteFunc(a.devices, func(x *device) bool { return x == d })
 	d.leaving, d.aimed, d.flying, d.arriving, d.turnedDown = time.Time{}, false, false, false, false
@@ -278,23 +280,27 @@ func (a *app) trayView(c *ui.Context, p *palette, w, h float32, now time.Time) {
 	holder := ui.Row(c.Key("tray-holder")).Absolute().Left(0).Right(right).Bottom(22).Justify(ui.Center).PassThrough()
 	holder.Children(func() {
 		if !a.trayUp {
+			a.trayKids.next(true)
 			return
 		}
 		ring := p.bg
 		if p.dark {
 			ring = p.line
 		}
-		bg, ink := p.bg, p.ink2
+		bg := p.bg
 		switch mode {
 		case trayOffer:
-			ring, ink = p.primary.Alpha(0.4), p.primary
+			ring = p.primary.Alpha(0.4)
 		case trayArmed:
-			bg, ring, ink = p.bg.Mix(p.primary, 0.07), p.primary, p.primary
+			bg, ring = p.bg.Mix(p.primary, 0.07), p.primary
 		}
+		// The pill hugs what is in it, which opens, closes and changes with
+		// the tray's spring (DESIGN §6.5): its own size does not lag behind,
+		// so nothing in it ever sticks out of it; only its colors fade.
 		pill := ui.Row(c.Key("tray")).Height(56).Padding(0, 10, 0, 18).AlignItems(ui.Center).Radius(999).
 			Background(bg).Border(1.5, ring).
 			Shadow(0, 10, 28, 0, p.shadow).Shadow(0, 2, 6, 0, ui.RGBA(9, 9, 11, 0.05))
-		pill.Transition(ui.ElementTransition{Animation: &soft})
+		pill.Transition(ui.ElementTransition{Animation: &soft, Colors: true})
 		if b := pill.Bounds(); b.W > 0 {
 			a.trayAt = ui.Rect{X: b.X - a.origin.X, Y: b.Y - a.origin.Y, W: b.W, H: b.H}
 		}
@@ -306,53 +312,216 @@ func (a *app) trayView(c *ui.Context, p *palette, w, h float32, now time.Time) {
 			lower, clear = 24, 0
 		}
 		pill.Translate(0, pill.AnimateTo("lower", lower, soft)).Opacity(pill.AnimateTo("clear", clear, soft))
+		kv := func(kd kid, target float32, anim ui.Animation) float32 {
+			return a.kidValue(pill, entering, kd, target, anim)
+		}
 		pill.Children(func() {
-			label := ui.Text(c.Key("label-"+text), text).FontSize(13).TextColor(ink).SingleLine().Shrink(0)
-			if mode != trayIdle && mode != trayRefuse {
-				label.FontWeight(500)
+			// The words, one line at a time: the shown one fades out before
+			// the next fades in, the room for them stretching between.
+			// Going to longer words, the room grows as the shown ones fade
+			// out, and the new ones wait for it before they fade in: they
+			// never show cut off.
+			want := fmt.Sprint(int(mode), "|", text)
+			shownKey, alpha, busy := a.trayWords.step(want, now)
+			smode, stext := trayWordsOf(shownKey)
+			ink, weight := trayInk(p, smode)
+			tw := trayWordsWide(c, smode, stext)
+			room := tw
+			if want != shownKey {
+				wm, wt := trayWordsOf(want)
+				room = max(room, trayWordsWide(c, wm, wt))
 			}
-			label.Transition(ui.ElementTransition{Animation: &soft, Position: true, Enter: &ui.Motion{}, Exit: &ui.Motion{}})
+			wide := pill.AnimateTo("words", room+1, soft)
+			// Within a few DIPs of their width they may start: they come
+			// in from nothing, and the room has them whole before they
+			// show.
+			if want == shownKey && wide < tw-6 {
+				a.trayWords.hold(now)
+				alpha, busy = 0, true
+			}
+			if busy {
+				c.AnimationFrame()
+			}
+			words := ui.Box(c.Key("tray-words")).Width(wide).Shrink(0).Clip()
+			words.Children(func() {
+				// As wide as the words are, never cut short ("…") by the
+				// room stretching to them: the room clips them instead,
+				// while they fade in.
+				ui.Text(c.Key("tray-words-text"), stext).FontSize(13).FontWeight(weight).TextColor(ink).SingleLine().Width(tw + 1).Shrink(0).Opacity(alpha)
+			})
+
+			// 添加设备, while no device of mine waits in the tray. While the
+			// words say what the pointer is on (a relay, the "+"), it keeps
+			// its place, faded and deaf: nothing moves under the pointer on
+			// its way across the tray.
+			var adds []string
 			if mode == trayIdle && len(a.tray) == 0 && a.landing == nil {
-				// While the words say what the pointer is on (a relay, the
-				// "+"), "添加设备" keeps its place, faded and deaf: nothing
-				// moves under the pointer on its way across the tray.
-				quiet := text != trayNoneWords
-				more := ui.ButtonBase(c.Key("tray-add")).Height(28).Padding(0, 8).Margin(0, 0, 0, 8).Radius(999).FocusRing(false).Shrink(0).Label("添加设备")
-				more.Transition(ui.ElementTransition{Animation: &soft, Position: true, Colors: true, Enter: &ui.Motion{}, Exit: &ui.Motion{}})
-				shown := float32(1)
-				if quiet {
-					shown = 0
-				}
-				more.IgnoreInput(quiet).Opacity(more.AnimateTo("shown", shown, soft))
-				if more.Hovered() && !quiet {
-					more.Background(p.primary.Alpha(0.08))
-				}
-				more.AnimatePose(pressPose(more, 0.95), ui.Snappy)
-				more.Children(func() { ui.Text(c, "添加设备").FontSize(13).FontWeight(500).TextColor(p.primary) })
-				if more.Clicked() && !quiet {
-					a.openAddOne(c)
-				}
+				adds = []string{"add"}
 			}
-			for _, d := range slices.Clone(a.tray) {
-				a.trayItem(c, p, d, w, h)
+			aw, _ := c.MeasureText(0, ui.Span{Text: "添加设备", Size: 13, Weight: 500})
+			for _, kd := range a.trayKids.order("add", adds, map[string]kidLook{"add": lookAdd}) {
+				k := kv(kd, b2f(!kd.gone), soft)
+				if kd.gone && k < 0.01 {
+					continue
+				}
+				a.trayKids.shown("add", kd.key)
+				quiet := kd.gone || text != trayNoneWords
+				trayKid(c, kd.key, k, aw+16+8, func() { a.trayAdd(c, p, quiet) })
+			}
+
+			// My devices waiting, and the slot for one coming in, opening
+			// as the others make room.
+			var devs []string
+			looks := map[string]kidLook{"slot": lookSlot}
+			byKey := map[string]*device{}
+			for _, d := range a.tray {
+				key := "dev:" + d.id
+				devs, looks[key], byKey[key] = append(devs, key), lookWell, d
 			}
 			if mode == trayArmed || a.landing != nil {
-				// The slot for the one coming in, opening as the others
-				// make room.
-				s := ui.Box(c.Key("slot")).Size(slotTile+slotGap, slotTile).Padding(0, 0, 0, slotGap).Shrink(0)
-				s.Transition(ui.ElementTransition{Animation: &soft, Position: true, Enter: &ui.Motion{Collapse: true}, Exit: &ui.Motion{Collapse: true}})
-				if b := s.Bounds(); b.W > 0 {
-					a.slot = ui.Point{X: b.X - a.origin.X + slotGap + slotTile/2, Y: b.Y - a.origin.Y + b.H/2}
-					a.slotOK = true
+				devs = append(devs, "slot")
+			}
+			for _, kd := range a.trayKids.order("dev", devs, looks) {
+				k := kv(kd, b2f(!kd.gone), soft)
+				if kd.gone && k < 0.01 {
+					continue
 				}
-				s.Children(func() {
-					ui.Box(c).Size(slotTile, slotTile).Radius(slotTile*0.3).Background(p.primary.Alpha(0.08)).Border(1.5, p.primary.Alpha(0.3))
-				})
+				a.trayKids.shown("dev", kd.key)
+				switch d := byKey[kd.key]; {
+				case kd.gone:
+					trayKid(c, kd.key, k, slotTile+slotGap, func() { a.trayGhost(c, p, a.trayKids.looks[kd.key]) })
+				case kd.key == "slot":
+					trayKid(c, kd.key, k, slotTile+slotGap, func() { a.traySlotOpen(c, p) })
+				default:
+					trayKid(c, kd.key, k, slotTile+slotGap, func() { a.trayItem(c, p, d, w, h) })
+				}
 			}
 			// My relays, the install commands waiting, and the "+" (M4).
-			a.trayRelayItems(c, p, w, h)
+			a.trayRelayItems(c, p, w, h, kv)
 		})
+		a.trayKids.landed = ""
+		a.trayKids.next(false)
 	})
+}
+
+// trayWordsOf splits the key of the tray's words into its mode and words.
+func trayWordsOf(key string) (trayMode, string) {
+	m, words, _ := strings.Cut(key, "|")
+	n, _ := strconv.Atoi(m)
+	return trayMode(n), words
+}
+
+// trayInk is the color and weight of the tray's words in mode: the
+// primary's, and heavier, where letting go does something.
+func trayInk(p *palette, mode trayMode) (ui.Color, int) {
+	strong := mode == trayOffer || mode == trayArmed
+	switch {
+	case p == nil && strong:
+		return ui.Color{}, 500
+	case p == nil:
+		return ui.Color{}, 400
+	case strong:
+		return p.primary, 500
+	}
+	return p.ink2, 400
+}
+
+// trayWordsWide is how wide the tray's words are in mode.
+func trayWordsWide(c *ui.Context, mode trayMode, words string) float32 {
+	_, weight := trayInk(nil, mode)
+	w, _ := c.MeasureText(0, ui.Span{Text: words, Size: 13, Weight: weight})
+	return w
+}
+
+// kidValue is how open the tray's slot kd is, going to target as anim
+// says: one that came this frame opens from shut, unless it is the device
+// that just landed in the slot opened for it, which is there at once, as
+// that slot is gone at once; the tray coming up shows all as they are.
+func (a *app) kidValue(pill ui.Element, entering bool, kd kid, target float32, anim ui.Animation) float32 {
+	key := "kid:" + kd.key
+	landed := a.trayKids.landed != ""
+	switch {
+	case kd.fresh && !entering && landed && kd.key == "dev:"+a.trayKids.landed:
+		pill.Jump(key, 1)
+	case kd.fresh && !entering:
+		pill.Jump(key, 0)
+	case landed && kd.key == "slot":
+		pill.Jump(key, 0)
+	}
+	return pill.AnimateTo(key, target, anim)
+}
+
+// trayKid lays out one slot of the tray, w wide when open, as open as k (0
+// to 1) says: its width with k, and what is in it scaled and faded with k
+// about its middle, so that nothing in it is cut off or laid over its
+// neighbours; the tray, which hugs what is in it, stretches with it
+// (DESIGN §6.5).
+func trayKid(c *ui.Context, key string, k, w float32, inside func()) {
+	ui.Box(c.Key("kid-" + key)).Width(w * k).Height(slotTile).Shrink(0).Center().Children(func() {
+		ui.Box(c.Key("kid-in-"+key)).Width(w).Height(slotTile).Shrink(0).Scale(k, k).Opacity(k).Children(inside)
+	})
+}
+
+// b2f is 1 for true.
+func b2f(b bool) float32 {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// trayAdd is the tray's 添加设备; quiet, faded and deaf.
+func (a *app) trayAdd(c *ui.Context, p *palette, quiet bool) {
+	more := ui.ButtonBase(c.Key("tray-add")).Height(28).Padding(0, 8).Margin(0, 0, 0, 8).Radius(999).FocusRing(false).Shrink(0).Label("添加设备")
+	more.Transition(ui.ElementTransition{Animation: &soft, Colors: true})
+	shown := float32(1)
+	if quiet {
+		shown = 0
+	}
+	more.IgnoreInput(quiet).Opacity(more.AnimateTo("shown", shown, soft))
+	if more.Hovered() && !quiet {
+		more.Background(p.primary.Alpha(0.08))
+	}
+	more.AnimatePose(pressPose(more, 0.95), ui.Snappy)
+	more.Children(func() { ui.Text(c, "添加设备").FontSize(13).FontWeight(500).TextColor(p.primary).SingleLine() })
+	if more.Clicked() && !quiet {
+		a.openAddOne(c)
+	}
+}
+
+// traySlotOpen is the slot the tray opens for one of mine coming in.
+func (a *app) traySlotOpen(c *ui.Context, p *palette) {
+	s := ui.Box(c.Key("slot")).Size(slotTile+slotGap, slotTile).Padding(0, 0, 0, slotGap).Shrink(0)
+	if b := s.Bounds(); b.W > 0 {
+		a.slot = ui.Point{X: b.X - a.origin.X + slotGap + slotTile/2, Y: b.Y - a.origin.Y + b.H/2}
+		a.slotOK = true
+	}
+	s.Children(func() {
+		ui.Box(c).Size(slotTile, slotTile).Radius(slotTile*0.3).Background(p.primary.Alpha(0.08)).Border(1.5, p.primary.Alpha(0.3))
+	})
+}
+
+// trayGhost is a slot of the tray that is going, as it looks while it
+// closes: its thing gone from it, the well it sat in.
+func (a *app) trayGhost(c *ui.Context, p *palette, look kidLook) {
+	switch look {
+	case lookSlot:
+		ui.Box(c).Size(slotTile+slotGap, slotTile).Padding(0, 0, 0, slotGap).Shrink(0).Children(func() {
+			ui.Box(c).Size(slotTile, slotTile).Radius(slotTile*0.3).Background(p.primary.Alpha(0.08)).Border(1.5, p.primary.Alpha(0.3))
+		})
+	case lookAdd:
+		a.trayAdd(c, p, true)
+	case lookRule:
+		ui.Box(c).Size(1, 26).Margin(0, 0, 0, slotGap+2).Background(p.line).Shrink(0)
+	case lookRound, lookJoin:
+		ui.Box(c).Size(relaySlotBall+slotGap, slotTile).Padding(0, 0, 0, slotGap).Shrink(0).Center().Children(func() {
+			ui.Box(c).Size(relaySlotBall, relaySlotBall).Radius(999).Background(p.well)
+		})
+	default:
+		ui.Box(c).Size(slotTile+slotGap, slotTile).Padding(0, 0, 0, slotGap).Shrink(0).Children(func() {
+			ui.Box(c).Size(slotTile, slotTile).Radius(slotTile * 0.3).Background(p.well)
+		})
+	}
 }
 
 // trayItem is one of my devices in the tray. Dragged out of it, it grows
@@ -361,7 +530,6 @@ func (a *app) trayView(c *ui.Context, p *palette, w, h float32, now time.Time) {
 // adds it too, at a free spot right above.
 func (a *app) trayItem(c *ui.Context, p *palette, d *device, w, h float32) {
 	slot := ui.Box(c.Key("tray-"+d.id)).Size(slotTile+slotGap, slotTile).Padding(0, 0, 0, slotGap).Shrink(0)
-	slot.Transition(ui.ElementTransition{Animation: &soft, Position: true})
 	// Where the slot's tile sits in the canvas: the slot itself never
 	// moves with the drag, so this is home however far the tile is.
 	home, known := a.slots[d.id]
@@ -469,7 +637,11 @@ func (a *app) toastView(c *ui.Context, p *palette, w, h float32, now time.Time) 
 	// Both places are built in every frame, so that a toast comes in and
 	// goes out where it shows: Enter and Exit play in a parent that stays.
 	above := !a.myDevicesOpen && (a.trayShows() || a.trayUp)
-	for _, top := range []bool{false, true} {
+	// Where a toast showed in the frame before: one coming up in a place
+	// shows its notice at once, nothing before it to fade out.
+	was := a.toastWas
+	a.toastWas = [2]bool{}
+	for i, top := range []bool{false, true} {
 		holder := ui.Row(c.Key(fmt.Sprint("toast-holder-", top))).Absolute().Left(0).Right(right).Justify(ui.Center).PassThrough()
 		if top {
 			holder.Top(12)
@@ -486,21 +658,24 @@ func (a *app) toastView(c *ui.Context, p *palette, w, h float32, now time.Time) 
 			if tn == nil || tn.top != top {
 				return
 			}
-			c.After(tn.until.Sub(now))
-			right := float32(16)
-			if tn.undo != nil {
-				right = 6
+			a.toastWas[i] = true
+			if !was[i] {
+				a.toastBody, a.toastShown = swapper{}, tn
 			}
+			c.After(tn.until.Sub(now))
 			// It rises in from below: over the tray, by less than the room
 			// above the tray, so that it never touches it.
 			rise := float32(14)
 			if !top && above {
 				rise = 10
 			}
-			t := ui.Row(c.Key("toast")).Height(44).Padding(0, right, 0, 8).AlignItems(ui.Center).Radius(999).
+			// The pill hugs what it says, and only its coming and going
+			// animate: a notice taking the place of the one showing never
+			// shows beside it (toastShown, DESIGN §6.5).
+			t := ui.Row(c.Key("toast")).Height(44).Padding(0, 0, 0, 8).AlignItems(ui.Center).Radius(999).
 				Background(p.bg).Border(1, p.line).
 				Shadow(0, 12, 32, 0, p.shadow).Shadow(0, 2, 6, 0, ui.RGBA(9, 9, 11, 0.06))
-			t.Transition(ui.ElementTransition{Animation: &ui.Snappy, Size: true,
+			t.Transition(ui.ElementTransition{Animation: &ui.Snappy,
 				Enter: &ui.Motion{Y: rise, Scale: 0.96}, Exit: &ui.Motion{Y: 8, Scale: 0.98}})
 			if t.Hovered() {
 				// The pointer on it holds it, on its way to the undo. A
@@ -513,39 +688,97 @@ func (a *app) toastView(c *ui.Context, p *palette, w, h float32, now time.Time) 
 				c.After(time.Second)
 			}
 			t.Children(func() {
-				body := ui.Row(c.Key(tn.id)).Gap(10).AlignItems(ui.Center)
-				body.Transition(ui.ElementTransition{Duration: 150 * time.Millisecond, Enter: &ui.Motion{}, Exit: &ui.Motion{}})
-				body.Children(func() {
-					if tn.dev != nil {
-						a.profileTile(c, p, tn.dev.dev, tn.dev.kind, a.tileColor(tn.dev), 28, false, 0)
+				// One notice at a time: the one showing fades out before
+				// the next fades in, the pill stretching to it between.
+				if a.toastShown == nil {
+					a.toastShown = tn
+				}
+				want := strconv.Itoa(tn.id)
+				id, alpha, busy := a.toastBody.step(want, now)
+				if busy {
+					c.AnimationFrame()
+				}
+				show := a.toastShown
+				if id == want {
+					show, a.toastShown = tn, tn
+				}
+				// The next one waits for its room before it fades in: it
+				// never shows cut off.
+				need := toastWide(c, show)
+				wide := t.AnimateTo("wide", need, ui.Snappy)
+				if show == tn && wide < need-6 {
+					a.toastBody.hold(now)
+					alpha = 0
+					c.AnimationFrame()
+				}
+				box := ui.Box(c.Key("toast-box")).Width(wide).Shrink(0).Clip()
+				box.Children(func() {
+					right := float32(16)
+					if show.undo != nil {
+						right = 6
 					}
-					if tn.orb {
-						relayOrb(c, p, 28, false, 0)
-					}
-					ui.Text(c, tn.text).FontSize(13).FontWeight(500).SingleLine()
-					if tn.undo != nil {
-						u := ui.ButtonBase(c.Key("undo")).Height(32).Padding(0, 12).Radius(999).FocusRing(false)
-						if u.Hovered() {
-							u.Background(p.primary.Alpha(0.1))
+					body := ui.Row(c.Key("toast-body")).Width(need).Gap(10).Padding(0, right, 0, 0).AlignItems(ui.Center).Shrink(0).
+						Opacity(alpha).IgnoreInput(show != tn)
+					body.Children(func() {
+						if show.dev != nil {
+							a.profileTile(c, p, show.dev.dev, show.dev.kind, a.tileColor(show.dev), 28, false, 0)
 						}
-						u.Transition(ui.ElementTransition{Duration: 120 * time.Millisecond, Colors: true})
-						u.AnimatePose(pressPose(u, 0.94), ui.Snappy)
-						label := "撤销"
-						if tn.undoLabel != "" {
-							// Not an undo: what to do next (§6.14).
-							label = tn.undoLabel
+						if show.orb {
+							relayOrb(c, p, 28, false, 0)
 						}
-						u.Children(func() { ui.Text(c, label).FontSize(13).FontWeight(600).TextColor(p.primary) })
-						if u.Clicked() {
-							undo := tn.undo
-							a.toast = nil
-							undo()
+						// As wide as its words: never cut short ("…") while
+						// the pill stretches to them.
+						sw, _ := c.MeasureText(0, ui.Span{Text: show.text, Size: 13, Weight: 500})
+						ui.Text(c, show.text).FontSize(13).FontWeight(500).SingleLine().Width(sw + 1).Shrink(0)
+						if show.undo != nil {
+							u := ui.ButtonBase(c.Key("undo")).Height(32).Padding(0, 12).Radius(999).FocusRing(false).Shrink(0)
+							if u.Hovered() {
+								u.Background(p.primary.Alpha(0.1))
+							}
+							u.Transition(ui.ElementTransition{Duration: 120 * time.Millisecond, Colors: true})
+							u.AnimatePose(pressPose(u, 0.94), ui.Snappy)
+							label := "撤销"
+							if show.undoLabel != "" {
+								// Not an undo: what to do next (§6.14).
+								label = show.undoLabel
+							}
+							u.Children(func() { ui.Text(c, label).FontSize(13).FontWeight(600).TextColor(p.primary) })
+							if u.Clicked() && show == tn {
+								undo := tn.undo
+								a.toast = nil
+								undo()
+							}
 						}
-					}
+					})
 				})
 			})
 		})
 	}
+}
+
+// toastWide is how wide what the toast says of n is: its tile or orb, its
+// words, its button, the gaps between and the room after them.
+func toastWide(c *ui.Context, n *notice) float32 {
+	var w float32
+	parts := 1
+	if n.dev != nil {
+		w, parts = w+28, parts+1
+	}
+	if n.orb {
+		w, parts = w+28, parts+1
+	}
+	tw, _ := c.MeasureText(0, ui.Span{Text: n.text, Size: 13, Weight: 500})
+	w += tw + 1
+	right := float32(16)
+	if n.undo != nil {
+		label := "撤销"
+		if n.undoLabel != "" {
+			label = n.undoLabel
+		}
+		lw, _ := c.MeasureText(0, ui.Span{Text: label, Size: 13, Weight: 600})
+		w, parts, right = w+lw+24, parts+1, 6
+	}
+	return w + float32(parts-1)*10 + right
 }
 
 // ---- Card -------------------------------------------------------------------------------

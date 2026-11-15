@@ -74,9 +74,6 @@ func TestMyDeviceWaitsAndIsTurnedAway(t *testing.T) {
 	s2.Version = s0.Version + 2
 	st.set(&s2)
 	tt.Frame()
-	if !tt.HasText("Leo 没有同意我的 NAS 加入「读书会」") {
-		t.Errorf("no word that Leo turned it away: %q", tt.Texts())
-	}
 	d := a.device("mynas")
 	if d == nil || !d.turnedDown || a.landing != d {
 		t.Fatalf("我的 NAS is not on its way back to the tray, dashed: %+v", d)
@@ -84,6 +81,11 @@ func TestMyDeviceWaitsAndIsTurnedAway(t *testing.T) {
 	frames(120 * time.Millisecond)
 	if d := a.device("mynas"); d != nil && !d.turnedDown {
 		t.Error("it went solid on its way back")
+	}
+	// The toast says so once the one before has faded out (DESIGN §6.5:
+	// one notice at a time).
+	if !tt.HasText("Leo 没有同意我的 NAS 加入「读书会」") {
+		t.Errorf("no word that Leo turned it away: %q", tt.Texts())
 	}
 	frames(1500 * time.Millisecond)
 	if a.device("mynas") != nil || !slices.ContainsFunc(a.tray, func(x *device) bool { return x.id == "mynas" }) {
