@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -42,8 +43,11 @@ func (s *swapper) step(want string, now time.Time) (string, float32, bool) {
 	}
 	if !s.out.IsZero() {
 		// Back to the one fading out: it fades in again from where it got.
+		// Its fade-in goes by EaseOut, 1-(1-t)³, so its clock is set back to
+		// the t that gives that much, 1-∛(1-a), not to a: no jump.
 		a := s.from * (1 - frac(now.Sub(s.out), swapOut))
-		s.in, s.out = now.Add(-time.Duration(float64(swapIn)*float64(a))), time.Time{}
+		t := 1 - math.Cbrt(1-float64(a))
+		s.in, s.out = now.Add(-time.Duration(float64(swapIn)*t)), time.Time{}
 	}
 	a := s.alpha(now)
 	return s.shown, a, a < 1
