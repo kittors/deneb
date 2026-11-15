@@ -40,10 +40,12 @@ func updateStartHook() bool { return false }
 
 // selfUpdate replaces the service's engine with the denebd.exe at src, the
 // one the window ships (M6 i2; the window asks at every start when the
-// versions differ). The file is first copied beside the service's own,
-// where only administrators can write, and checked there, so it cannot
-// change between the check and the swap (stageEngine): signed with the key
-// of Deneb's updates, its denebd.exe.sig beside it, and newer
+// versions differ). The file is read whole, only a plain file on this
+// computer's own drives, never a share (readPlain), checked in memory, and
+// only then written beside the service's own, where only administrators can
+// write, so it cannot change between the check and the swap (stageEngine):
+// signed with the key of Deneb's updates, its denebd.exe.sig beside it, and
+// newer
 // (design/plan/m7/engine-self-update.md §2, §3). An unsigned one, a
 // development build, answers UpdateNeedsInstall: the window installs the
 // service again, elevated; to a service that came signed, it answers
@@ -64,6 +66,11 @@ func selfUpdate(ctx context.Context, src string) apitype.UpdateResult {
 	}
 	if !filepath.IsAbs(src) || !strings.EqualFold(filepath.Base(src), "denebd.exe") {
 		return res(apitype.UpdateFailed, "要 denebd.exe 的完整路径，收到的是 %q", src)
+	}
+	// On this computer's own drives only: reading a share, the service
+	// would sign in there as this computer (plainfile.go).
+	if err := localDrivePath(src); err != nil {
+		return res(apitype.UpdateBadSignature, "%v", err)
 	}
 	self, err := os.Executable()
 	if err != nil {
@@ -86,11 +93,20 @@ func selfUpdate(ctx context.Context, src string) apitype.UpdateResult {
 			}
 		}
 	}()
+	// The wintun.dll beside src, read as src was. Windows checks its
+	// signature on a file: it is written where only SYSTEM and
+	// administrators may open it, and checked there.
 	dll := filepath.Join(dir, "wintun.dll")
-	if srcDLL := filepath.Join(filepath.Dir(src), "wintun.dll"); fileDiffers(srcDLL, dll) {
+	srcDLL := filepath.Join(filepath.Dir(src), "wintun.dll")
+	switch body, err := readPlain(srcDLL, maxEngineSize); {
+	case errors.Is(err, os.ErrNotExist):
+		// None shipped beside it: the one in place stays.
+	case err != nil:
+		return res(apitype.UpdateBadSignature, "wintun.dll：%v", err)
+	case !sameFile(body, dll):
 		dllStaged = filepath.Join(dir, "wintun.update.dll")
-		if err := copyFile(srcDLL, dllStaged); err != nil {
-			return res(apitype.UpdateFailed, "复制 %s：%v", srcDLL, err)
+		if err := writePrivate(dllStaged, body); err != nil {
+			return res(apitype.UpdateFailed, "写 %s：%v", dllStaged, err)
 		}
 		if s, err := signerOf(dllStaged); err != nil || !strings.Contains(s, "WireGuard") {
 			return res(apitype.UpdateBadSignature, "wintun.dll 不是 WireGuard 签的（%q %v）", s, err)
@@ -186,14 +202,10 @@ func restoreEngine(self, prev string) error {
 	return nil
 }
 
-// fileDiffers: a exists, and b is missing or has other content.
-func fileDiffers(a, b string) bool {
-	ha, err := fileHash(a)
-	if err != nil {
-		return false
-	}
-	hb, err := fileHash(b)
-	return err != nil || ha != hb
+// sameFile: the file at path, the service's own, has content b.
+func sameFile(b []byte, path string) bool {
+	h, err := fileHash(path)
+	return err == nil && h == sha256.Sum256(b)
 }
 
 func fileHash(path string) ([sha256.Size]byte, error) {

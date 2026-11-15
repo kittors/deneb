@@ -22,9 +22,10 @@ import (
 // The system service replacing itself with the engine the window ships,
 // without a password (design/plan/m7/engine-self-update.md): the new
 // executable is signed with the key of the window's updates, its signature
-// beside it (denebd.sig, deploy/sign-engine.go); the service copies it to
-// where only it can write, checks the copy and asks it its version, and
-// takes only a newer one. A note beside the service's executable
+// beside it (denebd.sig, deploy/sign-engine.go); the service reads it whole
+// (readPlain), checks it in memory, and only then writes it where only it
+// can write, asks it its version, and takes only a newer one. A note beside
+// the service's executable
 // (update.json) counts the new engine's starts: one that does not get going
 // is put back by the old one.
 
@@ -51,14 +52,15 @@ var (
 // sigPath is where exe's signature is.
 func sigPath(exe string) string { return exe + ".sig" }
 
-// readEngineSig reads exe's signature: errNoSig when there is none.
+// readEngineSig reads exe's signature (readPlain): errNoSig when there is
+// none. What a file that is not one says stays out of the error.
 func readEngineSig(exe string) (*engineSig, []byte, error) {
-	b, err := os.ReadFile(sigPath(exe))
+	b, err := readPlain(sigPath(exe), maxSigSize)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil, errNoSig
 	}
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("%w：%w", errBadSig, err)
 	}
 	var s engineSig
 	if err := json.Unmarshal(b, &s); err != nil || s.Version == "" || s.SHA256 == "" || s.Signature == "" {
@@ -69,17 +71,17 @@ func readEngineSig(exe string) (*engineSig, []byte, error) {
 
 // check reports whether file is the one s signs, with one of keys.
 func (s *engineSig) check(file string, keys []string) error {
-	f, err := os.Open(file)
+	b, err := readPlain(file, maxEngineSize)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return err
-	}
-	sum := h.Sum(nil)
-	if hex.EncodeToString(sum) != strings.ToLower(s.SHA256) {
+	return s.checkBody(b, keys)
+}
+
+// checkBody reports whether body is the file s signs, with one of keys.
+func (s *engineSig) checkBody(body []byte, keys []string) error {
+	sum := sha256.Sum256(body)
+	if hex.EncodeToString(sum[:]) != strings.ToLower(s.SHA256) {
 		return fmt.Errorf("%w：文件和签名对不上", errBadSig)
 	}
 	sig, err := base64.StdEncoding.DecodeString(s.Signature)
@@ -88,7 +90,7 @@ func (s *engineSig) check(file string, keys []string) error {
 	}
 	for _, k := range keys {
 		pub, err := base64.StdEncoding.DecodeString(k)
-		if err == nil && len(pub) == ed25519.PublicKeySize && ed25519.Verify(ed25519.PublicKey(pub), sum, sig) {
+		if err == nil && len(pub) == ed25519.PublicKeySize && ed25519.Verify(ed25519.PublicKey(pub), sum[:], sig) {
 			return nil
 		}
 	}
@@ -114,12 +116,13 @@ func (s *staged) remove() {
 	os.Remove(s.sig)
 }
 
-// stageEngine copies src, the engine the window ships, to stagedExe, where
-// only the service can write, and checks the copy (§2 steps 1, 3 to 6):
-// signed with engineKeys, a version newer than current, not the one that
-// could not start here (failed). self is the service's own executable: a
-// service that came signed takes nothing unsigned. A nil staged comes with
-// the result to answer.
+// stageEngine reads src, the engine the window ships, whole (readPlain),
+// checks it in memory, and only then writes it to stagedExe, where only the
+// service can write, to ask it its version (§2 steps 1, 3 to 6): signed
+// with engineKeys, a version newer than current, not the one that could
+// not start here (failed). self is the service's own executable: a service
+// that came signed takes nothing unsigned. A nil staged comes with the
+// result to answer, and leaves nothing behind.
 func stageEngine(ctx context.Context, src, stagedExe, self, current, failed string) (*staged, apitype.UpdateResult) {
 	res := func(result, format string, a ...any) apitype.UpdateResult {
 		return apitype.UpdateResult{Result: result, Message: fmt.Sprintf(format, a...)}
@@ -144,10 +147,23 @@ func stageEngine(ctx context.Context, src, stagedExe, self, current, failed stri
 	if !unsignedTest && failed != "" && sig.Version == failed {
 		return nil, apitype.UpdateResult{Result: apitype.UpdateRolledBack, Version: failed, Message: "这一版在这台电脑上起不来，已经用回原来的版本"}
 	}
+	body, err := readPlain(src, maxEngineSize)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return nil, res(apitype.UpdateFailed, "没有 %s", src)
+	case err != nil:
+		return nil, res(apitype.UpdateBadSignature, "%v", err)
+	}
+	if !unsignedTest {
+		if err := sig.checkBody(body, engineKeys); err != nil {
+			return nil, res(apitype.UpdateBadSignature, "%v", err)
+		}
+	}
+	// Checked (or a test build's): only now on the disk.
 	st := &staged{exe: stagedExe, sig: sigPath(stagedExe)}
-	if err := copyFile(src, st.exe); err != nil {
-		st.remove()
-		return nil, res(apitype.UpdateFailed, "复制 %s：%v", src, err)
+	os.Remove(st.sig)
+	if err := writeNew(st.exe, body, 0o755); err != nil {
+		return nil, res(apitype.UpdateFailed, "写 %s：%v", st.exe, err)
 	}
 	keep := false
 	defer func() {
@@ -155,11 +171,6 @@ func stageEngine(ctx context.Context, src, stagedExe, self, current, failed stri
 			st.remove()
 		}
 	}()
-	if !unsignedTest {
-		if err := sig.check(st.exe, engineKeys); err != nil {
-			return nil, res(apitype.UpdateBadSignature, "%v", err)
-		}
-	}
 	ver, err := exeVersion(ctx, st.exe)
 	if err != nil {
 		return nil, res(apitype.UpdateFailed, "读新文件的版本：%v", err)

@@ -36,8 +36,8 @@
 
 1. **先看签名文件**：路径必须是绝对路径、文件名是 `denebd`。读旁边的 `denebd.sig`：没有，回 `needs-install`，窗口走管理员认证，开发版就是这样；读不懂，回 `bad-signature`。
 2. **加锁**：和安装、卸载用同一把锁（`install.lock`），同时只有一次。
-3. **先复制，再检查**：复制到 `/Library/PrivilegedHelperTools/Deneb/denebd.update`。这个目录现在就要求 root 拥有、别人不可写，每一级上级目录也是（`macProtectedDir`）。打开时用 `O_NOFOLLOW`，写完 fsync，权限 0700。之后只检查、只运行这份复制品，用户那边再改原文件也没用。
-4. **验签名**：复制品的 SHA-256 要和 `.sig` 里的一样，Ed25519 签名要能用程序里任一把公钥验过。不对就回 `bad-signature`，删掉复制品，不运行它。
+3. **只收普通文件，整份读进内存**（`readPlain`）：打开时用 `O_NOFOLLOW`（末尾是符号链接就不打开）和 `O_NONBLOCK`（FIFO 不会卡住），打开后确认是普通文件、只有这一个名字（不是硬链接）、不超过 256 MB，再整份读进内存。`.sig` 也这样读，最多 64 KB。窗口给的路径可能指向只有 root 能读的文件（比如设备私钥，再配一个 `.sig`），也可能是 FIFO、`/dev/zero` 这类东西；这样读，root 不会把它们复制到别人读得到的地方，也不会一直往系统盘写（主会话 11-15 审出来的）。
+4. **在内存里验签名，验过才写**：这份内容的 SHA-256 要和 `.sig` 里的一样，Ed25519 签名要能用程序里任一把公钥验过。不对就回 `bad-signature`，什么都没写。验过了，才写成 `/Library/PrivilegedHelperTools/Deneb/denebd.update`：这个目录要求 root 拥有、别人不可写，每一级上级目录也是（`macProtectedDir`），写完 fsync，权限 0755（验过的发布版，别人读到也无妨）。之后只运行这一份，用户那边再改原文件也没用。
 5. **问版本**：签名对了，才运行一次 `denebd.update version`，最多等 10 秒，结果必须和 `.sig` 里的 `version` 一样。
 6. **比版本**：
    - 和正在跑的一样：回 `same`。
@@ -58,14 +58,17 @@
 
 | 停在哪 | 下次开机 |
 | --- | --- |
-| 复制、验签名、问版本的时候 | 旧程序起来，看到孤零零的 `denebd.update`，删掉 |
+| 验签名、写下来、问版本的时候 | 旧程序起来，看到孤零零的 `denebd.update`，删掉 |
 | 写了 `update.json`、还没改名 | 旧程序起来，`to` 不是自己，说明没换成：删掉 `update.json` 和 `denebd.update` |
 | 改了名、还没退出 | 新程序起来，照第 10、11 步走 |
 | 新程序起到一半 | `tries` 照常累计，超过 3 次就回退 |
 
 ## 3. Windows 用同一套（主会话 11-15 定了：做）
 
-做法：把 `update_windows.go` 里按 Authenticode 判断的 `sameSigner`，换成 §2 第 4 到 6 步的签名检查，签名文件是 `denebd.exe.sig`。`wintun.dll` 照旧要 WireGuard 的 Authenticode 签名。Windows 现有的复制、检查、改名、`service restart` 都不变，再加上第 7、10 到 12 步的记录和回退。
+做法：把 `update_windows.go` 里按 Authenticode 判断的 `sameSigner`，换成 §2 第 3 到 6 步的读法和签名检查，签名文件是 `denebd.exe.sig`。改名、`service restart` 都不变，再加上第 7、10 到 12 步的记录和回退。
+
+- **只收本机盘符上的路径**（`localDrivePath`）：`\\server\share\…` 这类共享，`\\?\`、`\\.\`、`\??\` 这类设备路径，相对路径，带 `.`、`..` 或数据流（`名字:流`）的，都拒绝。路上每一级都不跟着走（`Lstat`）：任何一级是符号链接或目录联接也拒绝，因为它可能通到共享上。打开以后再确认一遍：是磁盘上的普通文件、只有这一个名字、不超过 256 MB，最终路径不在别的电脑上。SYSTEM 去读别人的共享时，会用本机账号去认证，这是常见的提权路子（主会话 11-15 审出来的）。
+- **`wintun.dll`**：照旧要 WireGuard 的 Authenticode 签名，也照上面读进内存。Windows 验 Authenticode 要一个文件，所以先写成只有 SYSTEM 和管理员能打开的 `wintun.update.dll`（`writePrivate`），在那里验过再换上：没验过的内容不落在别人读得到的地方。
 
 - **好处**：发布版更新不再弹 UAC，只有第一次装网卡弹一次。两个平台一个做法、一套测试。不用买代码签名证书（一年几百美元起；要 SmartScreen 直接放行还得 EV 证书）。
 - **坏处**：
@@ -115,6 +118,8 @@
 | 降级（包里的比正在跑的旧，比如装回了旧的 Deneb） | 回 `older`，不换。窗口和更新的引擎照样能一起用 |
 | 本机的恶意程序往应用包里放假的 denebd，借服务以 root 运行 | 签名验不过，回 `bad-signature`：不运行它，也不转去管理员认证（不然等于让用户替恶意程序输密码），窗口说"安装包里的系统网卡不对，请重新下载 Deneb" |
 | 正在跑的服务是签过名的版本，包里的 denebd 却没有签名（被换成了没签名的） | 同上，回 `bad-signature`，不转去要密码。服务装上或换上时，把签名一起放在自己旁边（`denebd.sig`），据此知道自己是签过名的。开发者要装开发版，自己运行 `sudo denebd service install`（主会话 11-15 定的加固） |
+| 窗口给的路径是符号链接、硬链接、FIFO、设备或目录，或者文件超过 256 MB（比如本机恶意程序指向只有 root 能读的设备私钥，再配一个 `.sig`） | 读之前就拒绝，回 `bad-signature`，什么都不写（§2 第 3 步）。验签名在内存里做，验过才写到磁盘上，没验过的内容不会落在别人读得到的地方 |
+| Windows：路径在共享上、是设备路径，或者路上有链接、目录联接 | 读之前就拒绝，回 `bad-signature`，SYSTEM 不去碰别的电脑（§3） |
 | 拿一个签过名的旧版本来降级 | 运行问出的版本旧，回 `older` |
 | 两个更新同时来 | `install.lock` 只放一个过去，另一个回 `failed`（"另一次安装正在进行"） |
 | 用户态引擎（没装网卡） | 照旧回 `not-service`，窗口停掉它、起新的 |
@@ -125,7 +130,8 @@
 
 - `deploy/sign-engine.go`（新）、`deploy/package.sh`。
 - `cmd/denebd`：
-  - `selfupdate.go`（新，两个平台共用）：公钥列表、签名、复制和检查、版本的规矩、`update.json` 和启动时的回退检查；
+  - `selfupdate.go`（新，两个平台共用）：公钥列表、签名、读进内存验过再写、版本的规矩、`update.json` 和启动时的回退检查；
+  - `plainfile.go`、`plainfile_unix.go`、`plainfile_windows.go`（新）：只收本机磁盘上的普通文件，整份读进内存（`readPlain`）；Windows 只收本机盘符上的路径（`localDrivePath`），`wintun.dll` 验之前写成只有 SYSTEM 和管理员能打开的文件（`writePrivate`）；
   - `update_darwin.go`（新）：macOS 的自己换，按 §2；
   - `update_windows.go`：换成同一套签名，加上记录和回退；`service_windows.go` 在服务开始时检查；
   - 装服务时把签名放在程序旁边，清掉以前的记录（两个平台）；
@@ -143,8 +149,10 @@
   - 版本：相同、更旧、开发版对发布版；没有签名时，服务签过名就拒绝，没签过名就要密码；
   - 换文件（macOS）：新旧程序和签名都在该在的地方；
   - 回退：`tries` 计数、超过 3 次换回、换回后同一个版本回 `rolled-back`；
-  - 断电：记下了但没换成的，旧程序起来时清掉。
+  - 断电：记下了但没换成的，旧程序起来时清掉；
+  - 只收普通文件：符号链接、硬链接、FIFO（不会卡住）、目录、设备、超过上限的文件、签名文件是链接，都拒绝，暂存的目录里什么都不留；签名不对时，暂存的目录只读也照样回 `bad-signature`，说明是先验后写。这几个测试在改之前的代码上是红的：用 `go test -overlay` 换回旧的 `selfupdate.go` 跑过；
+  - Windows（CI 的 Windows 上跑）：共享、设备路径、目录联接、符号链接（这个账号能建时）、硬链接、目录、超过上限的文件都拒绝；`selfUpdate` 收到共享或设备路径直接回 `bad-signature`，服务旁边不多出文件；`wintun.update.dll` 只有 SYSTEM 和管理员能打开。路径的规矩（`localDrivePath`）在三个系统上都跑。
 - 窗口（`cmd/deneb`）：§5 时间线的每一段（`TestHoldThroughSwap`），按进程号等新的引擎（`TestWaitRestarted`）。
 - 签名工具：用一次性的钥匙签了再验，对得上；钥匙格式不对时不签、不打印它。
-- 录屏：独立的 Ubuntu 虚拟机里用假引擎演四种情况，逐帧看，交到桌面"M7-公测"下新的一批。
+- 录屏：`TestSwapFrames` 在测试窗口里演六段（两秒换好、十几秒才换好、新版本起不来、要输密码时、签名不对、改之前），浅色深色各一段，逐帧看，交到桌面"M7-公测"第 7 批。
 - 真机：Mac 上从一版更新到下一版（主会话打两版签过名的包），录屏；Windows 测试机同样一遍。
