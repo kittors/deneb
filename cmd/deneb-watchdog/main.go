@@ -48,6 +48,9 @@ type Config struct {
 	// (the default), or "off".
 	Daily  string  `json:"daily,omitempty"`
 	Checks []Check `json:"checks"`
+	// Prober makes it the control server's second place for checking
+	// relays (prober.go); missing, it only watches.
+	Prober *ProberConfig `json:"prober,omitempty"`
 }
 
 // failAfter failures in a row make an alert: one lost packet is not one.
@@ -89,6 +92,10 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	log.Printf("%s: %d checks every %s; alerts to %s", w.name, len(w.checks), w.every, w.sendsTo())
+	if w.prober != nil {
+		log.Printf("%s: checks relays for %s too", w.name, w.prober.base)
+		go w.prober.run(ctx)
+	}
 	w.run(ctx)
 }
 
@@ -100,6 +107,7 @@ type watchdog struct {
 	checks []Check
 	alerts *alert.Alerter
 	now    func() time.Time
+	prober *prober // nil: it only watches
 
 	mu       sync.Mutex
 	fails    []int
@@ -167,6 +175,9 @@ func load(path string, getenv func(string) string) (*watchdog, error) {
 		w.sender, w.senderTo = s, s.String()
 	}
 	w.alerts = &alert.Alerter{Source: "deneb-watchdog（" + c.Name + "）", Sender: w.sender, Logf: log.Printf, Now: func() time.Time { return w.now() }}
+	if w.prober, err = newProber(c.Name, c.Prober, getenv); err != nil {
+		return nil, err
+	}
 	return w, nil
 }
 
