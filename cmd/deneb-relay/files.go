@@ -42,6 +42,10 @@ type state struct {
 	Source  proto.RelaySource `json:"source"`
 	Secret  string            `json:"secret"`
 	Control string            `json:"control"` // the server it registered with
+
+	// existing: the registration set up a relay the server already had
+	// for this machine (RelayRegisterResult.Existing), rather than a new one.
+	existing bool
 }
 
 func loadState(dir string) (*state, error) {

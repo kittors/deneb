@@ -40,6 +40,9 @@ type relay struct {
 	// info goes with the next sync, until one gets through: where the
 	// relay is now.
 	info *proto.RelayInfo
+	// reported is the info as last put in info: what watchAddrs compares
+	// the addresses it finds with.
+	reported proto.RelayInfo
 
 	total   atomic.Int64 // bytes carried, in and out, since the start
 	meter   *healthMeter
@@ -48,7 +51,7 @@ type relay struct {
 
 // newRelay makes the relay; serve starts it.
 func newRelay(ctl *controlClient, st state, info proto.RelayInfo, d *derpserver.Server, logf func(string, ...any)) *relay {
-	r := &relay{logf: logf, ctl: ctl, derp: d, st: st, conns: map[*clientConn]bool{}, info: &info,
+	r := &relay{logf: logf, ctl: ctl, derp: d, st: st, conns: map[*clientConn]bool{}, info: &info, reported: info,
 		meter: newHealthMeter(time.Now()), syncNow: make(chan struct{}, 1)}
 	d.SetVerifyClientURL(ctl.base + proto.PathRelayAdmit)
 	// If the control server cannot be asked, a public relay lets the
@@ -430,6 +433,16 @@ type controlClient struct {
 // errRevoked: the server does not know the relay's secret.
 var errRevoked = errors.New("控制服务器不认这个中转站的密钥：它被删除了，或者在别处重新登记了")
 
+// errRemoved: its owner no longer uses the relay (Deneb's "不用这个中转站",
+// or uninstall said so): 410, ErrRelayRemoved. It is an errRevoked too:
+// the relay stops serving either way.
+var errRemoved error = removedError{}
+
+type removedError struct{}
+
+func (removedError) Error() string { return "Deneb 里已经不用这个中转站了" }
+func (removedError) Unwrap() error { return errRevoked }
+
 // callError is a refusal from the control server.
 type callError struct {
 	status int
@@ -445,9 +458,10 @@ func newControlClient(base, pin string) (*controlClient, error) {
 		return nil, fmt.Errorf("控制服务器地址不对：%q", base)
 	}
 	tr := &http.Transport{
-		// Straight to the server: a proxy in the environment would see
-		// the secret only through TLS, but it has no business there.
-		Proxy:                 nil,
+		// A server that reaches the Internet through a proxy goes through
+		// it ($HTTPS_PROXY, design §5.1): a CONNECT tunnel, the TLS and its
+		// pin end to end, so the proxy sees neither the secret nor the rest.
+		Proxy:                 http.ProxyFromEnvironment,
 		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 30 * time.Second,
@@ -496,6 +510,24 @@ func (c *controlClient) call(ctx context.Context, path string, in, out any) erro
 	if err != nil {
 		return err
 	}
+	return c.do(req, path, out)
+}
+
+// get GETs path, with the secret, and decodes the answer into out.
+func (c *controlClient) get(ctx context.Context, path string, out any) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+path, nil)
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	if c.secret != "" {
+		req.Header.Set("Authorization", "Bearer "+c.secret)
+	}
+	c.mu.Unlock()
+	return c.do(req, path, out)
+}
+
+func (c *controlClient) do(req *http.Request, path string, out any) error {
 	resp, err := c.hc.Do(req)
 	if err != nil {
 		return err
@@ -510,6 +542,9 @@ func (c *controlClient) call(ctx context.Context, path string, in, out any) erro
 		}
 		if resp.StatusCode == http.StatusUnauthorized && path != proto.PathRelayRegister {
 			return fmt.Errorf("%w（%s）", errRevoked, msg)
+		}
+		if resp.StatusCode == http.StatusGone {
+			return fmt.Errorf("%w（%s）", errRemoved, msg)
 		}
 		return &callError{status: resp.StatusCode, msg: msg}
 	}
