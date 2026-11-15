@@ -368,11 +368,7 @@ func (a *app) header(c *ui.Context, p *palette) {
 					a.selected, a.more, a.picking, a.renaming = lanCard, false, false, nil
 				}
 			}
-			ui.Row(c).Gap(6).Children(func() {
-				dot, line := a.summary(p)
-				ui.Box(c).Size(7, 7).Radius(999).Background(dot).Shadow(0, 0, 0, 3, dot.Alpha(0.18))
-				ui.Text(c, line).FontSize(13).TextColor(p.ink2)
-			})
+			a.summaryLine(c, p)
 		})
 		ui.Spacer(c)
 		// The engine's notice and the balls with "邀请朋友" share one middle
@@ -516,6 +512,35 @@ func (a *app) flash(c *ui.Context, id model.LANID) float32 {
 // lanNameWidth is the widest a LAN's name shows in the header, clear of the
 // members' balls and the invite button.
 const lanNameWidth = 420
+
+// summaryLine is the line under the LAN's name, or 全部's: its dot and what
+// summary says. New words take the old ones' place one at a time, as the
+// tray's do (DESIGN §6.5): the old fade out, then the new fade in, the dot
+// going over to its new color as they change. Another LAN's line, or
+// another view's, shows at once.
+func (a *app) summaryLine(c *ui.Context, p *palette) {
+	dot, line := a.summary(p)
+	of := fmt.Sprint(a.all(), a.shared(), a.lan)
+	if a.lineOf != of {
+		a.lineWords, a.lineOf = swapper{}, of
+	}
+	// The dot's color goes with the words it is shown with.
+	want := map[bool]string{false: "0", true: "1"}[dot == p.ok] + line
+	shown, alpha, busy := a.lineWords.step(want, c.Now())
+	if busy {
+		c.AnimationFrame()
+	}
+	if shown[:1] == "1" {
+		dot = p.ok
+	} else {
+		dot = p.ink3
+	}
+	ui.Row(c).Gap(6).Children(func() {
+		d := ui.Box(c.Key("summary-dot")).Size(7, 7).Radius(999).Background(dot).Shadow(0, 0, 0, 3, dot.Alpha(0.18))
+		d.Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Colors: true})
+		ui.Text(c.Key("summary-line"), shown[1:]).FontSize(13).TextColor(p.ink2).Opacity(alpha)
+	})
+}
 
 // summary is the line under the LAN's name and the color of its dot: how
 // many people and devices, and whether all of them are connected.

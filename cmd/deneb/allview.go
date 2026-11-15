@@ -647,11 +647,7 @@ func (a *app) allHeader(c *ui.Context, p *palette) {
 	ui.Row(c).Height(headerHeight).Padding(22, 24, 0, 28).AlignItems(ui.Start).Gap(16).DragWindow().Children(func() {
 		ui.Column(c).Gap(4).Children(func() {
 			ui.Text(c, "全部局域网").FontSize(20).FontWeight(600).SingleLine()
-			ui.Row(c).Gap(6).Children(func() {
-				dot, line := a.summary(p)
-				ui.Box(c).Size(7, 7).Radius(999).Background(dot).Shadow(0, 0, 0, 3, dot.Alpha(0.18))
-				ui.Text(c, line).FontSize(13).TextColor(p.ink2)
-			})
+			a.summaryLine(c, p)
 		})
 		ui.Spacer(c)
 		// As high as a LAN's balls and "邀请朋友": the pill on the line it

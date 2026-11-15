@@ -189,7 +189,11 @@ type notice struct {
 	dev   *device
 	undo  func()
 	until time.Time
-	top   bool // shown at the top, so as not to cover the device it is about
+	top   bool // shown at the top, so as not to cover anything on the canvas (covers)
+	// inset: at the top, how far it keeps from the canvas's right edge, for
+	// the card showing as it came. Fixed for its life: a toast never moves
+	// from under the pointer on it.
+	inset float32
 	// commit sends what the toast holds back, once it goes without undo
 	// (hold).
 	commit func(c *ui.Context)
@@ -330,6 +334,9 @@ type app struct {
 	toastBody     swapper   // the toast's notice, one at a time
 	toastShown    *notice   // the notice the toast shows, fading out while the next waits
 	toastWas      [2]bool   // the toast showed at the bottom, at the top, in the frame before
+	toastInset    float32   // the inset of the last toast at the top: it goes out where it showed
+	lineWords     swapper   // the line under the LAN's name, one at a time (summaryLine)
+	lineOf        string    // whose line it is: the view it shows in
 
 	cardAt    ui.Rect               // where the card shows, in the canvas, from the last layout: drops keep clear of it
 	cardLeft  bool                  // the card shows at the canvas's left (cardOnLeft)

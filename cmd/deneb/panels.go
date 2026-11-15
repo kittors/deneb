@@ -17,7 +17,7 @@ import (
 
 // notify shows a toast about d (or nothing in particular); undo, when
 // given, is its button. It shows above the tray, or at the top of the
-// canvas when it would cover the device it is about there (§6.3).
+// canvas when it would cover something there (§6.3, §6.5).
 func (a *app) notify(c *ui.Context, d *device, text string, undo func()) {
 	if t := a.toast; t != nil && t.commit != nil {
 		// A new toast takes the place of one that held something back,
@@ -26,13 +26,39 @@ func (a *app) notify(c *ui.Context, d *device, text string, undo func()) {
 	}
 	a.toasts++
 	n := &notice{id: a.toasts, text: text, dev: d, undo: undo, until: c.Now().Add(4 * time.Second)}
-	if d != nil && slices.Contains(a.devices, d) && a.landing != d {
-		right := a.bottomRight(a.ch)
-		tw := toastWidth(text, undo != nil)
-		box := ui.Rect{X: (a.cw-right)/2 - tw/2, Y: a.ch - toastBottom(true) - 44, W: tw, H: 44}
-		n.top = overlaps(box, footprint(d.rest))
+	right := a.bottomRight(a.ch)
+	tw := toastWidth(text, undo != nil)
+	box := ui.Rect{X: (a.cw-right)/2 - tw/2, Y: a.ch - toastBottom(true) - 44, W: tw, H: 44}
+	n.top = a.covers(box, d)
+	if n.top && a.selected != "" && !a.busy() && a.cardAt.W > 0 {
+		// The card shows from the canvas's top right: up there the toast
+		// keeps to the room beside it.
+		n.inset = cardWidth + 20
 	}
 	a.toast = n
+}
+
+// covers reports whether a toast in box, above the tray, would cover
+// something on the canvas: any device's tile and the two lines under it,
+// or a relay and its name. Not only the device it is about, d, where that
+// one rests: a toast about nothing in particular sat over "经香港中转"
+// (the engine line's recording, 2026-11-15). Those on their way, held in
+// the hand or flying into the tray, are not where they will be.
+func (a *app) covers(box ui.Rect, d *device) bool {
+	for _, o := range a.devices {
+		if !o.gone.IsZero() || o == a.landing || o.dragging {
+			continue
+		}
+		if overlaps(box, footprint(o.at())) || o == d && o.rest != (ui.Point{}) && overlaps(box, footprint(o.rest)) {
+			return true
+		}
+	}
+	for _, r := range a.relays {
+		if r.shown && r.flight == nil && !r.dragging && overlaps(box, r.footprint(r.at())) {
+			return true
+		}
+	}
+	return false
 }
 
 // toastWidth is about how wide a toast with text is: enough to tell
@@ -645,6 +671,14 @@ func (a *app) toastView(c *ui.Context, p *palette, w, h float32, now time.Time) 
 		holder := ui.Row(c.Key(fmt.Sprint("toast-holder-", top))).Absolute().Left(0).Right(right).Justify(ui.Center).PassThrough()
 		if top {
 			holder.Top(12)
+			// Beside the card that showed as it came, and still there as it
+			// goes out.
+			if tn != nil && tn.top {
+				a.toastInset = tn.inset
+			}
+			if a.toastInset > right {
+				holder.Right(a.toastInset)
+			}
 		} else {
 			holder.Bottom(toastBottom(above)).Transition(ui.ElementTransition{Animation: &soft, Position: true})
 			if above {
