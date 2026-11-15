@@ -131,6 +131,9 @@ const (
 	FeatureSeats        = "seats"        // the seats are held to: "还能加 2 人", the dashed "+"
 	FeatureShareMode    = "shareMode"    // a LAN that only hands out devices; giving back a device given to me
 	FeaturePublicDevice = "publicDevice" // a LAN's own devices, the printer, the server
+
+	// M7's: a service taken off one of my devices (service.remove).
+	FeatureServiceRemove = "serviceRemove"
 )
 
 // Can reports whether the control server does what feature names.

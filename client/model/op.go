@@ -17,8 +17,11 @@ const (
 	OpInviteDecline   OpKind = "invite.decline"   // Invite
 	OpLANAddDevice    OpKind = "lan.addDevice"    // LAN, Device
 	OpLANRemoveDevice OpKind = "lan.removeDevice" // LAN, Device
-	OpServiceSet      OpKind = "service.set"      // LAN, Device, Service, On
-	OpDeviceRefuse    OpKind = "device.refuse"    // Device, Person, Refuse
+	OpServiceSet      OpKind = "service.set"      // LAN, Device, Service, On; Def for a new one
+	// OpServiceRemove takes a service off one of my devices, closed in every
+	// LAN (M7, design/plan/m7/mydevices.md §6.2).
+	OpServiceRemove OpKind = "service.remove" // Device, Service
+	OpDeviceRefuse  OpKind = "device.refuse"  // Device, Person, Refuse
 
 	// M2 (DESIGN §6.7–§6.9). lan.invite also takes a Person, inviting them
 	// by name; invite.accept and invite.decline take an Invitation instead
@@ -87,8 +90,11 @@ type Op struct {
 	Name    string
 	Invite  string // the link, or its token
 	Service string // the service's Key
-	On      bool   // service.set: open it, or close it; the approve switches
-	Refuse  bool   // device.refuse: refuse them, or let them back
+	// Def is the service as a whole, for service.set when it is new: one set
+	// up by hand (HandService), in no list yet (M7).
+	Def    *Service
+	On     bool // service.set: open it, or close it; the approve switches
+	Refuse bool // device.refuse: refuse them, or let them back
 
 	Avatar     []byte
 	DevKind    string // device.setKind
@@ -191,18 +197,61 @@ func (s *Snapshot) With(op Op) *Snapshot {
 			return s
 		}
 		svcs := slices.Clone(l.Services[op.Device])
+		var def *Service
 		if i < 0 {
-			// One of this computer's own, opened for the first time: it
-			// joins the list as it goes on.
-			j := slices.IndexFunc(s.Local, func(v Service) bool { return v.Key == op.Service })
-			if op.Device != s.Self || j < 0 {
+			// Not in this LAN's list yet: one of this computer's own, opened
+			// for the first time; one of the device's catalog; or a new one,
+			// set up by hand (M7). It joins the list as it goes on.
+			d := s.Devices[op.Device]
+			if j := slices.IndexFunc(s.Local, func(v Service) bool { return v.Key == op.Service }); op.Device == s.Self && j >= 0 {
+				svcs, i = append(svcs, s.Local[j]), len(svcs)
+			} else if d != nil && slices.ContainsFunc(d.Catalog, func(v Service) bool { return v.Key == op.Service }) {
+				j := slices.IndexFunc(d.Catalog, func(v Service) bool { return v.Key == op.Service })
+				svcs, i = append(svcs, d.Catalog[j]), len(svcs)
+			} else if op.Def != nil && op.Def.Key == op.Service && d != nil {
+				svcs, i, def = append(svcs, *op.Def), len(svcs), op.Def
+			} else {
 				return s
 			}
-			svcs, i = append(svcs, s.Local[j]), len(svcs)
 		}
 		n, nl := s.withLAN(op.LAN)
 		svcs[i].On = op.On
 		nl.Services[op.Device] = svcs
+		if def != nil {
+			// The device has it set up from now on: its catalog has it.
+			nd := *n.Devices[op.Device]
+			nd.Catalog = append(slices.Clone(nd.Catalog), Service{Key: def.Key, Kind: def.Kind, Name: def.Name, Proto: def.Proto, Port: def.Port, Ports: def.Ports})
+			n.Devices = cloneMap(n.Devices)
+			n.Devices[op.Device] = &nd
+		}
+		return n
+	case OpServiceRemove:
+		d := s.Devices[op.Device]
+		if d == nil {
+			return s
+		}
+		has := func(v Service) bool { return v.Key == op.Service }
+		n := s.clone()
+		changed := false
+		if slices.ContainsFunc(d.Catalog, has) {
+			nd := *d
+			nd.Catalog = slices.DeleteFunc(slices.Clone(d.Catalog), has)
+			n.Devices = cloneMap(s.Devices)
+			n.Devices[op.Device] = &nd
+			changed = true
+		}
+		for _, l := range s.LANs {
+			if !slices.ContainsFunc(l.Services[op.Device], has) {
+				continue
+			}
+			var nl *LAN
+			n, nl = n.withLAN(l.ID)
+			nl.Services[op.Device] = slices.DeleteFunc(slices.Clone(l.Services[op.Device]), has)
+			changed = true
+		}
+		if !changed {
+			return s
+		}
 		return n
 	case OpDeviceRefuse:
 		d := s.Devices[op.Device]

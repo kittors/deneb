@@ -152,6 +152,16 @@ func (d *Demo) Do(_ context.Context, op model.Op) (model.Result, error) {
 			}
 			return &n
 		case model.OpServiceSet:
+			if op.Def != nil {
+				// Set up by hand (M7): a port another service of the device
+				// has is turned down, as the server does.
+				if dv := s.Devices[op.Device]; dv != nil {
+					if t := model.PortTaken(dv, op.Def.Port); t != nil {
+						opErr = &model.Error{Code: model.ErrConflict, Message: "端口 " + strconv.Itoa(int(op.Def.Port)) + " 已经是「" + t.Name + "」在用了"}
+						return s
+					}
+				}
+			}
 			// 阿杰's desktop uses this computer's 远程桌面 (scene 5): closing
 			// it to 周末联机 cuts him off, a red light on his link.
 			n := s.With(op)
@@ -299,6 +309,66 @@ func (d *Demo) Simulate(event string) {
 			d.netPaths = nil
 		case "connected":
 			n.Paths["jdesk"] = model.Path{Kind: model.PathDirect, RTT: 11 * time.Millisecond, Since: now}
+		case "catalogs-closed":
+			// A device's own list of its services, as the server keeps it:
+			// set up, open in no LAN by that (client/live_m3.go). A device
+			// let into another LAN then brings them closed, as it does live
+			// (M7's My Devices scenes).
+			n.Devices = maps(s.Devices)
+			for id, dev := range s.Devices {
+				if len(dev.Catalog) == 0 {
+					continue
+				}
+				c := *dev
+				c.Catalog = slices.Clone(dev.Catalog)
+				for i := range c.Catalog {
+					c.Catalog[i].On = false
+				}
+				n.Devices[id] = &c
+			}
+		case "alone":
+			// Only this computer, in no LAN: My Devices as a new account
+			// sees it (M7's screenshots).
+			n.LANs = nil
+			n.Mine = []model.DeviceID{s.Self}
+			n.Devices = map[model.DeviceID]*model.Device{s.Self: s.Devices[s.Self]}
+		case "many":
+			// Many devices and LANs, the names long: My Devices crowded
+			// (M7's screenshots).
+			n.Devices = maps(s.Devices)
+			n.Mine = slices.Clone(s.Mine)
+			kinds := []string{"desktop", "server", "nas", "laptop", "mini", "console", "server", "desktop"}
+			names := []string{"客厅那台一直开着的 Windows 游戏电脑（给孩子们用的）", "公司机房里的那台旧服务器", "家里的群晖 NAS（放照片和电影的那台）",
+				"出差带的轻薄本", "书房的 Mac mini", "卧室的游戏主机", "云上的一台小服务器（每月二十块）", "爸妈家的台式机"}
+			for i, k := range kinds {
+				id := model.DeviceID("many" + strconv.Itoa(i))
+				svcs := []model.Service{{Key: "tcp/3389", Kind: "screen", Name: "远程桌面", Proto: "tcp", Port: 3389, Ports: "3389"}}
+				if i%2 == 0 {
+					svcs = append(svcs, model.Service{Key: "tcp/8080,udp/8080", Kind: "web", Name: "家里的照片墙网站（只给家里人看）", Proto: "tcp", Port: 8080, Ports: "8080"})
+				}
+				n.Devices[id] = &model.Device{ID: id, Owner: "me", Name: names[i], Kind: k, OS: "linux", Addr: "10.67.0." + strconv.Itoa(40+i),
+					FQDN: "many" + strconv.Itoa(i) + ".kittors.deneb.internal", Online: i%3 != 2, LastSeen: now.Add(-time.Duration(i+1) * time.Hour),
+					Catalog: svcs, Refused: map[model.PersonID]bool{}}
+				n.Mine = append(n.Mine, id)
+			}
+			lans := []string{"大学同学一起打游戏的局域网（每周五晚上）", "家里", "工作室外包项目临时用的", "读书会", "装修队", "乐队排练"}
+			n.LANs = slices.Clone(s.LANs)
+			for i, name := range lans {
+				l := &model.LAN{ID: model.LANID("manylan" + strconv.Itoa(i)), Name: name, Owner: "me", Members: []model.PersonID{"me", "mia", "jie"},
+					Devices: []model.DeviceID{"mac", model.DeviceID("many" + strconv.Itoa(i))}, Services: map[model.DeviceID][]model.Service{}}
+				n.LANs = append(n.LANs, l)
+			}
+		case "device-up":
+			// Another computer of mine logged in (M7, "加一台我的设备"): it
+			// shows in My Devices, in no LAN yet.
+			if s.Devices["pc"] != nil {
+				return s
+			}
+			n.Devices = maps(s.Devices)
+			n.Devices["pc"] = &model.Device{ID: "pc", Owner: "me", Name: "我的台式机", Kind: "desktop", OS: "windows",
+				Addr: "10.67.0.20", FQDN: "desktop.kittors.deneb.internal", Online: true, Refused: map[model.PersonID]bool{}}
+			n.Mine = append(slices.Clone(s.Mine), "pc")
+			n.Paths["pc"] = model.Path{Kind: model.PathDirect, RTT: 6 * time.Millisecond, Since: now}
 		case "offline":
 			dev := *s.Devices["jdesk"]
 			dev.Online = !dev.Online
@@ -543,7 +613,10 @@ func demoSnapshot() *model.Snapshot {
 		LANs:     []*model.LAN{weekend, work},
 		Devices:  devices,
 		Mine:     []model.DeviceID{"mac", "game", "studio", "mynas"},
-		Relays:   map[model.RelayID]*model.Relay{"hk": {ID: "hk", Name: "香港"}},
+		// What My Devices shows of each (M7): the demo's own numbers.
+		DeviceMetrics:   demoMetrics(),
+		DeviceLatencies: demoLatencies(),
+		Relays:          map[model.RelayID]*model.Relay{"hk": {ID: "hk", Name: "香港"}},
 		Paths: map[model.DeviceID]model.Path{
 			"mia": direct(9), "jdesk": direct(11), "game": direct(3),
 			"jnas":   {Kind: model.PathRelay, Relay: "hk", RTT: 48 * time.Millisecond},
@@ -553,7 +626,7 @@ func demoSnapshot() *model.Snapshot {
 		// The demo's server does all that M2 adds, and M4's relay in a
 		// click, to show what they look like.
 		Features: map[string]bool{model.FeatureApprove: true, model.FeatureInvitePerson: true,
-			model.FeatureRenew: true, model.FeatureAddRelay: true},
+			model.FeatureRenew: true, model.FeatureAddRelay: true, model.FeatureServiceRemove: true},
 	}
 }
 

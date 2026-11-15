@@ -72,15 +72,38 @@ func (a *app) startLogin(c *ui.Context) {
 }
 
 // primaryButton is the design's primary pill: white words on the primary
-// color, which presses in a little.
-func primaryButton(c *ui.Context, p *palette, key, label string, height, pad, size float32) ui.Element {
-	btn := ui.ButtonBase(c.Key(key)).Height(height).Padding(0, pad).Radius(999).Background(p.primary).FocusRing(false).
+// color, which presses in a little; icon, if given, leads them ("+ 添加设备").
+func primaryButton(c *ui.Context, p *palette, key, label string, height, pad, size float32, icon ...string) ui.Element {
+	btn := ui.ButtonBase(c.Key(key)).Height(height).Padding(0, pad).Gap(4).Radius(999).Background(p.primary).FocusRing(false).
 		Shadow(0, 1, 2, 0, p.primary.Alpha(0.3)).InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.18))
 	if btn.Hovered() {
 		btn.Background(p.primary2)
 	}
 	btn.AnimatePose(pressPose(btn, 0.96), ui.Snappy)
-	btn.Children(func() { ui.Text(c, label).FontSize(size).FontWeight(500).TextColor(white).SingleLine() })
+	btn.Children(func() {
+		if len(icon) > 0 {
+			ui.Icon(c, uiGlyphs[icon[0]]).Size(16, 16).TextColor(white)
+		}
+		ui.Text(c, label).FontSize(size).FontWeight(500).TextColor(white).SingleLine()
+	})
+	return btn
+}
+
+// textButton is the design's text button (design/components.md): an
+// action that does not take the eye, as 重命名, 详情, 复制, 刷新; accent
+// shows it in the primary color, where it is the line's one thing to do.
+func textButton(c *ui.Context, p *palette, key, label string, accent bool) ui.Element {
+	btn := ui.ButtonBase(c.Key(key)).Height(28).Padding(0, 8).Radius(999).FocusRing(false).Shrink(0).Label(label)
+	btn.Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Colors: true})
+	if btn.Hovered() {
+		btn.Background(p.well2)
+	}
+	btn.AnimatePose(pressPose(btn, 0.95), ui.Snappy)
+	ink := p.ink2
+	if accent {
+		ink = p.primary
+	}
+	btn.Children(func() { ui.Text(c, label).FontSize(12).FontWeight(500).TextColor(ink).SingleLine() })
 	return btn
 }
 

@@ -51,6 +51,17 @@ func TestMyDevicesIsIndependentPage(t *testing.T) {
 	if _, ok := tt.Find("关闭我的设备"); ok {
 		t.Fatal("my devices still opens a dialog")
 	}
+	// The numbers are in 详情 (M7 第 5 批): the card's face says only
+	// whether it is online.
+	if tt.HasText("CPU") {
+		t.Fatalf("device metrics on the card's face: %v", tt.Texts())
+	}
+	name := a.snap.Device(a.snap.Mine[0]).Name
+	if err := tt.Click("详情" + name); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	tt.Advance(500 * time.Millisecond)
 	if !tt.HasText("CPU") || !tt.HasText("内存") || !tt.HasText("存储") || !tt.HasText("延迟") {
 		t.Fatalf("device metrics missing: %v", tt.Texts())
 	}
@@ -84,15 +95,15 @@ func TestDeviceMonitorZeroOfflineDetailsAndEdit(t *testing.T) {
 		tt.SetDark(dark)
 		tt.Frame()
 		tt.Advance(500 * time.Millisecond)
-		if !tt.HasText("0%") || !tt.HasText("0 B") {
-			t.Fatalf("zero is unavailable: %v", tt.Texts())
-		}
 		name := a.snap.Device(id).Name
 		if err := tt.Click("详情" + name); err != nil {
 			t.Fatal(err)
 		}
 		tt.Frame()
 		tt.Advance(500 * time.Millisecond)
+		if !tt.HasText("0%") || !tt.HasText("0 B") {
+			t.Fatalf("zero is unavailable: %v", tt.Texts())
+		}
 		if !tt.HasText("Apple M4") || !tt.HasText("8 核 · arm64") {
 			t.Fatal("configuration not in details")
 		}
@@ -118,15 +129,16 @@ func TestMyDevicesLatencyStates(t *testing.T) {
 	d.Manual()
 	a := newApp(d, demoPlaces())
 	host := &model.Device{ID: "remote", Online: true}
-	if value, state := a.deviceLatency(host); value != "—" || state != "无共同网络" {
+	// Words as the rest of the app has them (DESIGN §2; M7 第 5 批).
+	if value, state := a.deviceLatency(host); value != "—" || state != "不在同一局域网" {
 		t.Fatal(value, state)
 	}
 	a.snap.Paths[host.ID] = model.Path{Kind: model.PathDirect, RTT: 17 * time.Millisecond}
-	if value, state := a.deviceLatency(host); value != "17.0 ms" || state != "直连" {
+	if value, state := a.deviceLatency(host); value != "17.0 毫秒" || state != "直接连上" {
 		t.Fatal(value, state)
 	}
 	host.Online = false
-	if value, state := a.deviceLatency(host); value != "—" || state != "离线" {
+	if value, state := a.deviceLatency(host); value != "—" || state != "不在线" {
 		t.Fatal("offline displays last RTT as current")
 	}
 }

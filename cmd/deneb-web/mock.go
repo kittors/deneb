@@ -699,6 +699,20 @@ func (m *mock) apply(me proto.PersonID, op proto.Op) (*proto.OpOutput, *opError)
 			return nil, fail(400, proto.ErrInvalid, "哪一项服务？")
 		}
 		key := a.Service.Key()
+		if !slices.ContainsFunc(d.services, func(s proto.Service) bool { return s.Key() == key }) && a.Share == "" {
+			// New: set up by hand (M7). It goes in the device's catalog,
+			// unless another service there has one of its ports.
+			for _, have := range d.services {
+				for _, p := range a.Service.Ports {
+					for _, q := range have.Ports {
+						if p.Proto == q.Proto && p.First <= q.Last && q.First <= p.Last {
+							return nil, fail(409, proto.ErrConflict, fmt.Sprintf("端口 %d 已经是「%s」在用了", p.First, have.DisplayName()))
+						}
+					}
+				}
+			}
+			d.services = append(d.services, *a.Service)
+		}
 		if a.Share != "" {
 			for _, s := range m.shares {
 				if s.id == a.Share {
@@ -711,6 +725,25 @@ func (m *mock) apply(me proto.PersonID, op proto.Op) (*proto.OpOutput, *opError)
 				return nil, errNoLAN()
 			}
 			l.dev(d.v.ID).on[key] = a.On
+		}
+	case proto.OpServiceRemove:
+		// Taken off the device (M7): out of its catalog, closed in every LAN.
+		d, e := dev()
+		if e != nil {
+			return nil, e
+		}
+		if !m.manages(me, d) {
+			return nil, fail(403, proto.ErrForbidden, "只有设备的主人能移除它的服务")
+		}
+		if a.Service == nil {
+			return nil, fail(400, proto.ErrInvalid, "哪一项服务？")
+		}
+		key := a.Service.Key()
+		d.services = slices.DeleteFunc(d.services, func(s proto.Service) bool { return s.Key() == key })
+		for _, l := range m.lans {
+			if ld := l.dev(d.v.ID); ld != nil {
+				delete(ld.on, key)
+			}
 		}
 	case proto.OpDeviceRefuse:
 		d, e := dev()
@@ -1144,10 +1177,15 @@ func (m *mock) deviceUp(w http.ResponseWriter, r *http.Request, me proto.PersonI
 	m.seq++
 	id := proto.DeviceID(fmt.Sprintf("d_new%d", m.seq))
 	d := &mdev{v: proto.DeviceView{ID: id, Owner: me, Name: "MacBook", Kind: proto.KindLaptop, OS: proto.MacOS, Online: true,
-		Addrs: []netip.Prefix{netip.PrefixFrom(netip.AddrFrom4([4]byte{100, 64, 1, byte(m.seq)}), 32)}}, services: []proto.Service{svcScreen, svcFiles}, refused: map[proto.PersonID]bool{}}
+		Addrs: []netip.Prefix{netip.PrefixFrom(netip.AddrFrom4([4]byte{10, 53, 1, byte(m.seq)}), 32)}}, services: []proto.Service{svcScreen, svcFiles}, refused: map[proto.PersonID]bool{}}
 	m.devices[id] = d
 	m.order = append(m.order, id)
+	// ?solo: another computer of mine logged in on its own (M7, "加一台"):
+	// in no LAN yet.
 	for _, l := range m.lans {
+		if r.URL.Query().Has("solo") {
+			break
+		}
 		if l.joined(me) && l.mode == proto.LANModeLAN {
 			l.devs = append(l.devs, &mlandev{id: id, joined: m.now(), on: map[proto.ServiceKey]bool{}})
 		}

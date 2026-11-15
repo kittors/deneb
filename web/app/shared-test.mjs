@@ -79,18 +79,19 @@ say((await text('.head .title')) === '我的设备', 'title: ' + (await text('.h
 await sleep(400);
 await shot('6-mine');
 await click('.dev[data-id="d_knas"] .tile');
-say(await until(`!!document.querySelector('.sheet .lan-chips')`), 'card LANs: ' + (await b.ev(`[...document.querySelectorAll('.sheet .lan-chips .chip')].map(c => (c.classList.contains('lan-add') ? '+' : '') + c.textContent).join(', ')`)));
+// The card's LANs are toggle chips (M7 第 5 批): ticked when in, dashed when not.
+say(await until(`!!document.querySelector('.sheet .lan-chips')`), 'card LANs: ' + (await b.ev(`[...document.querySelectorAll('.sheet .lan-chips .schip')].map(c => (c.classList.contains('on') ? '✓' : '') + c.textContent).join(', ')`)));
 await sleep(400);
 await shot('7-mine-card');
-const add = await b.ev(`(() => { const c = document.querySelector('.sheet .lan-add'); return c ? c.dataset.l : ''; })()`);
+const add = await b.ev(`(() => { const c = document.querySelector('.sheet .lan-chips .schip:not(.on):not(.wait)'); return c ? c.dataset.l : ''; })()`);
 if (add) {
-  await click('.sheet .lan-add');
-  say(await until(`/已把.*加进/.test((document.querySelector('.toast')||{}).textContent||'')`), 'added from the card: ' + (await text('.toast')));
-  say(await until(`!document.querySelector('.sheet .lan-add[data-l="${add}"]')`), 'the chip is now in');
+  await click(`.sheet .lan-chips .schip[data-l="${add}"]`);
+  say(await until(`/已将.*加入/.test((document.querySelector('.toast')||{}).textContent||'')`), 'added from the card: ' + (await text('.toast')));
+  say(await until(`!!document.querySelector('.sheet .lan-chips .schip.on[data-l="${add}"]')`), 'the chip is now in');
   await sleep(350);
   await shot('8-added');
   await click('.toast button');
-  say(await until(`!!document.querySelector('.sheet .lan-add[data-l="${add}"]')`), 'undo: out again');
+  say(await until(`!!document.querySelector('.sheet .lan-chips .schip:not(.on)[data-l="${add}"]')`), 'undo: out again');
 }
 const errs = await b.ev(`JSON.stringify(performance.getEntriesByType('resource').filter(e => e.responseStatus >= 400).map(e => e.name + ' ' + e.responseStatus))`);
 say(errs === '[]', 'failed requests: ' + errs);

@@ -308,7 +308,7 @@ export interface RelayUsage {
 
 export type OpType =
   | 'lan.create' | 'lan.rename' | 'lan.delete' | 'lan.invite' | 'invite.accept' | 'invite.decline' | 'invite.revoke'
-  | 'lan.addDevice' | 'lan.removeDevice' | 'service.set' | 'device.refuse' | 'device.rename' | 'device.setKind'
+  | 'lan.addDevice' | 'lan.removeDevice' | 'service.set' | 'service.remove' | 'device.refuse' | 'device.rename' | 'device.setKind'
   | 'device.setDNSName' | 'device.renew' | 'member.remove' | 'lan.leave' | 'lan.setApproveDevices' | 'lan.setApproveMembers'
   | 'device.approve' | 'device.reject' | 'member.approve' | 'member.reject'
   | 'share.create' | 'share.revoke' | 'share.release' | 'share.leave' | 'lan.setMode' | 'device.setPublic'

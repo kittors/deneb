@@ -42,7 +42,9 @@ func modalPanel(c *ui.Context, p *palette, key, title string, width float32, ope
 				return
 			}
 			box := ui.Column(c.Key("dialog")).Width(width).MaxWidth(viewport-40).Padding(22).Gap(16).Radius(20).Background(p.bg).Shadow(0, 12, 40, 0, p.shadow).TransformOrigin(.5, .5)
-			box.Transition(ui.ElementTransition{Animation: &ui.Smooth, Size: true, Enter: &ui.Motion{Scale: .96, Y: 8, Opacity: 1}, Exit: &ui.Motion{Scale: .96, Y: 8}})
+			// Its place too: a panel that grows (加一台's help opening) stays
+			// centered as it grows, not jumping up at once.
+			box.Transition(ui.ElementTransition{Animation: &ui.Smooth, Position: true, Size: true, Enter: &ui.Motion{Scale: .96, Y: 8, Opacity: 1}, Exit: &ui.Motion{Scale: .96, Y: 8}})
 			box.Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Children(func() {
 					ui.Text(c, title).FontSize(17).FontWeight(600).Grow(1)

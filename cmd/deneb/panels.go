@@ -229,8 +229,16 @@ func (a *app) trayMode() (trayMode, string) {
 		// A relay of mine came up (M4).
 		return trayIdle, a.cameHint
 	}
+	if len(a.tray) == 0 && a.landing == nil {
+		// Every device of mine is in this LAN: the tray says where others
+		// come from, and has "添加设备" (M7, design/plan/m7/mydevices.md §2).
+		return trayIdle, trayNoneWords
+	}
 	return trayIdle, "拖出来，加进局域网"
 }
+
+// trayNoneWords is the tray's line when no device of mine waits in it.
+const trayNoneWords = "我的其他设备会显示在这里"
 
 // trayShows reports whether the tray is up: it holds devices, one is on
 // its way into it, or the hand brings one near.
@@ -304,6 +312,27 @@ func (a *app) trayView(c *ui.Context, p *palette, w, h float32, now time.Time) {
 				label.FontWeight(500)
 			}
 			label.Transition(ui.ElementTransition{Animation: &soft, Position: true, Enter: &ui.Motion{}, Exit: &ui.Motion{}})
+			if mode == trayIdle && len(a.tray) == 0 && a.landing == nil {
+				// While the words say what the pointer is on (a relay, the
+				// "+"), "添加设备" keeps its place, faded and deaf: nothing
+				// moves under the pointer on its way across the tray.
+				quiet := text != trayNoneWords
+				more := ui.ButtonBase(c.Key("tray-add")).Height(28).Padding(0, 8).Margin(0, 0, 0, 8).Radius(999).FocusRing(false).Shrink(0).Label("添加设备")
+				more.Transition(ui.ElementTransition{Animation: &soft, Position: true, Colors: true, Enter: &ui.Motion{}, Exit: &ui.Motion{}})
+				shown := float32(1)
+				if quiet {
+					shown = 0
+				}
+				more.IgnoreInput(quiet).Opacity(more.AnimateTo("shown", shown, soft))
+				if more.Hovered() && !quiet {
+					more.Background(p.primary.Alpha(0.08))
+				}
+				more.AnimatePose(pressPose(more, 0.95), ui.Snappy)
+				more.Children(func() { ui.Text(c, "添加设备").FontSize(13).FontWeight(500).TextColor(p.primary) })
+				if more.Clicked() && !quiet {
+					a.openAddOne(c)
+				}
+			}
 			for _, d := range slices.Clone(a.tray) {
 				a.trayItem(c, p, d, w, h)
 			}

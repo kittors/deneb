@@ -912,3 +912,462 @@ body {
 .inv-foot {
   gap: 8px;
 }
+
+/* ---- 我的设备: services and "加一台" (M7, design/plan/m7/mydevices.md) ---------------------- */
+/* A service: its name, then a chip per LAN the device is in, blue and
+   ticked where it is open; × on the pointer takes it off the device. */
+.sheet .svc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+/* A service: its name, and the LANs' chips under it. No box of its own:
+   the card is the container, as on the desktop (AGENTS.md §2.3). */
+.sheet .svc-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px 4px;
+}
+/* The name and "×" on the first line, the LANs' chips under them. */
+.sheet .svc-name {
+  grid-row: 1;
+  grid-column: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+}
+.sheet .svc-name svg {
+  flex: none;
+  color: var(--ink-2);
+}
+.sheet .svc-chips {
+  grid-row: 2;
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.sheet .svc-x {
+  grid-row: 1;
+  grid-column: 2;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+}
+.sheet .svc-row:hover .svc-x,
+.sheet .svc-x:focus-visible {
+  opacity: 1;
+}
+.sheet .svc-x:hover {
+  background: var(--well-2);
+  color: var(--ink);
+}
+.schip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  max-width: 100%;
+  padding: 0 11px;
+  border: 1.5px dashed color-mix(in srgb, var(--ink) 22%, transparent);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: transform 0.2s cubic-bezier(0.3, 1.5, 0.5, 1), background 0.15s, color 0.15s, border-color 0.15s;
+}
+/* A part of the services that comes fades in; one that goes fades out and
+   folds (mine.ts motion): drawn again mid-way, it goes on from there. */
+.sheet .svc-enter {
+  animation: svc-enter 0.22s cubic-bezier(0.3, 0.3, 0.2, 1) both;
+  animation-delay: var(--d, 0ms);
+}
+@keyframes svc-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+/* A line or a row that comes also opens its height, so that what is under
+   it moves down with it, not at once. */
+.sheet .svc-err.svc-enter,
+.sheet .svc-hint.svc-enter {
+  overflow: hidden;
+  animation-name: svc-enter-line;
+}
+@keyframes svc-enter-line {
+  from {
+    opacity: 0;
+    max-height: 0;
+    margin-bottom: -12px;
+  }
+  to {
+    max-height: 40px;
+  }
+}
+.sheet .svc-row.svc-enter {
+  overflow: hidden;
+  animation-name: svc-enter-row;
+}
+@keyframes svc-enter-row {
+  from {
+    opacity: 0;
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    margin-bottom: -12px;
+  }
+  to {
+    max-height: 160px;
+  }
+}
+.sheet .svc-leave {
+  overflow: hidden;
+  animation: svc-leave 0.22s cubic-bezier(0.3, 0.3, 0.2, 1) both;
+  animation-delay: var(--d, 0ms);
+}
+@keyframes svc-leave {
+  from {
+    max-height: 40px;
+  }
+  to {
+    opacity: 0;
+    max-height: 0;
+    margin-bottom: -12px;
+  }
+}
+.sheet .svc-gone {
+  display: none;
+}
+/* The fields, two lines high, fold from their own height. */
+.sheet .svc-edit.svc-leave {
+  animation-name: svc-leave-edit;
+}
+@keyframes svc-leave-edit {
+  from {
+    max-height: 120px;
+  }
+  to {
+    opacity: 0;
+    max-height: 0;
+    margin-bottom: -12px;
+  }
+}
+/* A long LAN's name ends with "…": the chip keeps one line. */
+.schip-t {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.schip:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.schip:active {
+  transform: scale(0.94);
+}
+.schip.on {
+  padding: 0 12px 0 8px;
+  border: 1.5px solid transparent;
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--primary);
+}
+.schip.on:hover {
+  background: color-mix(in srgb, var(--primary) 18%, transparent);
+}
+.schip.add {
+  align-self: flex-start;
+  padding: 0 12px 0 8px;
+}
+/* Asked, waiting for the LAN's owner: dashed in blue, "等待同意" after. */
+.schip.wait {
+  border-color: color-mix(in srgb, var(--primary) 50%, transparent);
+}
+.schip-x {
+  color: var(--ink-3);
+  font-weight: 400;
+}
+/* The inline confirm (design/components.md 原地确认): red, in place. */
+.sheet .schip.asking,
+.sheet .schip.asking:hover,
+.sheet .svc-x.asking,
+.sheet .svc-x.asking:hover {
+  border: 1.5px solid transparent;
+  background: color-mix(in srgb, #ef4444 10%, transparent);
+  color: #ef4444;
+}
+.sheet .svc-x.asking {
+  width: auto;
+  padding: 0 12px;
+  opacity: 1;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.sheet .svc-say {
+  margin: 0 4px;
+  font-size: 13px;
+  color: var(--ink-3);
+}
+.sheet .svc-hint {
+  margin: 0 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+/* The name and the port on one line, 加上 and 取消 under them on the
+   right: laid out so, not wrapped where the card's width happens to end. */
+.sheet .svc-edit {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px;
+  align-items: center;
+  gap: 6px;
+}
+/* 加上 with no port yet: plainly not ready, as elsewhere (join.css). */
+.sheet .svc-ok:disabled {
+  opacity: 0.45;
+  cursor: default;
+  transform: none;
+}
+.sheet .svc-acts {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+.svc-in {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.svc-in:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary);
+}
+.svc-in.name,
+.svc-in.port {
+  width: 100%;
+  min-width: 0;
+}
+.svc-in.bad {
+  border-color: #ef4444;
+  box-shadow: 0 0 0 1px #ef4444;
+}
+.sheet .svc-err {
+  margin: 0 4px;
+  font-size: 12px;
+  color: #ef4444;
+}
+.sheet .svc-err:empty {
+  display: none;
+}
+/* The text button (design/components.md): an action that does not take the
+   eye; accent, the line's one thing to do (复制、下载). */
+.link-btn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.16s, color 0.16s;
+}
+.link-btn:hover {
+  background: var(--well-2);
+  color: var(--ink);
+}
+.link-btn.accent,
+.link-btn.accent:hover {
+  color: var(--primary);
+}
+.btn.danger {
+  color: #fff;
+  background: #ef4444;
+}
+/* "加一台" on the canvas: dashed, a "+" for its glyph. */
+.dev.add-one .tile {
+  color: var(--ink-3);
+}
+.dev.add-one:hover .tile {
+  color: var(--primary);
+}
+/* Its card: three steps, a number each, ticked when the computer comes. */
+.sheet .add-tile {
+  --c: var(--ink-3);
+  color: var(--ink-2);
+}
+.sheet .add-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.sheet .add-steps li {
+  display: grid;
+  /* minmax: the words wrap in the card's width, never push past it. */
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.sheet .add-steps .n {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  transition: background 0.2s;
+}
+.sheet .add-steps li.done .n {
+  background: var(--ok);
+}
+.sheet .add-steps b {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 24px;
+}
+.sheet .add-steps li.done b {
+  color: var(--ok);
+}
+.sheet .add-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+}
+.sheet .add-url {
+  font: 600 13px/1.4 ui-monospace, 'SF Mono', Menlo, monospace;
+  color: var(--ink);
+}
+.sheet .add-line .btn,
+.sheet .add-here .btn,
+.sheet .add-cmd .btn {
+  flex: none;
+  white-space: nowrap;
+  text-decoration: none;
+}
+.sheet .add-here {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.sheet .add-more {
+  display: flex;
+  width: fit-content;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.sheet .add-more:hover,
+.sheet .add-more[aria-expanded='true'] {
+  color: var(--primary);
+}
+.sheet .add-more svg {
+  transition: transform 0.18s;
+}
+.sheet .add-more[aria-expanded='true'] svg {
+  transform: rotate(90deg);
+}
+.sheet .add-help {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--well);
+}
+.sheet .add-help[hidden] {
+  display: none;
+}
+/* In the card's width, each system's name over its words. */
+.sheet .add-help p {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+.sheet .add-help p b {
+  font-size: 12px;
+  line-height: 1.55;
+  font-weight: 600;
+}
+.sheet .add-cmd {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+.sheet .add-cmd code {
+  align-self: stretch;
+  min-width: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font: 11px/1.5 ui-monospace, 'SF Mono', Menlo, monospace;
+  /* As written: two lines, the first ending in "\", one command. */
+  white-space: pre;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.sheet .add-wait {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0 0;
+  font-size: 12px;
+  color: var(--ink-3);
+}

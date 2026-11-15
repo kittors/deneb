@@ -636,8 +636,14 @@ func (l *Live) Do(ctx context.Context, op model.Op) (model.Result, error) {
 		return model.Result{}, err
 	}
 	accountArgs(op, &args)
-	if op.Kind == model.OpServiceSet {
+	if op.Kind == model.OpServiceSet || op.Kind == model.OpServiceRemove {
 		svc := l.service(op.Device, op.LAN, op.Service)
+		if svc == nil && op.Kind == model.OpServiceSet && op.Def != nil && op.Def.Key == op.Service {
+			// Set up by hand (M7, design/plan/m7/mydevices.md §6.1): TCP and
+			// UDP on its port, as the user decided.
+			svc = &proto.Service{Kind: proto.ServiceKind(op.Def.Kind), Name: op.Def.Name,
+				Ports: []proto.PortRange{proto.Port(proto.TCP, op.Def.Port), proto.Port(proto.UDP, op.Def.Port)}}
+		}
 		if svc == nil {
 			return model.Result{}, &model.Error{Code: model.ErrInvalid, Message: "找不到这项服务"}
 		}

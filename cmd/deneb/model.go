@@ -344,10 +344,25 @@ type app struct {
 	confirming    *confirmation
 	myDevicesOpen bool
 	deviceDetails model.DeviceID
-	avatarEdit    *avatarEditor
-	renaming      *renaming       // a name edited in place (DESIGN §6.9)
-	picking       bool            // the card's row of kinds is open
-	watching      map[string]bool // devices to tell of as they come online (DESIGN §6.8)
+	// My Devices' cards (M7, design/plan/m7/mydevices.md): the service set
+	// up by hand, the "添加设备" dialog and what it waits for, a line that goes
+	// after a while, a card that lights up as it comes.
+	svcEdit    *svcEdit
+	addOne     *addOne
+	cardHints  map[model.DeviceID]cardHint
+	cardFlash  map[model.DeviceID]time.Time
+	revealCard model.DeviceID // a card to bring into view, until revealBy
+	armedKey   string         // the control an inline confirm asks on (design/components.md)
+	armedUntil time.Time
+	revealBy   time.Time
+	revealTo   float32 // where the list last glided to for it
+	mineScroll ui.ScrollState
+	mineView   ui.Rect // the list's box, in the window, as last laid out
+	shellTold  bool
+	avatarEdit *avatarEditor
+	renaming   *renaming       // a name edited in place (DESIGN §6.9)
+	picking    bool            // the card's row of kinds is open
+	watching   map[string]bool // devices to tell of as they come online (DESIGN §6.8)
 	// seenInvitations are the invites by name whose card has shown once:
 	// one put off stays in the sidebar, rather than show again by itself.
 	seenInvitations map[string]bool

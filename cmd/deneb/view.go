@@ -86,6 +86,7 @@ func (a *app) view(c *ui.Context) {
 		a.updateLayer(c, p)
 		a.avatarLayer(c, p)
 		a.renameLayer(c, p)
+		a.addOneLayer(c, p)
 		a.confirmLayer(c, p)
 		if a.chrome != nil {
 			// The window buttons as the system draws them, for the

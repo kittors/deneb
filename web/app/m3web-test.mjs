@@ -186,7 +186,7 @@ say(/松手，加进 ?周末联机/.test(await text('.drag-layer .dnote')), 'NAS
 say(await b.ev(`document.querySelector('.nav[data-id="lan:${L.weekend}"]').classList.contains('target')`), 'the row lights up');
 await shot('15-mine-onto-row');
 await release();
-say(await until(`/已把 ?NAS ?加进 ?周末联机/.test(document.querySelector('.toast')?.textContent || '')`), 'toast: ' + (await toast()));
+say(await until(`/已将 ?NAS ?加入 ?周末联机/.test(document.querySelector('.toast')?.textContent || '')`), 'toast: ' + (await toast()));
 await sleep(800);
 await drag(tile(Dv['kittors.mac']), `.nav[data-id="lan:${L.weekend}"]`);
 say(/周末联机 ?里已经有了/.test(await text('.drag-layer .dnote')), 'MacBook over 周末联机: ' + (await text('.drag-layer .dnote')));
