@@ -122,6 +122,11 @@ func runEngine(args []string, check bool) error {
 		// user's state): a second engine of it would fight over it.
 		return errors.New("Deneb 的系统服务在跑，这台电脑用它就行：用户态引擎不再起")
 	}
+	if updateStartHook() {
+		// A new engine that did not get going: the previous one is back in
+		// its place, and the service manager starts it.
+		return nil
+	}
 	sockArg := *sock
 	if m == apitype.ModeKernel && !isFlagSet(fs, "socket") && os.Getenv(socket.EnvPath) == "" {
 		sockArg = socket.SystemPath()

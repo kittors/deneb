@@ -447,8 +447,9 @@ const (
 	UpdateDone         = "updated"       // replaced: the service starts again on it in 2–3 s
 	UpdateSame         = "same"          // that version is the one running
 	UpdateOlder        = "older"         // refused: older than the one running
-	UpdateBadSignature = "bad-signature" // refused: not signed by this engine's publisher
-	UpdateNeedsInstall = "needs-install" // unsigned releases: the window installs the service again (one UAC prompt)
+	UpdateBadSignature = "bad-signature" // refused: not signed with the key of Deneb's updates (or unsigned, to a service that came signed)
+	UpdateNeedsInstall = "needs-install" // unsigned (development) builds: the window installs the service again, as an administrator
+	UpdateRolledBack   = "rolled-back"   // refused: that version could not start here, and the one before was put back
 	UpdateNotService   = "not-service"   // this engine is not a system service: restarting it updates it
 	UpdateFailed       = "failed"        // see Message
 )

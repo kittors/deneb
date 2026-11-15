@@ -20,7 +20,6 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"github.com/kittors/deneb/engine"
 	"github.com/kittors/deneb/engine/localapi/apitype"
 )
 
@@ -35,25 +34,28 @@ func serviceSelfUpdate() func(context.Context, string) apitype.UpdateResult {
 
 var updateMu sync.Mutex
 
+// updateStartHook: the Windows service checks its update in runService,
+// before the service manager hears from it.
+func updateStartHook() bool { return false }
+
 // selfUpdate replaces the service's engine with the denebd.exe at src, the
 // one the window ships (M6 i2; the window asks at every start when the
 // versions differ). The file is first copied beside the service's own,
 // where only administrators can write, and checked there, so it cannot
-// change between the check and the swap:
-//
-//   - signed, by the same publisher as the running engine. Releases are
-//     not signed for now (an open-source project, 11-10): they answer
-//     UpdateNeedsInstall before copying anything, as nothing would tell
-//     our executable from one the user's malware put there, and the
-//     window installs the service again, elevated. A test build, unsigned,
-//     takes another unsigned build, to try the rest;
-//   - newer; a test build whose versions are names, not semantic versions,
-//     takes any other.
+// change between the check and the swap (stageEngine): signed with the key
+// of Deneb's updates, its denebd.exe.sig beside it, and newer
+// (design/plan/m7/engine-self-update.md §2, §3). An unsigned one, a
+// development build, answers UpdateNeedsInstall: the window installs the
+// service again, elevated; to a service that came signed, it answers
+// UpdateBadSignature. A test build, unsigned, takes another unsigned one,
+// to try the rest.
 //
 // Then it is swapped in (a running executable can be renamed, not
 // overwritten), with the wintun.dll beside src when that one differs and
 // WireGuard signed it, and a short-lived `denebd service restart` stops
-// the service and starts it on the new engine.
+// the service and starts it on the new engine. The note of the update
+// (update.json) has the new engine count its starts, and put the old one
+// back when it does not get going (runService).
 func selfUpdate(ctx context.Context, src string) apitype.UpdateResult {
 	updateMu.Lock()
 	defer updateMu.Unlock()
@@ -67,45 +69,23 @@ func selfUpdate(ctx context.Context, src string) apitype.UpdateResult {
 	if err != nil {
 		return res(apitype.UpdateFailed, "%v", err)
 	}
-	if mine, _ := signerOf(self); mine == "" && !engine.TestBuild {
-		// Nothing tells our executable from anyone's: only an administrator
-		// may put it in, by installing the service again.
-		return res(apitype.UpdateNeedsInstall, "没有签名的版本，要重新装一次服务才能换（会弹一次 UAC）")
-	}
 	dir := filepath.Dir(self)
-	staged := filepath.Join(dir, "denebd.update.exe") // run below to ask its version: keeps .exe
-	if err := copyFile(src, staged); err != nil {
-		return res(apitype.UpdateFailed, "复制 %s：%v", src, err)
+	note := filepath.Join(dir, "update.json")
+	// Run below to ask its version: keeps .exe.
+	st, out := stageEngine(ctx, src, filepath.Join(dir, "denebd.update.exe"), self, version, failedVersion(note))
+	if st == nil {
+		return out
 	}
 	var keep bool
 	var dllStaged string
 	defer func() {
 		if !keep {
-			os.Remove(staged)
+			st.remove()
 			if dllStaged != "" {
 				os.Remove(dllStaged)
 			}
 		}
 	}()
-	if why := sameSigner(staged, self); why != "" {
-		return res(apitype.UpdateBadSignature, "%s", why)
-	}
-	ver, err := exeVersion(ctx, staged)
-	if err != nil {
-		return res(apitype.UpdateFailed, "读新文件的版本：%v", err)
-	}
-	out := apitype.UpdateResult{Version: ver}
-	switch cmp, ok := compareVersions(ver, version); {
-	case ver == version, ok && cmp == 0:
-		out.Result = apitype.UpdateSame
-		return out
-	case ok && cmp < 0:
-		out.Result, out.Message = apitype.UpdateOlder, fmt.Sprintf("正在跑的 %s 比它新", version)
-		return out
-	case !ok && !engine.TestBuild:
-		out.Result, out.Message = apitype.UpdateFailed, fmt.Sprintf("认不出版本号：%q、%q", ver, version)
-		return out
-	}
 	dll := filepath.Join(dir, "wintun.dll")
 	if srcDLL := filepath.Join(filepath.Dir(src), "wintun.dll"); fileDiffers(srcDLL, dll) {
 		dllStaged = filepath.Join(dir, "wintun.update.dll")
@@ -116,12 +96,29 @@ func selfUpdate(ctx context.Context, src string) apitype.UpdateResult {
 			return res(apitype.UpdateBadSignature, "wintun.dll 不是 WireGuard 签的（%q %v）", s, err)
 		}
 	}
-	if err := swapIn(staged, self); err != nil {
+	// Noted before the swap: the new engine counts its starts, and the old
+	// one is where the note says, to go back to.
+	old := oldName(self)
+	n := &updateNote{From: version, To: st.version, Prev: old, At: time.Now().UTC()}
+	if prev := readNote(note); prev != nil {
+		n.Failed = prev.Failed
+	}
+	if err := writeNote(note, n); err != nil {
+		return res(apitype.UpdateFailed, "记下更新：%v", err)
+	}
+	if err := swapIn(st.exe, self, old); err != nil {
+		os.Remove(note)
 		return res(apitype.UpdateFailed, "换 denebd.exe：%v", err)
 	}
 	keep = true
+	// The signature goes along, the old one's with the old one.
+	os.Remove(sigPath(old))
+	os.Rename(sigPath(self), sigPath(old))
+	if _, err := os.Lstat(st.sig); err == nil {
+		os.Rename(st.sig, sigPath(self))
+	}
 	if dllStaged != "" {
-		if err := swapIn(dllStaged, dll); err != nil {
+		if err := swapIn(dllStaged, dll, oldName(dll)); err != nil {
 			// The new engine runs with the old wintun.dll, which works.
 			log.Printf("update: wintun.dll stays as it was: %v", err)
 			os.Remove(dllStaged)
@@ -134,19 +131,25 @@ func selfUpdate(ctx context.Context, src string) apitype.UpdateResult {
 		return res(apitype.UpdateFailed, "换好了，没能重启服务（%v）：重启 Deneb 服务就用上新版", err)
 	}
 	go cmd.Wait()
-	log.Printf("update: %s -> %s from %s; restarting the service", version, ver, src)
+	log.Printf("update: %s -> %s from %s; restarting the service", version, st.version, src)
 	out.Result = apitype.UpdateDone
 	return out
 }
 
-// swapIn puts staged in target's place: target is renamed to .old first,
-// which Windows allows for a running executable or a loaded DLL. The next
-// start of the service removes .old files (removeOld).
-func swapIn(staged, target string) error {
+// oldName is where swapIn moves target aside: target.old, or a name of its
+// own when that one is still in use.
+func oldName(target string) string {
 	old := target + ".old"
 	if err := os.Remove(old); err != nil && !errors.Is(err, os.ErrNotExist) {
 		old = fmt.Sprintf("%s.old%d", target, time.Now().UnixNano()) // still in use
 	}
+	return old
+}
+
+// swapIn puts staged in target's place: target is renamed to old first,
+// which Windows allows for a running executable or a loaded DLL. The
+// service removes .old files once an update is put in (removeOld).
+func swapIn(staged, target, old string) error {
 	if err := os.Rename(target, old); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -159,7 +162,7 @@ func swapIn(staged, target string) error {
 
 // removeOld removes what updates left beside the executable.
 func removeOld(dir string) {
-	for _, pat := range []string{"denebd.exe.old*", "wintun.dll.old*", "*.update.exe", "*.update.dll"} {
+	for _, pat := range []string{"denebd.exe.old*", "denebd.exe.failed*", "wintun.dll.old*", "*.update.exe", "*.update.exe.sig", "*.update.dll"} {
 		m, _ := filepath.Glob(filepath.Join(dir, pat))
 		for _, f := range m {
 			os.Remove(f)
@@ -167,26 +170,20 @@ func removeOld(dir string) {
 	}
 }
 
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
+// restoreEngine puts prev back in the running engine's place, which did not
+// get going (startCheck), and its signature with it.
+func restoreEngine(self, prev string) error {
+	failed := fmt.Sprintf("%s.failed%d", self, time.Now().UnixNano())
+	if err := os.Rename(self, failed); err != nil {
 		return err
 	}
-	defer in.Close()
-	out, err := os.Create(dst)
-	if err != nil {
+	if err := os.Rename(prev, self); err != nil {
+		os.Rename(failed, self)
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		os.Remove(dst)
-		return err
-	}
-	if err := out.Sync(); err != nil {
-		out.Close()
-		return err
-	}
-	return out.Close()
+	os.Remove(sigPath(self))
+	os.Rename(sigPath(prev), sigPath(self))
+	return nil
 }
 
 // fileDiffers: a exists, and b is missing or has other content.
@@ -212,45 +209,6 @@ func fileHash(path string) ([sha256.Size]byte, error) {
 	}
 	copy(h[:], d.Sum(nil))
 	return h, nil
-}
-
-// exeVersion asks an executable, once its signature passed, what version
-// it is: `denebd version`.
-func exeVersion(ctx context.Context, exe string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	b, err := exec.CommandContext(ctx, exe, "version").Output()
-	if err != nil {
-		return "", err
-	}
-	v := strings.TrimSpace(string(b))
-	if v == "" || strings.ContainsAny(v, " \t\r\n") {
-		return "", fmt.Errorf("unexpected answer %q", v)
-	}
-	return v, nil
-}
-
-// sameSigner says why newFile may not replace self, or "" when it may.
-func sameSigner(newFile, self string) string {
-	mine, err := signerOf(self)
-	if err != nil {
-		return fmt.Sprintf("正在跑的引擎签名有问题：%v", err)
-	}
-	theirs, err := signerOf(newFile)
-	if err != nil {
-		return fmt.Sprintf("新文件的签名不对：%v", err)
-	}
-	switch {
-	case mine == "" && theirs == "" && engine.TestBuild:
-		return ""
-	case mine == "":
-		return "正在跑的引擎没有签名，新文件却签了名"
-	case theirs == "":
-		return "新文件没有签名"
-	case theirs != mine:
-		return fmt.Sprintf("新文件是 %q 签的，正在跑的是 %q 签的", theirs, mine)
-	}
-	return ""
 }
 
 var (

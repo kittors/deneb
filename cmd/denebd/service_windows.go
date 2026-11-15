@@ -35,9 +35,6 @@ func isWindowsService() bool {
 // console: its log, crashes included, goes to denebd.log in its state
 // directory, the previous run's to denebd.log.1 once it passes 10 MB.
 func runService(args []string) error {
-	if self, err := os.Executable(); err == nil {
-		removeOld(filepath.Dir(self)) // what the last update replaced
-	}
 	state, _ := splitState(args, defaultServiceState())
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 	if f, err := openServiceLog(filepath.Join(state, "denebd.log")); err == nil {
@@ -46,6 +43,22 @@ func runService(args []string) error {
 		debug.SetCrashOutput(f, debug.CrashOptions{})
 	}
 	log.Printf("[service] process started") // with "stopped", times a restart's parts
+	if self, err := os.Executable(); err == nil {
+		// An engine just put in counts its start; one that did not get going
+		// puts the previous one back, and the service manager starts that one
+		// (its recovery actions). What the last update replaced goes once the
+		// update is put in (design/plan/m7/engine-self-update.md §2, §3).
+		dir := filepath.Dir(self)
+		note := filepath.Join(dir, "update.json")
+		restore := func(prev string) error { return restoreEngine(self, prev) }
+		if startCheck(note, version, restore, func() { removeOld(dir) }, log.Printf) {
+			return errors.New("新的引擎起不来，已经换回原来的")
+		}
+		if n := readNote(note); n == nil || n.To == "" {
+			removeOld(dir)
+		}
+		time.AfterFunc(healthyAfter, func() { putIn(note, version, func(string) { removeOld(dir) }) })
+	}
 	return svc.Run(serviceName, &service{args: args})
 }
 
@@ -295,10 +308,23 @@ func installService(m *mgr.Mgr, args []string) (state string, err error) {
 		stopService(s)
 	}
 	for final, tmp := range staged {
-		if err := swapIn(tmp, final); err != nil {
+		if err := swapIn(tmp, final, oldName(final)); err != nil {
 			return state, fmt.Errorf("换上 %s：%w", final, err)
 		}
 	}
+	if len(staged) > 0 {
+		// Its signature goes along: the service knows it came signed, and
+		// then takes only signed engines (engine-self-update.md §6).
+		if _, err := os.Stat(sigPath(src)); err == nil {
+			if err := copyFile(sigPath(src), sigPath(exe)); err != nil {
+				return state, fmt.Errorf("复制签名：%w", err)
+			}
+		} else {
+			os.Remove(sigPath(exe))
+		}
+	}
+	// Installed afresh, by an administrator: no update under way.
+	os.Remove(filepath.Join(dir, "update.json"))
 	removeOld(dir)
 	run = append([]string{"run"}, run...)
 	cfg := mgr.Config{

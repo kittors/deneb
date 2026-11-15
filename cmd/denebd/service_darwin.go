@@ -56,16 +56,6 @@ func systemServiceRunning() bool {
 	return true
 }
 
-func serviceSelfUpdate() func(context.Context, string) apitype.UpdateResult {
-	exe, err := os.Executable()
-	if err != nil || os.Geteuid() != 0 || exe != macServiceBin {
-		return nil
-	}
-	return func(context.Context, string) apitype.UpdateResult {
-		return apitype.UpdateResult{Result: apitype.UpdateNeedsInstall, Version: version, Message: "更新系统引擎需要再次通过 macOS 管理员认证"}
-	}
-}
-
 func preflightService() []string {
 	return []string{"安装 macOS 系统服务：程序和设备身份保存在仅管理员可写的系统目录，开机启动；本机接口仅放行当前用户和 root"}
 }
@@ -115,7 +105,7 @@ func cmdService(args []string) error {
 		if err := engine.UndoKernel(macServiceState, func(f string, a ...any) { fmt.Printf(f+"\n", a...) }); err != nil {
 			return err
 		}
-		for _, p := range []string{macServicePlist, macServiceBin} {
+		for _, p := range []string{macServicePlist, macServiceBin, sigPath(macServiceBin), macNote, macStaged, sigPath(macStaged), macPrev, sigPath(macPrev)} {
 			if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
@@ -172,6 +162,19 @@ func installMacService(uid int, from string) error {
 		if err := macAtomicFile(macServiceBin, b, 0o755); err != nil {
 			return err
 		}
+		// Its signature goes along: the service knows it came signed, and
+		// then takes only signed engines (engine-self-update.md §6).
+		if sig, err := os.ReadFile(sigPath(exe)); err == nil {
+			if err := macAtomicFile(sigPath(macServiceBin), sig, 0o644); err != nil {
+				return err
+			}
+		} else if err := os.Remove(sigPath(macServiceBin)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	// Installed afresh, by an administrator: no update under way.
+	for _, p := range []string{macNote, macStaged, sigPath(macStaged), macPrev, sigPath(macPrev)} {
+		os.Remove(p)
 	}
 	if err := macAtomicFile(macServicePlist, []byte(macServiceDefinition(uid)), 0o644); err != nil {
 		return err
