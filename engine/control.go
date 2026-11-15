@@ -283,8 +283,9 @@ func (e *Engine) requestReport() {
 	}
 }
 
-// reportLoop sends the endpoints, home relay and paused scopes whenever they
-// change, a moment after the last change, and retries until it lands.
+// reportLoop sends the endpoints, the relays (those it is on, those it
+// could not use) and paused scopes whenever they change, a moment after
+// the last change, and retries until it lands.
 func (e *Engine) reportLoop() {
 	retry := time.NewTimer(time.Hour)
 	retry.Stop()
@@ -307,7 +308,8 @@ func (e *Engine) reportLoop() {
 		if !ok || cc == nil {
 			continue
 		}
-		r := proto.Report{Endpoints: e.ms.Endpoints(), HomeRelay: e.ms.HomeRelay(), Relays: e.ms.ResidentRelays(), Paused: paused}
+		r := proto.Report{Endpoints: e.ms.Endpoints(), HomeRelay: e.ms.HomeRelay(), Relays: e.ms.ResidentRelays(), Paused: paused,
+			RelayFailures: e.ms.FailedRelays()}
 		if r.Paused == nil {
 			r.Paused = []proto.ScopeID{}
 		}

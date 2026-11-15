@@ -263,8 +263,8 @@ docker run -d --name deneb-relay … --join <加入码> --region auto
 
 ## 11. 没做的
 
-- **引擎线那一半**：`install / uninstall / status / update`、各种 init、端口映射、上报 §2 的字段和 `relayFailures`、收到 410 停下。接口照这份。删掉的中转站原来回 401，现在回 410，所以 `cmd/deneb-relay` 的 `TestOwnRelay` 要等引擎线改好的 `relay.go`（410 当作被删）一起进主线才能通过。
-- **设备上报连不上的中转站**（`Report.relayFailures`，§6）：控制服务器这边收下、汇总进卡片都做好了；设备那边要把 magicsock 记下的失败原因归成 connect、tls、refused、timeout 并带上开始时间，不在这一轮，等主会话安排。在那之前，卡片上没有"主人的设备连不上"这一条。
+引擎线那一半（中转站程序的安装、状态、更新、卸载，上报 §2 的字段，收到 410 停下）和设备上报连不上的中转站（§6）都做好了，实现见 `relay-install.md` 第 9 节。
+
 - **给主人发邮件**：连不上时只在卡片和警示里说（`status.alert`），公共中转站另给运营方提醒；没有发邮件。要发的话再加。
 - **引导脚本和下载站**：脚本是引擎线写的（`deploy/relay/install.sh`）；放上下载站、每次发版传程序和 SHA256SUMS，归主会话。
 - **卡片和警示的界面**：客户端线照 §3、§4 出原型。

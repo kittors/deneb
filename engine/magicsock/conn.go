@@ -109,7 +109,9 @@ type Options struct {
 	// the colima topology's relay has a self-signed certificate.
 	RelayRoots *x509.CertPool
 	Logf       func(format string, args ...any)
-	// OnEndpoints is called when the endpoints or the home relay change.
+	// OnEndpoints is called when the endpoints or the home relay change,
+	// or anything else the report says of the relays (ResidentRelays,
+	// FailedRelays).
 	OnEndpoints func()
 	// OnPath is called when a peer's path kind, relay or endpoint changes.
 	OnPath func(proto.DeviceID)
@@ -162,6 +164,13 @@ type relayFailure struct {
 	until  time.Time
 	n      int
 	reason string // "refused: notListed", "unreachable: ..."
+	// since is when this run of failures began; why and refused are what
+	// the server is told of it (FailedRelays: proto.RelayFail*,
+	// proto.RelayDeny*). why is "" while there is nothing to tell: a
+	// relay that was up and dropped (restarting, say), until a try to
+	// connect again fails as well.
+	since        time.Time
+	why, refused string
 }
 
 // Conn is safe for concurrent use.
@@ -242,6 +251,9 @@ type relayConn struct {
 	// trial: a relay back from a failure, tried on the side; its scopes
 	// move back to it once it answers (chooseRelaysLocked).
 	trial bool
+	// dialed is what its last dial came to (noteDial): "" when it went
+	// through, else why not (proto.RelayFail*); nil before any.
+	dialed atomic.Pointer[string]
 }
 
 // New opens the UDP socket. Call SetRelays and SetPeers, then Start.
@@ -432,13 +444,19 @@ func (c *Conn) ResetPaths(reason string) {
 	for id, rc := range c.relays {
 		c.closeRelayLocked(id, rc)
 	}
-	clear(c.relayFail) // a new network: every relay may be reachable again
+	dropped := false
+	for id := range c.relayFail { // a new network: every relay may be reachable again
+		dropped = c.dropRelayFailLocked(id) || dropped
+	}
 	c.pongSelf = netip.AddrPort{}
 	clear(c.stunAddr)
 	start, prefs, changed := c.chooseRelaysLocked(now)
 	c.mu.Unlock()
 	c.logf("[net] %s: redialing the relays and probing %d peers", reason, len(peers))
 	c.startRelays(start, prefs, changed)
+	if dropped {
+		c.reportChanged()
+	}
 	for _, p := range peers {
 		c.updatePath(p)
 	}
@@ -519,11 +537,12 @@ func (c *Conn) SetRelays(relays []proto.Relay, lists []RelayList, prefer proto.R
 		return a.Scope == b.Scope && slices.Equal(a.Relays, b.Relays)
 	})
 	c.relayCfg, c.relayOrder, c.relayLists, c.prefer = want, order, lists, prefer
+	dropped := false
 	for id, rc := range c.relays {
 		r, ok := want[id]
 		if !ok || !sameRelay(r, rc.relay) {
 			c.closeRelayLocked(id, rc)
-			delete(c.relayFail, id) // a new relay at that name: judged afresh
+			dropped = c.dropRelayFailLocked(id) || dropped // a new relay at that name: judged afresh
 		}
 	}
 	if listsChanged {
@@ -531,13 +550,18 @@ func (c *Conn) SetRelays(relays []proto.Relay, lists []RelayList, prefer proto.R
 		// this device in may have changed too.
 		for id, f := range c.relayFail {
 			if strings.HasPrefix(f.reason, "refused") {
-				delete(c.relayFail, id)
+				dropped = c.dropRelayFailLocked(id) || dropped
 			}
 		}
 	}
 	start, prefs, changed := c.chooseRelaysLocked(now)
 	c.mu.Unlock()
 	c.startRelays(start, prefs, changed)
+	if dropped || listsChanged {
+		// What the report says of the relays changed too: failures
+		// forgotten, or relays off the lists now (FailedRelays).
+		c.reportChanged()
+	}
 }
 
 // chooseRelaysLocked picks each list's relay, opens the resident ones not
@@ -702,25 +726,48 @@ func (c *Conn) hasAlternativeLocked(id proto.RelayID, now time.Time) bool {
 }
 
 // noteRelayFailLocked skips relay id for a while: RelayRetry (15 s),
-// doubling up to 5 minutes while it keeps failing.
-func (c *Conn) noteRelayFailLocked(id proto.RelayID, reason string, now time.Time) {
-	c.noteRelayFailForLocked(id, reason, now, c.opts.RelayRetry)
+// doubling up to 5 minutes while it keeps failing. why and refused are
+// the failure as the server is told it (proto.RelayFail*,
+// proto.RelayDeny*); it reports whether that changed (FailedRelays).
+func (c *Conn) noteRelayFailLocked(id proto.RelayID, reason, why, refused string, now time.Time) bool {
+	return c.noteRelayFailForLocked(id, reason, why, refused, now, c.opts.RelayRetry)
 }
 
 // noteRelayFailForLocked is noteRelayFailLocked with another first wait:
 // a relay that was up and dropped is tried again after a few seconds.
-func (c *Conn) noteRelayFailForLocked(id proto.RelayID, reason string, now time.Time, first time.Duration) {
+// why "" tells the server nothing new.
+func (c *Conn) noteRelayFailForLocked(id proto.RelayID, reason, why, refused string, now time.Time, first time.Duration) bool {
 	if c.relayFail == nil {
 		c.relayFail = map[proto.RelayID]*relayFailure{}
 	}
 	f := c.relayFail[id]
 	if f == nil {
-		f = &relayFailure{}
+		f = &relayFailure{since: now}
 		c.relayFail[id] = f
 	}
 	f.n++
 	f.until = now.Add(min(5*time.Minute, first<<min(f.n-1, 6)))
 	f.reason = reason
+	if why == "" || why == f.why && refused == f.refused {
+		return false
+	}
+	f.why, f.refused = why, refused
+	return true
+}
+
+// dropRelayFailLocked forgets relay id's failure. It reports whether the
+// server was told of it (FailedRelays).
+func (c *Conn) dropRelayFailLocked(id proto.RelayID) bool {
+	f := c.relayFail[id]
+	delete(c.relayFail, id)
+	return f != nil && f.why != ""
+}
+
+// reportChanged tells the engine that the report changed (OnEndpoints).
+func (c *Conn) reportChanged() {
+	if c.opts.OnEndpoints != nil {
+		c.opts.OnEndpoints()
+	}
 }
 
 func (c *Conn) closeRelayLocked(id proto.RelayID, rc *relayConn) {
@@ -776,6 +823,7 @@ func (c *Conn) newRelayConn(r proto.Relay, home bool) (*relayConn, error) {
 		return nil, errors.New("relay has no host name or port")
 	}
 	hostport := net.JoinHostPort(r.HostName, strconv.Itoa(int(r.DERPPort)))
+	rc := &relayConn{relay: r, stop: make(chan struct{})}
 	if r.Pin != "" {
 		// A Deneb relay's self-signed certificate, trusted by its key (M4).
 		// derphttp's own TLS refuses a config that skips the chain check
@@ -789,9 +837,10 @@ func (c *Conn) newRelayConn(r proto.Relay, home bool) (*relayConn, error) {
 		if err != nil {
 			return nil, err
 		}
-		dc.SetURLDialer(c.pinnedDialer(r, cfg))
+		dc.SetURLDialer(rc.noteDial(c.pinnedDialer(r, cfg)))
 		dc.NotePreferred(home)
-		return &relayConn{relay: r, client: dc, stop: make(chan struct{})}, nil
+		rc.client = dc
+		return rc, nil
 	}
 	url := "https://" + hostport + "/derp"
 	dc, err := derphttp.NewClient(c.nodePriv, url, c.derpLogf(r.Name), netmon.NewStatic())
@@ -801,9 +850,69 @@ func (c *Conn) newRelayConn(r proto.Relay, home bool) (*relayConn, error) {
 	if c.opts.RelayRoots != nil {
 		dc.TLSConfig = &tls.Config{RootCAs: c.opts.RelayRoots}
 	}
-	dc.SetURLDialer(c.relayDialer(r))
+	dc.SetURLDialer(rc.noteDial(c.relayDialer(r)))
 	dc.NotePreferred(home)
-	return &relayConn{relay: r, client: dc, stop: make(chan struct{})}, nil
+	rc.client = dc
+	return rc, nil
+}
+
+// noteDial has the connection keep what each of its dials came to: derphttp
+// keeps only the text of a dial's error, and the server is told why a relay
+// never came up (failReason).
+func (rc *relayConn) noteDial(dial func(ctx context.Context, network, addr string) (net.Conn, error)) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		conn, err := dial(ctx, network, addr)
+		why := ""
+		if err != nil {
+			why = dialFailReason(err)
+		}
+		rc.dialed.Store(&why)
+		return conn, err
+	}
+}
+
+// tlsDialError is the TLS handshake failing in pinnedDialer: the relay's
+// key is not the pinned one, or what answers does not speak TLS.
+type tlsDialError struct{ err error }
+
+func (e *tlsDialError) Error() string { return "pinned TLS: " + e.err.Error() }
+func (e *tlsDialError) Unwrap() error { return e.err }
+
+// dialFailReason says why a dial to a relay failed (proto.RelayFail*).
+func dialFailReason(err error) string {
+	var te *tlsDialError
+	var ne net.Error
+	switch {
+	case errors.As(err, &te):
+		return proto.RelayFailTLS
+	case errors.Is(err, context.DeadlineExceeded), errors.As(err, &ne) && ne.Timeout():
+		return proto.RelayFailTimeout
+	}
+	return proto.RelayFailConnect
+}
+
+// failReason says why the relay never came up (proto.RelayFail*), err
+// being what its client said: the dial's own reason when the dial failed,
+// else from err's text.
+func (rc *relayConn) failReason(err error) string {
+	dialed := rc.dialed.Load()
+	if dialed != nil && *dialed != "" {
+		return *dialed
+	}
+	s := err.Error()
+	switch {
+	case strings.Contains(s, "timeout"), strings.Contains(s, "deadline exceeded"):
+		return proto.RelayFailTimeout
+	case dialed == nil:
+		return proto.RelayFailConnect // it never got to dial
+	case rc.relay.Pin != "":
+		// Its key checked out, then it closed on the device without a
+		// word, or answered no relay's way.
+		return proto.RelayFailRefused
+	}
+	// derphttp's own TLS: the handshake failed, or what answers is not a
+	// relay.
+	return proto.RelayFailTLS
 }
 
 // pinnedDialer dials like relayDialer, then does TLS checking the relay's
@@ -823,7 +932,7 @@ func (c *Conn) pinnedDialer(r proto.Relay, cfg *tls.Config) func(ctx context.Con
 		tc := tls.Client(conn, tcfg)
 		if err := tc.HandshakeContext(ctx); err != nil {
 			conn.Close()
-			return nil, fmt.Errorf("pinned TLS: %w", err)
+			return nil, &tlsDialError{err}
 		}
 		return tc, nil
 	}
@@ -892,12 +1001,12 @@ func (c *Conn) relayLoop(rc *relayConn) {
 			c.mu.Lock()
 			was := rc.up
 			rc.up = false
-			gaveUp, resident := false, c.resident[rc.relay.ID]
+			gaveUp, resident, told := false, c.resident[rc.relay.ID], false
 			switch {
 			case !was && c.relays[rc.relay.ID] == rc:
 				// Never came up: no dial, a TLS key that is not the pinned
 				// one, or turned away without a word. The lists move on.
-				c.noteRelayFailLocked(rc.relay.ID, "unreachable: "+err.Error(), time.Now())
+				told = c.noteRelayFailLocked(rc.relay.ID, "unreachable: "+err.Error(), rc.failReason(err), "", time.Now())
 				c.closeRelayLocked(rc.relay.ID, rc)
 				gaveUp = true
 			case was && resident && c.relays[rc.relay.ID] == rc && c.hasAlternativeLocked(rc.relay.ID, time.Now()):
@@ -905,12 +1014,16 @@ func (c *Conn) relayLoop(rc *relayConn) {
 				// its scopes take the next one on their lists now, so peers
 				// can find this device while it is gone, and come back to
 				// it once it answers again (a trial, chooseRelaysLocked),
-				// tried a few seconds later first.
-				c.noteRelayFailForLocked(rc.relay.ID, "lost: "+err.Error(), time.Now(), min(5*time.Second, c.opts.RelayRetry))
+				// tried a few seconds later first. The server hears of it
+				// only if that try fails too.
+				c.noteRelayFailForLocked(rc.relay.ID, "lost: "+err.Error(), "", "", time.Now(), min(5*time.Second, c.opts.RelayRetry))
 				c.closeRelayLocked(rc.relay.ID, rc)
 				gaveUp = true
 			}
 			c.mu.Unlock()
+			if told {
+				c.reportChanged()
+			}
 			if gaveUp {
 				if was {
 					c.logf("[relay] lost %s (%v); its scopes take the next on their lists for now", rc.relay.Name, err)
@@ -938,22 +1051,25 @@ func (c *Conn) relayLoop(rc *relayConn) {
 			// login ran out.
 			reason := strings.TrimPrefix(hm.Problem, proto.RelayRefusedPrefix)
 			c.mu.Lock()
-			c.noteRelayFailLocked(rc.relay.ID, "refused: "+reason, time.Now())
+			told := c.noteRelayFailLocked(rc.relay.ID, "refused: "+reason, proto.RelayFailRefused, reason, time.Now())
 			if c.relays[rc.relay.ID] == rc {
 				c.closeRelayLocked(rc.relay.ID, rc)
 			}
 			c.mu.Unlock()
+			if told {
+				c.reportChanged()
+			}
 			c.logf("[relay] %s turned this device away (%s); trying the next on its lists", rc.relay.Name, reason)
 			c.rechooseRelays()
 			return
 		}
 		c.mu.Lock()
 		was := rc.up
-		backNow := false
+		backNow, told := false, false
 		if !was {
 			rc.up, rc.since = true, time.Now()
 			_, failed := c.relayFail[rc.relay.ID]
-			delete(c.relayFail, rc.relay.ID)
+			told = c.dropRelayFailLocked(rc.relay.ID) // it answers again: off FailedRelays
 			backNow = failed || rc.trial
 			rc.trial = false
 		}
@@ -961,6 +1077,9 @@ func (c *Conn) relayLoop(rc *relayConn) {
 			rc.lastUsed = time.Now()
 		}
 		c.mu.Unlock()
+		if told {
+			c.reportChanged()
+		}
 		if !was {
 			c.logf("[relay] connected to %s (%s)", rc.relay.Name, rc.relay.HostName)
 			c.relayChanged(rc.relay.ID)
@@ -1603,6 +1722,38 @@ func (c *Conn) ChosenRelays() map[proto.ScopeID]proto.RelayID {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return maps.Clone(c.chosen)
+}
+
+// FailedRelays are the relays on the scopes' lists this device tried and
+// could not use, and why, for the server (Report.RelayFailures, M7): their
+// owners' cards say which of their devices cannot reach them. One that
+// answers again leaves it. One that was up and dropped joins it only once
+// a try to connect again fails too: a relay restarting says nothing.
+func (c *Conn) FailedRelays() []proto.RelayFailure {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []proto.RelayFailure
+	for id, f := range c.relayFail {
+		if f.why == "" || !c.onListsLocked(id) {
+			continue
+		}
+		out = append(out, proto.RelayFailure{Relay: id, Reason: f.why, Refused: f.refused, Since: f.since.UTC().Truncate(time.Second)})
+	}
+	slices.SortFunc(out, func(a, b proto.RelayFailure) int { return strings.Compare(string(a.Relay), string(b.Relay)) })
+	return out
+}
+
+// onListsLocked: relay id is on a scope's list.
+func (c *Conn) onListsLocked(id proto.RelayID) bool {
+	if _, ok := c.relayCfg[id]; !ok {
+		return false
+	}
+	for _, l := range c.relayLists {
+		if slices.Contains(l.Relays, id) {
+			return true
+		}
+	}
+	return false
 }
 
 // RelayFailures are the relays skipped for now, and why.
