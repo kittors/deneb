@@ -29,7 +29,12 @@
 #                ~/deneb-deps/wintun-$WINTUN_VERSION/wintun)
 #   MYGO_UPDATER_PRIVATE_KEY  the key that signs updates (mygo keygen);
 #                without it, or without updates in mygo.json, the apps
-#                build without the files that update them
+#                build without the files that update them. It signs the
+#                engine the app ships too (denebd.sig beside it,
+#                deploy/sign-engine.go), for the system service to take
+#                it in without a password; without it the engine is
+#                unsigned, and its service asks for an administrator, as a
+#                development build's does
 #   TAGS         more build tags for the engine; never denebtest: test
 #                builds are made apart (test/topo/.accept/) and never
 #                released, which deploy/check-release.sh makes sure of
@@ -73,9 +78,20 @@ staged=
 # however it ends: they are for the packages, not for `mygo dev`.
 cleanup() {
 	for p in $staged; do
-		rm -f "$res/$p/denebd" "$res/$p/denebd.exe" "$res/$p/wintun.dll" "$res/$p/LICENSE.txt" "$res/$p/THIRD_PARTY_NOTICES.txt"
+		rm -f "$res/$p/denebd" "$res/$p/denebd.sig" "$res/$p/denebd.exe" "$res/$p/denebd.exe.sig" "$res/$p/wintun.dll" "$res/$p/LICENSE.txt" "$res/$p/THIRD_PARTY_NOTICES.txt"
 		rmdir "$res/$p" 2>/dev/null || true
 	done
+}
+
+# sign_engine file: its signature beside it, for the system service to take
+# it in without a password (design/plan/m7/engine-self-update.md §1). The
+# key is only ever read from the environment.
+sign_engine() {
+	if [ -n "${MYGO_UPDATER_PRIVATE_KEY:-}" ]; then
+		(cd "$root" && go run deploy/sign-engine.go "$1" "$version") || exit 1
+	else
+		echo "package: no MYGO_UPDATER_PRIVATE_KEY: ${1##*/} is unsigned, and its service will ask for an administrator to update" >&2
+	fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
@@ -104,6 +120,7 @@ for target in "$@"; do
 		(cd "$root" && CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" go build ${tags:+-tags "$tags"} -trimpath \
 			-ldflags "-X main.version=$version" -o "$res/darwin-$arch/denebd" ./cmd/denebd)
 		"$root/deploy/check-release.sh" "$res/darwin-$arch/denebd"
+		sign_engine "$res/darwin-$arch/denebd"
 		platforms="$platforms,darwin/$arch"
 		;;
 	windows)
@@ -116,6 +133,7 @@ for target in "$@"; do
 		(cd "$root" && CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build ${tags:+-tags "$tags"} -trimpath \
 			-ldflags "-X main.version=$version" -o "$res/windows-amd64/denebd.exe" ./cmd/denebd)
 		"$root/deploy/check-release.sh" "$res/windows-amd64/denebd.exe"
+		sign_engine "$res/windows-amd64/denebd.exe"
 		cp "$wintun/bin/amd64/wintun.dll" "$res/windows-amd64/wintun.dll"
 		command -v makensis >/dev/null || echo "package: no makensis (brew install makensis, apt install nsis): no Windows installer this time" >&2
 		platforms="$platforms,windows/amd64"
