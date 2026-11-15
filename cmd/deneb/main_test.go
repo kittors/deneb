@@ -14,7 +14,8 @@ func TestPickStore(t *testing.T) {
 	t.Setenv("DENEB_FAKE", "ready")
 	s, _, sims, lc := pickStore()
 	l, ok := s.(*client.Live)
-	if !ok || lc != nil || len(sims) != 5 {
+	// M1's five, and the engine change's four (engine-self-update.md §5).
+	if !ok || lc != nil || len(sims) != 9 {
 		t.Fatalf("DENEB_FAKE=ready gives %T, an engine to start %v, %d events", s, lc != nil, len(sims))
 	}
 	defer l.Close()
