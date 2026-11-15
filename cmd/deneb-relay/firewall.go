@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -15,12 +16,18 @@ import (
 // firewall is the system's firewall, as install found it.
 type firewall struct {
 	kind string // "ufw", "firewalld", "nftables", "iptables"
-	// open lets the ports in; undo takes that back.
-	open, undo [][]string
+	// open lets in the ports it keeps out; undo takes that back. opening
+	// names those ports ("UDP 47478"), had the ones it let in already: a
+	// rule the person made is not install's to open or take back.
+	open, undo   [][]string
+	opening, had []string
 	// keep says how to make the rules outlive a reboot, when they do not
 	// on their own; "" when they do.
 	keep string
 }
+
+// fwPort is one of the relay's ports, as the firewalls say it.
+type fwPort struct{ proto, port, words string }
 
 // nftDeleteMarked is undo's command for nftables rules: delete the rules
 // of the chain that carry install's comment (their handles are not known
@@ -31,37 +38,66 @@ const nftDeleteMarked = "nft-delete-marked"
 // none seems to (or it cannot tell: no root).
 func (h *host) detectFirewall(tcp, udp int) *firewall {
 	t, u := strconv.Itoa(tcp), strconv.Itoa(udp)
+	ports := []fwPort{{"tcp", t, "TCP " + t}, {"udp", u, "UDP " + u}}
 	if h.has("ufw") {
 		if out, err := h.run("ufw", "status"); err == nil && strings.Contains(out, "Status: active") {
-			return &firewall{kind: "ufw",
-				open: [][]string{{"ufw", "allow", t + "/tcp"}, {"ufw", "allow", u + "/udp"}},
-				undo: [][]string{{"ufw", "delete", "allow", t + "/tcp"}, {"ufw", "delete", "allow", u + "/udp"}}}
+			added, _ := h.run("ufw", "show", "added")
+			fw := &firewall{kind: "ufw"}
+			for _, p := range ports {
+				if ufwAllows(added, p) {
+					fw.had = append(fw.had, p.words)
+					continue
+				}
+				fw.open = append(fw.open, []string{"ufw", "allow", p.port + "/" + p.proto})
+				fw.undo = append(fw.undo, []string{"ufw", "delete", "allow", p.port + "/" + p.proto})
+				fw.opening = append(fw.opening, p.words)
+			}
+			return fw
 		}
 	}
 	if h.has("firewall-cmd") {
 		if out, err := h.run("firewall-cmd", "--state"); err == nil && strings.TrimSpace(out) == "running" {
-			ports := []string{"--add-port=" + t + "/tcp", "--add-port=" + u + "/udp"}
-			back := []string{"--remove-port=" + t + "/tcp", "--remove-port=" + u + "/udp"}
-			return &firewall{kind: "firewalld",
-				open: [][]string{append([]string{"firewall-cmd"}, ports...), append([]string{"firewall-cmd", "--permanent"}, ports...)},
-				undo: [][]string{append([]string{"firewall-cmd"}, back...), append([]string{"firewall-cmd", "--permanent"}, back...)}}
+			fw := &firewall{kind: "firewalld"}
+			var add, back []string
+			for _, p := range ports {
+				if out, err := h.run("firewall-cmd", "--query-port="+p.port+"/"+p.proto); err == nil && strings.TrimSpace(out) == "yes" {
+					fw.had = append(fw.had, p.words)
+					continue
+				}
+				add = append(add, "--add-port="+p.port+"/"+p.proto)
+				back = append(back, "--remove-port="+p.port+"/"+p.proto)
+				fw.opening = append(fw.opening, p.words)
+			}
+			if len(add) > 0 {
+				fw.open = [][]string{append([]string{"firewall-cmd"}, add...), append([]string{"firewall-cmd", "--permanent"}, add...)}
+				fw.undo = [][]string{append([]string{"firewall-cmd"}, back...), append([]string{"firewall-cmd", "--permanent"}, back...)}
+			}
+			return fw
 		}
 	}
 	if h.has("nft") {
 		if out, err := h.run("nft", "list", "ruleset"); err == nil {
 			if family, table, chain, ok := nftDropChain(out); ok {
-				rule := func(proto, port string) []string {
-					return []string{"nft", "insert", "rule", family, table, chain, proto, "dport", port, "accept", "comment", `"deneb-relay"`}
+				fw := &firewall{kind: "nftables"}
+				for _, p := range ports {
+					if nftAllows(out, family, table, chain, p) {
+						fw.had = append(fw.had, p.words)
+						continue
+					}
+					fw.open = append(fw.open, []string{"nft", "insert", "rule", family, table, chain, p.proto, "dport", p.port, "accept", "comment", `"deneb-relay"`})
+					fw.opening = append(fw.opening, p.words)
 				}
-				return &firewall{kind: "nftables",
-					open: [][]string{rule("tcp", t), rule("udp", u)},
-					undo: [][]string{{nftDeleteMarked, family, table, chain}},
-					keep: "这两条规则重启后会丢：要长期保留，请把它们加进 /etc/nftables.conf"}
+				if len(fw.open) > 0 {
+					fw.undo = [][]string{{nftDeleteMarked, family, table, chain}}
+					fw.keep = "这些规则重启后会丢：要长期保留，请把它们加进 /etc/nftables.conf"
+				}
+				return fw
 			}
 		}
 	}
 	if h.has("iptables") {
 		var fw *firewall
+		missing := map[string]bool{} // by words: kept out by one of the two
 		for _, cmd := range []string{"iptables", "ip6tables"} {
 			if !h.has(cmd) {
 				continue
@@ -70,15 +106,27 @@ func (h *host) detectFirewall(tcp, udp int) *firewall {
 				if fw == nil {
 					fw = &firewall{kind: "iptables"}
 				}
-				for _, p := range [][2]string{{"tcp", t}, {"udp", u}} {
-					spec := []string{"INPUT", "-p", p[0], "--dport", p[1], "-j", "ACCEPT"}
+				for _, p := range ports {
+					if iptablesAllows(out, p) {
+						continue
+					}
+					spec := []string{"INPUT", "-p", p.proto, "--dport", p.port, "-j", "ACCEPT"}
 					fw.open = append(fw.open, append([]string{cmd, "-I"}, spec...))
 					fw.undo = append(fw.undo, append([]string{cmd, "-D"}, spec...))
+					missing[p.words] = true
 				}
 			}
 		}
 		if fw != nil {
+			for _, p := range ports {
+				if missing[p.words] {
+					fw.opening = append(fw.opening, p.words)
+				} else {
+					fw.had = append(fw.had, p.words)
+				}
+			}
 			switch {
+			case len(fw.open) == 0:
 			case h.has("netfilter-persistent"):
 				fw.open = append(fw.open, []string{"netfilter-persistent", "save"})
 				fw.undo = append(fw.undo, []string{"netfilter-persistent", "save"})
@@ -92,6 +140,72 @@ func (h *host) detectFirewall(tcp, udp int) *firewall {
 		}
 	}
 	return nil
+}
+
+// ufwAllows: `ufw show added` has a rule letting the port in from anywhere,
+// for its protocol or for both.
+func ufwAllows(added string, p fwPort) bool {
+	for _, l := range strings.Split(added, "\n") {
+		switch strings.TrimSpace(l) {
+		case "ufw allow " + p.port + "/" + p.proto, "ufw allow " + p.port,
+			"ufw allow in " + p.port + "/" + p.proto, "ufw allow in " + p.port:
+			return true
+		}
+	}
+	return false
+}
+
+// nftAllows: the chain has a rule, not install's own, accepting the port:
+// "tcp dport 47445 accept", or "tcp dport { 22, 47445 } accept".
+func nftAllows(ruleset, family, table, chain string, p fwPort) bool {
+	var curFamily, curTable, curChain string
+	for _, line := range strings.Split(ruleset, "\n") {
+		f := strings.Fields(line)
+		switch {
+		case len(f) >= 3 && f[0] == "table":
+			curFamily, curTable, curChain = f[1], f[2], ""
+		case len(f) >= 2 && f[0] == "chain":
+			curChain = f[1]
+		case curFamily == family && curTable == table && curChain == chain && !strings.Contains(line, `comment "deneb-relay"`):
+			_, rest, ok := strings.Cut(line, p.proto+" dport ")
+			if !ok || !strings.Contains(rest, "accept") {
+				continue
+			}
+			for _, w := range strings.FieldsFunc(rest, func(r rune) bool { return r == ' ' || r == ',' || r == '{' || r == '}' }) {
+				if w == p.port {
+					return true
+				}
+				if w == "accept" {
+					break
+				}
+			}
+		}
+	}
+	return false
+}
+
+// iptablesAllows: `iptables -S INPUT` has a rule accepting the port from
+// anywhere: "-A INPUT -p tcp -m tcp --dport 47445 -j ACCEPT", or a
+// multiport one with it. One for a single source, or for loopback, is not.
+func iptablesAllows(out string, p fwPort) bool {
+	for _, l := range strings.Split(out, "\n") {
+		f := strings.Fields(l)
+		arg := func(name string) string {
+			for i := 0; i+1 < len(f); i++ {
+				if f[i] == name {
+					return f[i+1]
+				}
+			}
+			return ""
+		}
+		if len(f) < 2 || f[0] != "-A" || f[1] != "INPUT" || arg("-j") != "ACCEPT" || arg("-p") != p.proto || arg("-s") != "" || arg("-i") == "lo" {
+			continue
+		}
+		if arg("--dport") == p.port || slices.Contains(strings.Split(arg("--dports"), ","), p.port) {
+			return true
+		}
+	}
+	return false
 }
 
 // nftDropChain finds, in `nft list ruleset`, the input chain that drops

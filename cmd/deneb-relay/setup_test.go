@@ -139,6 +139,47 @@ func TestFirewalls(t *testing.T) {
 	}
 }
 
+// TestFirewallsLetInAlready: a port each firewall lets in already is not
+// opened again, and so not taken back: firewalld's own query; nftables'
+// and iptables' rules that accept it (not those for one source, for
+// loopback, or install's own).
+func TestFirewallsLetInAlready(t *testing.T) {
+	f := newFakeHost(t, true)
+	f.have["firewall-cmd"] = true
+	f.replies["firewall-cmd --state"] = "running\n"
+	f.replies["firewall-cmd --query-port=47445/tcp"] = "yes\n"
+	fw := f.detectFirewall(47445, 47478)
+	if fw == nil || strings.Join(fw.open[0], " ") != "firewall-cmd --add-port=47478/udp" || strings.Join(fw.undo[1], " ") != "firewall-cmd --permanent --remove-port=47478/udp" ||
+		strings.Join(fw.had, " ") != "TCP 47445" || strings.Join(fw.opening, " ") != "UDP 47478" {
+		t.Errorf("firewalld: %+v", fw)
+	}
+
+	g := newFakeHost(t, true)
+	g.have["nft"] = true
+	g.replies["nft list ruleset"] = "table inet filter {\n\tchain input {\n\t\ttype filter hook input priority filter; policy drop;\n" +
+		"\t\ttcp dport { 22, 47445 } accept\n\t\tudp dport 47478 accept comment \"deneb-relay\"\n\t}\n}\n"
+	fw = g.detectFirewall(47445, 47478)
+	if fw == nil || len(fw.open) != 1 || strings.Join(fw.open[0], " ") != `nft insert rule inet filter input udp dport 47478 accept comment "deneb-relay"` || strings.Join(fw.had, " ") != "TCP 47445" {
+		t.Errorf("nftables: %+v", fw)
+	}
+
+	h := newFakeHost(t, true)
+	h.have["iptables"] = true
+	h.replies["iptables -S INPUT"] = "-P INPUT DROP\n-A INPUT -i lo -p udp -m udp --dport 47478 -j ACCEPT\n-A INPUT -s 198.51.100.4/32 -p udp -m udp --dport 47478 -j ACCEPT\n" +
+		"-A INPUT -p tcp -m multiport --dports 22,47445 -j ACCEPT\n"
+	fw = h.detectFirewall(47445, 47478)
+	if fw == nil || len(fw.open) != 1 || strings.Join(fw.open[0], " ") != "iptables -I INPUT -p udp --dport 47478 -j ACCEPT" || strings.Join(fw.had, " ") != "TCP 47445" || fw.keep == "" {
+		t.Errorf("iptables: %+v", fw)
+	}
+
+	all := newFakeHost(t, true)
+	all.have["iptables"] = true
+	all.replies["iptables -S INPUT"] = "-P INPUT DROP\n-A INPUT -p tcp -m tcp --dport 47445 -j ACCEPT\n-A INPUT -p udp -m udp --dport 47478 -j ACCEPT\n"
+	if fw := all.detectFirewall(47445, 47478); fw == nil || len(fw.open) != 0 || len(fw.undo) != 0 || fw.keep != "" || len(fw.had) != 2 {
+		t.Errorf("iptables, both let in: %+v", fw)
+	}
+}
+
 // TestPublicAddrs: which addresses devices can reach the machine at.
 func TestPublicAddrs(t *testing.T) {
 	for a, want := range map[string]bool{

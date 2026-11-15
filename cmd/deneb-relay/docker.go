@@ -22,8 +22,20 @@ import (
 type dockerRelay struct {
 	id, name, image string
 	running         bool
+	restart         string // its restart policy ("unless-stopped"), put back if install fails
 	data            string // the host directory mounted at its data directory
 	settings        settings
+}
+
+// giveBack undoes takeOverDocker, for an install that failed after it:
+// the container runs again as it did.
+func (h *host) giveBack(d *dockerRelay) {
+	if d.restart != "" {
+		h.run("docker", "update", "--restart="+d.restart, d.id)
+	}
+	if d.running {
+		h.run("docker", "start", d.id)
+	}
 }
 
 // findDockerRelay finds a relay container; nil when there is none (or no
@@ -64,7 +76,10 @@ func parseDockerInspect(js string) (*dockerRelay, error) {
 		Mounts []struct {
 			Source, Destination string
 		}
-		Config struct{ Env []string }
+		Config     struct{ Env []string }
+		HostConfig struct {
+			RestartPolicy struct{ Name string }
+		}
 	}
 	if err := json.Unmarshal([]byte(js), &in); err != nil || len(in) == 0 {
 		return nil, fmt.Errorf("docker inspect 的结果看不懂：%v", err)
@@ -92,7 +107,7 @@ func parseDockerInspect(js string) (*dockerRelay, error) {
 		return nil, fmt.Errorf("容器的参数看不懂：%v", err)
 	}
 	s.DERPPort, s.STUNPort = uint16(derp), uint16(stun)
-	d := &dockerRelay{running: c.State.Running, settings: s}
+	d := &dockerRelay{running: c.State.Running, restart: c.HostConfig.RestartPolicy.Name, settings: s}
 	for _, m := range c.Mounts {
 		if m.Destination == *data {
 			d.data = m.Source

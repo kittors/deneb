@@ -40,18 +40,42 @@ for a in "$@"; do
 	esac
 done
 
-# uninstall, status and update are the installed program's.
-if [ "$cmd" != install ]; then
-	for p in deneb-relay /usr/local/bin/deneb-relay "${HOME:-/nonexistent}/.local/bin/deneb-relay"; do
-		if command -v "$p" >/dev/null 2>&1; then
-			# Not the rest of this script, which sh is still reading from
-			# stdin; deneb-relay asks its questions on the terminal.
-			# shellcheck disable=SC2086 # extra is flags, split on purpose
-			exec "$p" "$cmd" $extra </dev/null
-		fi
-	done
-	die "这台没有装中转站"
-fi
+# status and update are the installed program's. uninstall is this
+# release's (it also clears what an install that did not finish left, which
+# an older one does not see), or the installed one's should this release
+# not download or run here.
+installed=
+for p in deneb-relay /usr/local/bin/deneb-relay "${HOME:-/nonexistent}/.local/bin/deneb-relay"; do
+	if command -v "$p" >/dev/null 2>&1; then
+		installed=$p
+		break
+	fi
+done
+handover() {
+	[ -n "$installed" ] || die "这台没有装中转站"
+	# Not the rest of this script, which sh is still reading from stdin;
+	# deneb-relay asks its questions on the terminal.
+	# shellcheck disable=SC2086 # extra is flags, split on purpose
+	exec "$installed" "$cmd" $extra </dev/null
+}
+case $cmd in
+status | update) handover ;;
+uninstall)
+	if [ -z "$installed" ]; then
+		left=
+		for p in /usr/local/lib/deneb-relay /var/lib/deneb-relay /etc/deneb-relay /etc/systemd/system/deneb-relay.service \
+			"${HOME:-/nonexistent}/.local/lib/deneb-relay" "${HOME:-/nonexistent}/.local/share/deneb-relay"; do
+			if [ -e "$p" ]; then left=1; fi
+		done
+		[ -n "$left" ] || die "这台没有装中转站"
+	else
+		die() {
+			say "! 没能取到这一版的程序（$1），用这台上装着的来卸载"
+			handover
+		}
+	fi
+	;;
+esac
 
 [ "$(uname -s)" = Linux ] || die "中转站只能装在 Linux 上，这台是 $(uname -s)"
 case $(uname -m) in
@@ -120,7 +144,7 @@ if [ -n "$check" ]; then
 else
 	get latest latest
 	version=$(head -n 1 "$dir/latest")
-	say "! 命令里没有校验值：只靠 HTTPS 保证下载没被改过"
+	[ "$cmd" = uninstall ] || say "! 命令里没有校验值：只靠 HTTPS 保证下载没被改过"
 fi
 
 name=deneb-relay-linux-$arch
@@ -139,6 +163,11 @@ else
 fi
 
 set +e
+if [ "$cmd" = uninstall ]; then
+	# shellcheck disable=SC2086 # extra is flags, split on purpose
+	"$dir/deneb-relay" uninstall $extra </dev/null
+	exit $?
+fi
 # shellcheck disable=SC2086 # extra is flags, split on purpose
 "$dir/deneb-relay" install ${code:+--join "$code"} $extra </dev/null
 rc=$?

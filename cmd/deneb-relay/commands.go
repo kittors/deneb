@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -85,7 +86,7 @@ func (h *host) status(ctx context.Context, recheck bool) int {
 		st.warn("磁盘只剩 %s", mb(free))
 	}
 	if recheck && running {
-		return h.reportCheck(ctx, st, ctl, s.tcpPort(), s.udpPort(), in.Scope, nil)
+		return h.reportCheck(ctx, st, ctl, s.tcpPort(), s.udpPort(), in.Scope, nil, nil)
 	}
 	// The state its card shows, from the last check: no new one.
 	cur, err := h.current(ctx, ctl)
@@ -188,8 +189,16 @@ func (h *host) uninstall(ctx context.Context, keepData bool) int {
 		return exitFailed
 	}
 	if s == nil || s.Install == nil {
-		st.fail("这台没有用 deneb-relay install 装过中转站")
-		return exitFailed
+		in := h.leftovers(l)
+		if in == nil {
+			st.fail("这台没有用 deneb-relay install 装过中转站")
+			return exitFailed
+		}
+		st.warn("上次安装没有装完，清掉它留下的")
+		if s == nil {
+			s = &settings{}
+		}
+		s.Install = in
 	}
 	in := s.Install
 	if in.Scope == scopeSystem && !h.isRoot() {
@@ -198,7 +207,7 @@ func (h *host) uninstall(ctx context.Context, keepData bool) int {
 	}
 	// The control server first, while the secret is here.
 	if rs, _ := loadState(h.path(l.data)); rs != nil && !keepData {
-		if ctl, err := newControlClient(s.Control, s.ControlPin); err == nil {
+		if ctl, err := newControlClient(cmp.Or(s.Control, rs.Control), s.ControlPin); err == nil {
 			ctl.setSecret(rs.Secret)
 			switch err := h.leave(ctx, ctl); {
 			case err == nil:
@@ -212,7 +221,7 @@ func (h *host) uninstall(ctx context.Context, keepData bool) int {
 	}
 	if err := h.removeService(in, l.data); err != nil {
 		st.warn("停服务时：%v", err)
-	} else {
+	} else if in.Service != "" || in.Init == initCron || in.Init == initNone {
 		st.ok("服务已停止并删除")
 	}
 	if len(in.Firewall) > 0 {
@@ -246,6 +255,35 @@ func (h *host) uninstall(ctx context.Context, keepData bool) int {
 		st.note("以前的 Docker 容器 %s 还在（停着）：不要了可以 docker rm %s", in.FromDocker, in.FromDocker)
 	}
 	return exitOK
+}
+
+// leftovers is what an install that did not finish left here with no
+// config.json to say so, as uninstall is to take it away; nil when there
+// is nothing. Before 0.1.9 one that failed (a join code used already, say)
+// left its user, program, link and data.
+func (h *host) leftovers(l layout) *installed {
+	in := &installed{Scope: l.scope, Bin: l.bin}
+	found := h.exists(l.binDir) || h.exists(l.data)
+	if t, err := os.Readlink(h.path(l.link)); err == nil && t == l.bin {
+		in.Link, found = l.link, true
+	}
+	if l.scope == scopeSystem {
+		if a, ok := h.lookupUser(relayUser); ok && a.home == l.data {
+			in.User, in.MadeUser, found = relayUser, true, true
+		}
+	}
+	kind, _ := h.detectInit(l.scope)
+	if f := h.serviceFile(kind, l.scope); f != "" && h.exists(f) {
+		in.Init, in.Service, found = kind, f, true
+	} else if kind == initCron && (l.scope == scopeUser || in.User != "") {
+		if cur, err := h.crontab(in.User, "", "-l"); err == nil && withCronLines(cur, nil) != cur {
+			in.Init, found = initCron, true
+		}
+	}
+	if !found {
+		return nil
+	}
+	return in
 }
 
 func cmdUpdate(args []string) int {
@@ -375,6 +413,28 @@ var stateWords = map[proto.RelayState]string{
 	proto.RelayOffline:     "不在线",
 }
 
+// upSince is when the relay began to answer here, for reportCheck.
+type upSince struct {
+	at   time.Time     // in this machine's clock
+	skew time.Duration // how far this machine's clock is ahead of the control server's (clockSkew)
+}
+
+// before: res comes from a check that finished before the relay answered
+// (in the control server's clock, give or take the second clockSkew
+// rounds to) and found it wanting: it says nothing of the relay now.
+func (u *upSince) before(res *proto.RelayStatus) bool {
+	if u == nil || res.CheckedAt.IsZero() || res.State == proto.RelayOK || res.State == proto.RelayChecking {
+		return false
+	}
+	return res.CheckedAt.Before(u.at.Add(-u.skew).Add(time.Second))
+}
+
+// againIn is how long until the control server checks anew rather than
+// answer with that check: 10 seconds after it, and a second's leeway.
+func (u *upSince) againIn(res *proto.RelayStatus) time.Duration {
+	return min(time.Until(res.CheckedAt.Add(u.skew).Add(11*time.Second)), 15*time.Second)
+}
+
 // probeWords say what a probe found.
 var probeWords = map[string]string{
 	proto.RelayProbeRefused:     "没有程序在听",
@@ -391,9 +451,18 @@ var probeWords = map[string]string{
 // it words them (the card says the same). unreachable, if not nil, says
 // more should the relay prove unreachable (the router's mapping failed),
 // unless the control server said it already.
-func (h *host) reportCheck(ctx context.Context, st *steps, ctl *controlClient, tcp, udp int, scope string, unreachable func()) int {
+func (h *host) reportCheck(ctx context.Context, st *steps, ctl *controlClient, tcp, udp int, scope string, unreachable func(), up *upSince) int {
 	st.doing("从外网检查能不能连上")
 	res, err := h.check(ctx, ctl)
+	if err == nil && up.before(res) {
+		// A check made while it was starting, which a control server from
+		// before 11-15 answers with for a few seconds: ask once that is
+		// over, for one of the relay as it is now.
+		if wait := up.againIn(res); wait > 0 {
+			time.Sleep(wait)
+		}
+		res, err = h.check(ctx, ctl)
+	}
 	if errors.Is(err, errNoCheck) {
 		st.ok("服务在运行，端口 TCP %d、UDP %d", tcp, udp)
 		st.note("从外网能不能连上，以 Deneb 里的状态为准；连不上的话，请在云服务商的安全组里放行 TCP %d、UDP %d", tcp, udp)

@@ -386,7 +386,13 @@ func (h *host) installService(kind, scope string, s spec) (service string, notes
 		if err := h.restartLoose(s, user); err != nil {
 			return "", notes, err
 		}
-		notes = append(notes, "这台机器上没有服务管理程序，也没有 cron：重启以后它不会自己运行。请把这一行加进开机运行的脚本："+shellJoin(s.runArgs()))
+		if scope == scopeUser && h.exists("/run/systemd/system") && h.has("systemctl") {
+			// systemd runs, but this user has no manager of their own to
+			// ask: no login session (su, a shell in a container).
+			notes = append(notes, "当前用户用不了 systemd 的用户服务，也没有 cron：重启以后它不会自己运行。用 sudo 运行安装命令可以装成系统服务；或者把这一行加进开机运行的脚本："+shellJoin(s.runArgs()))
+		} else {
+			notes = append(notes, "这台机器上没有服务管理程序，也没有 cron：重启以后它不会自己运行。请把这一行加进开机运行的脚本："+shellJoin(s.runArgs()))
+		}
 	default:
 		return "", nil, fmt.Errorf("不认识的启动方式 %q", kind)
 	}
@@ -425,6 +431,11 @@ func (h *host) removeService(in *installed, data string) error {
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%v%s", err, outTail(out)))
 		}
+	}
+	if in.Service == "" && (in.Init == initSystemd || in.Init == initOpenRC || in.Init == initProcd) {
+		// An install that stopped before it wrote its service.
+		h.stopLoose(data)
+		return nil
 	}
 	switch in.Init {
 	case initSystemd:

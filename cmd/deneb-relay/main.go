@@ -274,9 +274,13 @@ func run(ctx context.Context, cfg config, logf func(string, ...any), ready liste
 	if err := writeFile(cfg.data, listenFile, []byte(ln.Addr().String())); err != nil {
 		return err
 	}
+	// STUN stops with run, even if the process stays: one Deneb no longer
+	// uses waits for a signal holding no port (cmdRun).
+	stunCtx, stopSTUN := context.WithCancel(ctx)
+	defer stopSTUN()
 	var stun *stunserver.STUNServer
 	if cfg.stun != "" {
-		stun = stunserver.New(ctx)
+		stun = stunserver.New(stunCtx)
 		if err := stun.Listen(cfg.stun); err != nil {
 			return fmt.Errorf("STUN: %w", err)
 		}
@@ -318,6 +322,36 @@ func run(ctx context.Context, cfg config, logf func(string, ...any), ready liste
 	if err != nil {
 		return fmt.Errorf("DERP key: %w", err)
 	}
+
+	// It answers from here on, before the control server hears from it: a
+	// check from outside, made as the server learns it is registered or
+	// online again, finds it up (a check is a TLS handshake and a STUN
+	// request). A request that comes this early waits until it is set up.
+	up := make(chan struct{})
+	var handler http.Handler
+	srv := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			select {
+			case <-up:
+				handler.ServeHTTP(w, req)
+			case <-req.Context().Done():
+			case <-time.After(10 * time.Second):
+				http.Error(w, "starting", http.StatusServiceUnavailable)
+			}
+		}),
+		TLSConfig:         tlsConfig(cert),
+		ReadHeaderTimeout: 10 * time.Second,
+		// DERP upgrades HTTP/1.1; an empty map turns HTTP/2 off.
+		TLSNextProto: map[string]func(*http.Server, *tls.Conn, http.Handler){},
+		ErrorLog:     log.New(logWriter(logf), "http: ", 0),
+	}
+	defer srv.Close()
+	errc := make(chan error, 4)
+	go func() { errc <- srv.ServeTLS(ln, "", "") }()
+	if stun != nil {
+		go func() { errc <- stun.Serve() }()
+	}
+
 	ctl, err := newControlClient(cfg.control, cfg.controlPin)
 	if err != nil {
 		return err
@@ -361,19 +395,8 @@ func run(ctx context.Context, cfg config, logf func(string, ...any), ready liste
 	}
 	logf("relay %s (%s, %s) on %s, STUN %v, pin %s", st.Relay, st.Name, st.Source, ln.Addr(), cfg.stun, pin)
 
-	srv := &http.Server{
-		Handler:           r.handler(),
-		TLSConfig:         tlsConfig(cert),
-		ReadHeaderTimeout: 10 * time.Second,
-		// DERP upgrades HTTP/1.1; an empty map turns HTTP/2 off.
-		TLSNextProto: map[string]func(*http.Server, *tls.Conn, http.Handler){},
-		ErrorLog:     log.New(logWriter(logf), "http: ", 0),
-	}
-	errc := make(chan error, 4)
-	go func() { errc <- srv.ServeTLS(ln, "", "") }()
-	if stun != nil {
-		go func() { errc <- stun.Serve() }()
-	}
+	handler = r.handler()
+	close(up)
 	go func() { errc <- r.syncLoop(ctx, cfg.syncEvery) }()
 	go r.watch(ctx)
 	find := findAddrs

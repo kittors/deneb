@@ -159,15 +159,17 @@ func (h *host) install(ctx context.Context, o installOpts) int {
 		st.fail("%v", err)
 		return exitFailed
 	}
-	if skew, err := clockSkew(ctx, ctl); err != nil {
+	skew, err := clockSkew(ctx, ctl)
+	switch {
+	case err != nil:
 		st.fail("连不上 Deneb 服务器：%v", err)
 		st.note("这台服务器要能访问外网；要走代理的，请设好 HTTPS_PROXY 再运行")
 		return exitFailed
-	} else if abs(skew) > skewBad {
+	case abs(skew) > skewBad:
 		st.fail("系统时间不对：比 Deneb 服务器%s", skewWords(skew))
 		st.note("请先把时间校准再运行：timedatectl set-ntp true，或者装 chrony、ntp")
 		return exitFailed
-	} else if abs(skew) > skewWarn {
+	case abs(skew) > skewWarn:
 		st.warn("系统时间%s，最好校准一下（timedatectl set-ntp true）", skewWords(skew))
 	}
 	if p := proxyInUse(); p != "" {
@@ -197,13 +199,33 @@ func (h *host) install(ctx context.Context, o installOpts) int {
 		}
 	}
 
+	// What this run makes, taken back if it fails before the relay is
+	// registered: a failed install leaves the machine as it found it.
+	// Once registered, what is here is written in config.json instead, for
+	// a run again to finish or uninstall to take away.
+	var made []func()
+	abort := func() int {
+		for i := len(made) - 1; i >= 0; i-- {
+			made[i]()
+		}
+		if len(made) > 0 {
+			st.note("这台上已经改动的都还原了")
+		}
+		return exitFailed
+	}
+	if !h.exists(l.data) {
+		made = append(made, func() { h.remove(l.data) })
+	}
+
 	// Take over the Docker relay first: it frees its ports.
 	if docker != nil {
 		ds, err := h.takeOverDocker(docker, l.data)
 		if err != nil {
 			st.fail("迁 Docker 里的中转站：%v", err)
-			return exitFailed
+			h.giveBack(docker)
+			return abort()
 		}
+		made = append(made, func() { h.giveBack(docker) })
 		ds.Control, ds.ControlPin = s.Control, s.ControlPin
 		*s = *ds
 		st.ok("已迁过来：Docker 容器 %s 停下了，留着没删", docker.name)
@@ -229,12 +251,12 @@ func (h *host) install(ctx context.Context, o installOpts) int {
 	if !ok {
 		st.fail("端口 TCP %d 或 UDP %d 被占了：%s", wantTCP, wantUDP, h.portUsers(wantTCP, wantUDP))
 		st.note("换一组试试：deneb-relay install --tcp-port <端口> --udp-port <端口>")
-		return exitFailed
+		return abort()
 	}
 	lowPort := tcp < 1024 || udp < 1024
 	if lowPort && (l.scope != scopeSystem || kind != initSystemd) {
 		st.fail("1024 以下的端口只有 systemd 的系统服务能用")
-		return exitFailed
+		return abort()
 	}
 	if tcp != wantTCP || udp != wantUDP {
 		st.ok("端口：TCP %d、UDP %d（%d、%d 被占了：%s）", tcp, udp, wantTCP, wantUDP, h.portUsers(wantTCP, wantUDP))
@@ -268,6 +290,9 @@ func (h *host) install(ctx context.Context, o installOpts) int {
 	s.NoPortMap = s.NoPortMap || o.noPortMap
 
 	// The program.
+	if !h.exists(l.binDir) {
+		made = append(made, func() { h.remove(l.binDir) })
+	}
 	instVer := ""
 	if h.exists(l.bin) {
 		instVer = h.progVersion(h.path(l.bin))
@@ -287,40 +312,30 @@ func (h *host) install(ctx context.Context, o installOpts) int {
 		}
 		if err != nil {
 			st.fail("装程序到 %s：%v", l.binDir, err)
-			return exitFailed
+			return abort()
 		}
 		if v := h.progVersion(h.path(l.bin)); v == "" {
 			st.fail("装好的程序在 %s 运行不了（这个目录不让运行程序？）", l.binDir)
-			return exitFailed
+			return abort()
 		}
 	}
+	hadLink := h.exists(l.link)
 	if err := h.link(l.bin, l.link); err != nil {
 		st.warn("没能放链接 %s：%v；用 %s 运行它", l.link, err, l.bin)
-	} else if l.scope == scopeUser && !strings.Contains(":"+h.getenv("PATH")+":", ":"+filepath.Dir(l.link)+":") {
-		st.note("以后查看、卸载用 %s status、%s uninstall", l.link, l.link)
+	} else {
+		if !hadLink {
+			made = append(made, func() { os.Remove(h.path(l.link)) })
+		}
+		if l.scope == scopeUser && !strings.Contains(":"+h.getenv("PATH")+":", ":"+filepath.Dir(l.link)+":") {
+			st.note("以后查看、卸载用 %s status、%s uninstall", l.link, l.link)
+		}
 	}
 	h.labelForSELinux(l.binDir)
-
-	// Its own user.
-	sp := spec{bin: l.bin, data: l.data, lowPort: lowPort}
-	var acct account
-	madeUser := prev != nil && prev.MadeUser
-	if l.scope == scopeSystem {
-		a, made, err := h.ensureUser(relayUser, l.data)
-		if err != nil {
-			st.fail("%v", err)
-			return exitFailed
-		}
-		acct, sp.user, madeUser = a, a.name, madeUser || made
-	}
-	if kind == initOpenRC || kind == initCron || kind == initNone {
-		sp.log = filepath.Join(l.data, "relay.log")
-	}
 
 	// Its identity: the certificate devices trust, its keys.
 	if err := os.MkdirAll(h.path(l.data), 0o700); err != nil {
 		st.fail("%v", err)
-		return exitFailed
+		return abort()
 	}
 	_, pin, err := loadCert(h.path(l.data), "deneb-relay")
 	if err == nil {
@@ -328,7 +343,7 @@ func (h *host) install(ctx context.Context, o installOpts) int {
 	}
 	if err != nil {
 		st.fail("证书：%v", err)
-		return exitFailed
+		return abort()
 	}
 
 	// Registered already, or now with the join code.
@@ -352,7 +367,7 @@ func (h *host) install(ctx context.Context, o installOpts) int {
 	rs, err := h.ensureRegistered(ctx, ctl, l.data, token, info)
 	if err != nil {
 		st.fail("%v", err)
-		return exitFailed
+		return abort()
 	}
 	if rs.fresh && rs.state.existing {
 		st.ok("这台已经是中转站“%s”了：重新装好了它，没有另建一个", rs.state.Name)
@@ -364,68 +379,112 @@ func (h *host) install(ctx context.Context, o installOpts) int {
 		st.ok("中转站“%s”", rs.state.Name)
 	}
 
-	// The firewall, before the service starts listening. Opened before for
-	// the same ports, it is left as it is (iptables would take the same
-	// rule twice); for other ports, the old rules go first.
-	var undo [][]string
-	var fwKind string
-	var fwOpen bool
-	if prev != nil {
-		undo, fwKind, fwOpen = prev.Firewall, prev.FirewallKind, prev.FirewallOpen
-	}
-	opened := fwOpen && len(undo) > 0
-	if opened && tcp == oldTCP && udp == oldUDP {
-		st.ok("系统防火墙 %s：TCP %d、UDP %d 已经放行", fwKind, tcp, udp)
-	} else if opened {
-		if err := h.apply(undo); err != nil {
-			st.warn("收回系统防火墙里以前放行的端口：%v", err)
-		}
-		undo, fwOpen, opened = nil, false, false
-	}
-	if l.scope == scopeSystem && !opened {
-		if fw := h.detectFirewall(tcp, udp); fw != nil {
-			fwKind = fw.kind
-			what := fmt.Sprintf("TCP %d、UDP %d", tcp, udp)
-			allow := o.firewall == "open" || o.firewall == "ask" && o.ask(h, fmt.Sprintf("系统防火墙 %s 在用。要放行 %s 吗？", fw.kind, what))
-			if allow {
-				if err := h.apply(fw.open); err != nil {
-					st.fail("系统防火墙 %s：%v", fw.kind, err)
-				} else {
-					st.ok("系统防火墙 %s：已放行 %s", fw.kind, what)
-					undo, fwOpen = fw.undo, true
-					if fw.keep != "" {
-						st.note("%s", fw.keep)
-					}
-				}
-			} else {
-				st.warn("系统防火墙 %s 在用，没有放行。要放行请运行：", fw.kind)
-				st.notes(commandLines(fw.open, true))
-			}
-		}
-	}
-
-	// The data is the relay's alone.
-	if l.scope == scopeSystem {
-		for _, p := range []string{l.data, l.binDir} {
-			if err := h.chownTree(p, acct.uid, acct.gid); err != nil {
-				st.fail("%v", err)
-				return exitFailed
-			}
-		}
-	}
+	// Registered: what is made from here on stays, and config.json says so
+	// as it comes, for a run again to finish the install, or uninstall to
+	// take it all away.
+	made = nil
 	fromDocker := ""
 	if docker != nil {
 		fromDocker = docker.name
 	} else if prev != nil {
 		fromDocker = prev.FromDocker
 	}
-	s.Install = &installed{Version: nowVer, At: time.Now().UTC().Truncate(time.Second), Scope: l.scope, Init: kind,
-		Bin: l.bin, Link: l.link, User: sp.user, MadeUser: madeUser, Log: sp.log, Firewall: undo, FirewallKind: fwKind, FirewallOpen: fwOpen,
-		FromDocker: fromDocker}
+	in := &installed{Version: nowVer, At: time.Now().UTC().Truncate(time.Second), Scope: l.scope, Init: kind,
+		Bin: l.bin, Link: l.link, FromDocker: fromDocker}
+	if prev != nil {
+		in.User, in.MadeUser, in.Service = prev.User, prev.MadeUser, prev.Service
+		in.Firewall, in.FirewallKind, in.FirewallOpen = prev.Firewall, prev.FirewallKind, prev.FirewallOpen
+	}
+	s.Install = in
+	record := func() error { return saveSettings(h.path(l.data), s) }
+	unfinished := func() int {
+		prog := l.link
+		if !h.exists(l.link) {
+			prog = l.bin
+		}
+		st.note("没装完：解决上面的问题后，再运行一次安装命令就行，加入码不用重新生成；不装了请运行 %s uninstall", prog)
+		return exitFailed
+	}
+	if err := record(); err != nil {
+		st.fail("%v", err)
+		return unfinished()
+	}
+
+	// Its own user.
+	sp := spec{bin: l.bin, data: l.data, lowPort: lowPort}
+	var acct account
+	if l.scope == scopeSystem {
+		a, newUser, err := h.ensureUser(relayUser, l.data)
+		if err != nil {
+			st.fail("%v", err)
+			return unfinished()
+		}
+		acct, sp.user = a, a.name
+		in.User, in.MadeUser = a.name, in.MadeUser || newUser
+		record()
+	}
+	if kind == initOpenRC || kind == initCron || kind == initNone {
+		sp.log = filepath.Join(l.data, "relay.log")
+	}
+	in.Log = sp.log
+
+	// The firewall, before the service starts listening. Opened before for
+	// the same ports, it is left as it is (iptables would take the same
+	// rule twice); for other ports, the old rules go first. Only a port it
+	// does not let in yet is opened, and so taken back later: a rule the
+	// person made stays theirs.
+	opened := in.FirewallOpen && len(in.Firewall) > 0
+	if opened && tcp == oldTCP && udp == oldUDP {
+		st.ok("系统防火墙 %s：TCP %d、UDP %d 已经放行", in.FirewallKind, tcp, udp)
+	} else if opened {
+		if err := h.apply(in.Firewall); err != nil {
+			st.warn("收回系统防火墙里以前放行的端口：%v", err)
+		}
+		in.Firewall, in.FirewallOpen, opened = nil, false, false
+	}
+	if l.scope == scopeSystem && !opened {
+		if fw := h.detectFirewall(tcp, udp); fw != nil {
+			in.FirewallKind = fw.kind
+			what, had := strings.Join(fw.opening, "、"), ""
+			if len(fw.had) > 0 {
+				had = "（" + strings.Join(fw.had, "、") + " 原来就放行了）"
+			}
+			switch {
+			case len(fw.open) == 0:
+				st.ok("系统防火墙 %s：%s 原来就放行了", fw.kind, strings.Join(fw.had, "、"))
+				in.FirewallOpen = true
+			case o.firewall == "open" || o.firewall == "ask" && o.ask(h, fmt.Sprintf("系统防火墙 %s 在用。要放行 %s 吗？%s", fw.kind, what, had)):
+				if err := h.apply(fw.open); err != nil {
+					h.apply(fw.undo) // what went in before the one that failed
+					st.fail("系统防火墙 %s：%v", fw.kind, err)
+				} else {
+					st.ok("系统防火墙 %s：已放行 %s%s", fw.kind, what, had)
+					in.Firewall, in.FirewallOpen = fw.undo, true
+					if fw.keep != "" {
+						st.note("%s", fw.keep)
+					}
+				}
+			default:
+				st.warn("系统防火墙 %s 在用，没有放行 %s。要放行请运行：", fw.kind, what)
+				st.notes(commandLines(fw.open, true))
+			}
+		}
+	}
+	record()
+
+	// The data is the relay's alone.
+	if l.scope == scopeSystem {
+		for _, p := range []string{l.data, l.binDir} {
+			if err := h.chownTree(p, acct.uid, acct.gid); err != nil {
+				st.fail("%v", err)
+				return unfinished()
+			}
+		}
+	}
 	os.Remove(h.path(filepath.Join(l.data, portMapFile))) // the restarted relay writes its own
 	service, notes, err := h.installService(kind, l.scope, sp)
-	s.Install.Service = service
-	if serr := saveSettings(h.path(l.data), s); serr != nil && err == nil {
+	in.Service = service
+	if serr := record(); serr != nil && err == nil {
 		err = serr
 	}
 	if l.scope == scopeSystem {
@@ -434,7 +493,7 @@ func (h *host) install(ctx context.Context, o installOpts) int {
 	if err != nil {
 		st.fail("装成服务：%v", err)
 		st.notes(notes)
-		return exitFailed
+		return unfinished()
 	}
 	switch {
 	case kind == initNone:
@@ -448,17 +507,18 @@ func (h *host) install(ctx context.Context, o installOpts) int {
 	}
 	st.notes(notes)
 
-	// It answers here.
+	// It answers here, before Deneb checks from outside.
 	if !h.waitListening(tcp, h.waitFor) {
 		st.fail("服务没有起来")
-		if log := h.recentLog(s.Install, 15); log != "" {
+		if log := h.recentLog(in, 15); log != "" {
 			st.notes(strings.Split(log, "\n"))
 		}
 		if strings.TrimSpace(h.read("/sys/fs/selinux/enforce")) == "1" {
 			st.note("这台开着 SELinux：用 ausearch -m avc -ts recent 看看是不是它拦的")
 		}
-		return exitFailed
+		return unfinished()
 	}
+	up := &upSince{at: time.Now(), skew: skew}
 
 	// Behind a router: what came of asking it to forward the ports. A
 	// mapping made is said now; one that failed only if devices cannot
@@ -470,7 +530,7 @@ func (h *host) install(ctx context.Context, o installOpts) int {
 	}
 
 	// And from outside.
-	return h.reportCheck(ctx, st, ctl, tcp, udp, l.scope, unreachable)
+	return h.reportCheck(ctx, st, ctl, tcp, udp, l.scope, unreachable, up)
 }
 
 var mapMethods = map[string]string{"pcp": "PCP", "natpmp": "NAT-PMP", "upnp": "UPnP"}
@@ -569,7 +629,9 @@ func (o *installOpts) ask(h *host, q string) bool {
 // ensureUser makes the user the relay runs as, unless it is there.
 func (h *host) ensureUser(name, home string) (a account, made bool, err error) {
 	if a, ok := h.lookupUser(name); ok {
-		return a, false, nil
+		// One whose home is the relay's data is install's own, from a run
+		// that did not finish (before 0.1.9 a failed install left it).
+		return a, a.home == home, nil
 	}
 	nologin := "/bin/false"
 	for _, p := range []string{"/usr/sbin/nologin", "/sbin/nologin"} {

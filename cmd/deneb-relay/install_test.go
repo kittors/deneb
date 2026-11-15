@@ -492,7 +492,7 @@ func TestReportCheckUnreachable(t *testing.T) {
 				Message: "从外网连不上 TCP 47445", Advice: "请在云服务商的安全组里放行：TCP 47445、UDP 47478"}}}, nil
 	}
 	hinted := false
-	rc := f.reportCheck(context.Background(), &steps{w: &f.out}, nil, 47445, 47478, scopeSystem, func() { hinted = true })
+	rc := f.reportCheck(context.Background(), &steps{w: &f.out}, nil, 47445, 47478, scopeSystem, func() { hinted = true }, nil)
 	out := f.out.String()
 	for _, want := range []string{"✗ 从外网（Deneb 服务器）连不上 203.0.113.7 的 TCP 47445：没有回应，路上被挡了", "✗ 从外网连不上 TCP 47445", "  请在云服务商的安全组里放行：TCP 47445、UDP 47478", "还不能用：连不上"} {
 		if !strings.Contains(out, want) {
@@ -517,7 +517,7 @@ func TestReportCheckSkipped(t *testing.T) {
 				{From: "control", Family: "ipv6", Addr: netip.MustParseAddr("2001:db8::8"), TCP: proto.RelayProbeOK, UDP: proto.RelayProbeSkipped},
 			}}, nil
 	}
-	rc := f.reportCheck(context.Background(), &steps{w: &f.out}, nil, 47445, 47478, scopeSystem, nil)
+	rc := f.reportCheck(context.Background(), &steps{w: &f.out}, nil, 47445, 47478, scopeSystem, nil, nil)
 	out := f.out.String()
 	for _, want := range []string{
 		"✓ 从外网（Deneb 服务器）连得上 203.0.113.7：TCP 47445、UDP 47478\n",
