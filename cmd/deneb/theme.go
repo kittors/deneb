@@ -1,6 +1,10 @@
 package main
 
-import "github.com/egoist/mygo/ui"
+import (
+	"time"
+
+	"github.com/egoist/mygo/ui"
+)
 
 // palette holds the design's colors (design/DESIGN.md §3.3). The client
 // keeps its own palette instead of the desktop's accent color so that it
@@ -86,3 +90,38 @@ func colors(c *ui.Context) *palette {
 
 var white = ui.Hex("#ffffff")
 var black = ui.Hex("#000000")
+
+// The design's scale (DESIGN §3.9, AGENTS.md §2), in points: the sizes of
+// type with their line heights, the spacing and the radii. The desktop
+// draws with the smaller ones; type of 40 and up is the website's
+// headlines only. web/tokens/gen writes them into web/tokens.css as
+// --type-<n> and --leading-<n>, --space-<n> and --radius-<n>.
+var (
+	typeScale   = [...]float32{12, 13, 15, 20, 28, 40, 56, 80}
+	typeLeading = [...]float32{1.5, 1.5, 1.7, 1.4, 1.3, 1.2, 1.15, 1.1}
+	spaceScale  = [...]float32{4, 8, 12, 16, 24, 32, 48, 64, 96, 128, 160}
+	radiusScale = [...]float32{4, 8, 12, 16, 20, 24, 28}
+)
+
+// Shadows (DESIGN §3.9), two soft layers each: the y offset, blur and
+// strength of one layer, then of the other. The strengths are the light
+// palette's; the dark one's shadow color, much stronger, takes them up in
+// proportion (web/tokens/gen).
+var (
+	shadowSmall  = [...]float32{1, 2, 0.06, 1, 1, 0.04}
+	shadowMedium = [...]float32{8, 24, 0.08, 2, 6, 0.05}
+	shadowLarge  = [...]float32{32, 80, 0.14, 8, 24, 0.06}
+)
+
+// The web's motion beside the springs (DESIGN §5): a fade, and the step
+// between things that come one after another. web/tokens/gen writes them
+// with the springs into web/tokens.css: --motion-<name> and --ease-<spring>.
+var (
+	fadeTime    = 160 * time.Millisecond
+	staggerTime = 70 * time.Millisecond
+)
+
+// The website's widths (DESIGN §14.16): its words, its pictures, the docs'
+// contents beside them, and the window at its own size, as the first
+// screen shows it. web/tokens/gen writes them as --width-<name>.
+var siteWidth = struct{ Text, Content, Toc, Window float32 }{Text: 680, Content: 980, Toc: 224, Window: 1180}

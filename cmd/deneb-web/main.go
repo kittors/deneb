@@ -7,9 +7,10 @@
 //	deneb-web -mock          # an in-memory world instead, for development
 //
 // The browser talks to deneb-web only. /api/ goes to the control server over
-// TLS trusted by its pinned key (as devices trust it); everything else is
-// the app, with index.html for any path the app routes itself (/i/<token>,
-// /lan/…).
+// TLS trusted by its pinned key (as devices trust it); / for whoever is not
+// signed in, /download and /docs are the website (site.go); everything else
+// is the app, with index.html for any path the app routes itself
+// (/i/<token>, /lan/…).
 package main
 
 import (
@@ -87,11 +88,11 @@ func apiHandler(control, pin string, mock bool) (http.Handler, error) {
 	return newProxy(u, pin)
 }
 
-// newServer puts the app and the API on one origin.
+// newServer puts the app, the website (site.go) and the API on one origin.
 func newServer(static string, api http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/api/", api)
-	mux.Handle("/", gzipped(appFiles(static)))
+	mux.Handle("/", gzipped(sitePages(static, appFiles(static))))
 	return headers(mux)
 }
 

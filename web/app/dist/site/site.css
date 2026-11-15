@@ -1,0 +1,1006 @@
+/* The website (DESIGN §14.16), the way Apple's product pages go: one thing
+   a screen, big headlines, the real window as the picture, light blocks and
+   near-black ones in turn. Every size is a token of web/tokens.css
+   (cmd/deneb/theme.go): --type-* and --leading-*, --space-*, --radius-*,
+   --shadow-*, --width-*, --motion-* and --ease-*; the colors are the
+   palettes'. A near-black block is data-theme="dark": the dark palette
+   inside it, on --black. Widths: wide ≥ 1069, middle 735–1068, narrow
+   ≤ 734. */
+
+* {
+  box-sizing: border-box;
+}
+/* Hidden is hidden, whatever a component's own display. */
+[hidden] {
+  display: none !important;
+}
+/* The page's own ground: the palette's in light; in dark, black, so that
+   the window and the near-black blocks stand out from it. */
+:root {
+  --page: var(--bg);
+}
+[data-theme='dark'] {
+  --page: var(--black);
+}
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-padding-top: var(--space-48);
+}
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Microsoft YaHei UI', 'Noto Sans CJK SC', sans-serif;
+  font-size: var(--type-15);
+  line-height: var(--leading-15);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+a {
+  color: inherit;
+  text-decoration: none;
+}
+img,
+picture,
+video {
+  display: block;
+  max-width: 100%;
+}
+img,
+video {
+  height: auto;
+}
+h1,
+h2,
+h3,
+p,
+figure {
+  margin: 0;
+}
+h1,
+h2,
+h3 {
+  font-weight: 600;
+  text-wrap: balance;
+}
+p {
+  text-wrap: pretty;
+}
+/* Headlines and lines break between their phrases only, never inside a
+   word. */
+h1 span,
+h2 span,
+.sub span,
+.say span,
+.note span {
+  display: inline-block;
+}
+code,
+.mono {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+.wrap {
+  width: 100%;
+  max-width: calc(var(--width-content) + 2 * var(--space-32));
+  margin: 0 auto;
+  padding: 0 var(--space-32);
+}
+.wrap.narrow {
+  max-width: calc(var(--width-text) + 2 * var(--space-32));
+}
+
+/* ---- The top bar: thin, with the page, frosted once the page goes under -- */
+.top {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--page);
+  color: var(--ink);
+  transition:
+    background-color var(--motion-fade) ease-out,
+    box-shadow var(--motion-fade) ease-out,
+    color var(--motion-fade) ease-out;
+}
+.top.glass {
+  background: color-mix(in srgb, var(--page) 80%, transparent);
+  -webkit-backdrop-filter: saturate(180%) blur(var(--space-24));
+  backdrop-filter: saturate(180%) blur(var(--space-24));
+  box-shadow: 0 1px 0 var(--line-2);
+}
+.top .bar {
+  display: flex;
+  align-items: center;
+  max-width: calc(var(--width-content) + 2 * var(--space-32));
+  height: var(--space-48);
+  margin: 0 auto;
+  padding: 0 var(--space-32);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  font-size: var(--type-15);
+  font-weight: 600;
+}
+.brand svg {
+  color: var(--primary);
+}
+.top nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-24);
+  margin-left: auto;
+  font-size: var(--type-13);
+  line-height: var(--leading-13);
+}
+.top nav a:not(.btn) {
+  color: var(--ink-2);
+  transition: color var(--motion-fade) ease-out;
+}
+.top nav a:not(.btn):hover,
+.top nav a.here {
+  color: var(--ink);
+}
+.open-app,
+[data-signed-in] .signin {
+  display: none;
+}
+[data-signed-in] .open-app {
+  display: inline;
+}
+
+/* ---- Buttons and links --------------------------------------------------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: calc(var(--space-32) + var(--space-4));
+  padding: 0 var(--space-16);
+  border: 0;
+  border-radius: var(--radius-full);
+  font: inherit;
+  font-size: var(--type-15);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fade) ease-out,
+    transform var(--motion-fade) ease-out;
+}
+.btn:active {
+  transform: scale(0.97);
+}
+.btn.primary {
+  background: var(--primary);
+  color: var(--white);
+}
+.btn.primary:hover {
+  background: var(--primary-2);
+}
+.btn.lg {
+  height: calc(var(--space-32) + var(--space-12));
+  padding: 0 var(--space-24);
+}
+.btn.sm {
+  height: calc(var(--space-24) + var(--space-4));
+  padding: 0 var(--space-12);
+  font-size: var(--type-13);
+}
+/* A link that goes on: blue, a small chevron after it. */
+.more {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--primary);
+  font: inherit;
+  font-size: var(--type-15);
+  cursor: pointer;
+}
+.more svg {
+  transition: transform var(--motion-fade) ease-out;
+}
+.more:hover {
+  text-decoration: underline;
+  text-underline-offset: var(--space-4);
+}
+.more:hover svg {
+  transform: translateX(2px);
+}
+/* A link in a list or a line of words: blue, nothing after it. */
+.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--primary);
+  font: inherit;
+  cursor: pointer;
+}
+.link:hover {
+  text-decoration: underline;
+  text-underline-offset: var(--space-4);
+}
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-4);
+}
+.btn:focus-visible {
+  border-radius: var(--radius-full);
+}
+
+/* ---- The first screen ---------------------------------------------------- */
+.hero {
+  padding-top: var(--space-96);
+  padding-bottom: var(--space-128);
+  text-align: center;
+  overflow: hidden;
+}
+.hero h1 {
+  font-size: var(--type-80);
+  line-height: var(--leading-80);
+}
+.hero .sub {
+  margin-top: var(--space-16);
+  font-size: var(--type-28);
+  line-height: var(--leading-28);
+  color: var(--ink-2);
+}
+.ctas {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-16) var(--space-32);
+  margin-top: var(--space-32);
+}
+.product {
+  position: relative;
+  max-width: calc(var(--width-window) + 2 * var(--space-32));
+  margin: var(--space-64) auto 0;
+  padding: 0 var(--space-32);
+}
+/* The soft light the window stands in: wide and faint, no color of its own
+   (a grey in light, a little light in dark). */
+.product::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  width: 116%;
+  height: 120%;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(closest-side, var(--line-2), transparent);
+  pointer-events: none;
+}
+.window {
+  position: relative;
+  border-radius: var(--radius-16);
+  overflow: hidden;
+  background: var(--bg);
+  box-shadow:
+    0 0 0 1px var(--line-2),
+    var(--shadow-lg);
+}
+
+/* ---- A block: one thing, its headline, one line, one picture ------------- */
+.block {
+  padding: var(--space-160) 0;
+  background: var(--page);
+  color: var(--ink);
+  text-align: center;
+}
+/* Near-black: the dark palette's ground, in light and dark alike. */
+.block.dark {
+  background: var(--bg);
+}
+.block.well {
+  background: var(--well);
+}
+.block h2 {
+  font-size: var(--type-56);
+  line-height: var(--leading-56);
+}
+.block .say {
+  max-width: var(--width-text);
+  margin: var(--space-16) auto 0;
+  font-size: var(--type-20);
+  line-height: var(--leading-20);
+  color: var(--ink-2);
+}
+.block .links {
+  display: flex;
+  justify-content: center;
+  gap: var(--space-32);
+  margin-top: var(--space-24);
+}
+.pic {
+  position: relative;
+  max-width: var(--width-content);
+  margin: var(--space-64) auto 0;
+  border-radius: var(--radius-16);
+  overflow: hidden;
+  background: var(--bg);
+  box-shadow:
+    0 0 0 1px var(--line-2),
+    var(--shadow-lg);
+}
+.pic img,
+.pic video,
+.window picture,
+.window img,
+.window video {
+  display: block;
+  width: 100%;
+}
+
+/* ---- The loops: the picture under, the film over it once it plays -------- */
+[data-loop] video {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  opacity: 0;
+  transition: opacity var(--motion-fade) ease-out;
+}
+[data-loop].playing video {
+  opacity: 1;
+}
+/* Stop and go on: the loop runs longer than 5 s. */
+.pause {
+  position: absolute;
+  right: var(--space-16);
+  bottom: var(--space-16);
+  display: grid;
+  place-items: center;
+  width: calc(var(--space-32) + var(--space-4));
+  height: calc(var(--space-32) + var(--space-4));
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--ink) 12%, transparent);
+  -webkit-backdrop-filter: blur(var(--space-16));
+  backdrop-filter: blur(var(--space-16));
+  color: var(--ink);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--motion-fade) ease-out,
+    background-color var(--motion-fade) ease-out;
+}
+[data-loop].playing .pause,
+[data-loop].paused .pause {
+  opacity: 1;
+}
+.pause:hover {
+  background: color-mix(in srgb, var(--ink) 20%, transparent);
+}
+.pause .go,
+.paused .pause .stop {
+  display: none;
+}
+.paused .pause .go {
+  display: block;
+}
+
+/* ---- 开始使用 ------------------------------------------------------------- */
+.steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-32);
+  margin-top: var(--space-64);
+  text-align: left;
+}
+.step .head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  margin-bottom: var(--space-16);
+}
+.num {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: var(--space-24);
+  height: var(--space-24);
+  border-radius: var(--radius-full);
+  background: var(--ink);
+  color: var(--bg);
+  font-size: var(--type-13);
+  font-weight: 600;
+  line-height: 1;
+}
+.step h3 {
+  font-size: var(--type-20);
+  line-height: var(--leading-20);
+}
+.step .shot {
+  aspect-ratio: 6 / 5;
+  border-radius: var(--radius-12);
+  overflow: hidden;
+  background: var(--bg);
+  box-shadow:
+    0 0 0 1px var(--line),
+    var(--shadow-sm);
+}
+.step .shot img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.shot.get {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: var(--space-4);
+}
+.shot.get img {
+  width: var(--space-64);
+  height: var(--space-64);
+  margin-bottom: var(--space-8);
+}
+.shot.get b {
+  font-size: var(--type-20);
+  line-height: var(--leading-20);
+}
+.shot.get span {
+  font-size: var(--type-13);
+  color: var(--ink-2);
+}
+.shot.get .btn {
+  margin-top: var(--space-16);
+}
+.block .note {
+  margin-top: var(--space-32);
+  font-size: var(--type-13);
+  line-height: var(--leading-13);
+  color: var(--ink-2);
+}
+
+/* ---- The foot ------------------------------------------------------------ */
+.foot {
+  border-top: 1px solid var(--line);
+  color: var(--ink-2);
+  font-size: var(--type-12);
+  line-height: var(--leading-12);
+}
+.foot .wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8) var(--space-24);
+  padding-top: var(--space-24);
+  padding-bottom: var(--space-24);
+}
+.foot nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8) var(--space-24);
+}
+.foot a {
+  transition: color var(--motion-fade) ease-out;
+}
+.foot a:hover {
+  color: var(--ink);
+}
+.foot .c {
+  margin-left: auto;
+  color: var(--ink-3);
+}
+
+/* ---- Coming into view: up a little and in, once (DESIGN §14.16) ----------
+   Only with scripts (theme.js marks the page .js): without them, all of it
+   is there. Stills have it all there too. */
+.js .reveal {
+  opacity: 0;
+  transform: translateY(var(--space-24));
+  transition:
+    opacity var(--motion-smooth) ease-out,
+    transform var(--motion-smooth) var(--ease-smooth);
+  transition-delay: calc(var(--n, 0) * var(--motion-stagger));
+}
+.js .reveal.seen {
+  opacity: 1;
+  transform: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .js .reveal {
+    transform: none;
+  }
+}
+.still .reveal {
+  transition: none;
+}
+
+/* ---- The download page --------------------------------------------------- */
+.page-head {
+  padding-top: var(--space-96);
+  padding-bottom: var(--space-64);
+  text-align: center;
+}
+.page-head h1 {
+  font-size: var(--type-56);
+  line-height: var(--leading-56);
+}
+.page-head .sub {
+  margin-top: var(--space-12);
+  font-size: var(--type-20);
+  line-height: var(--leading-20);
+  color: var(--ink-2);
+}
+.page-head.lost {
+  padding-bottom: var(--space-160);
+}
+.mine {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-8);
+  padding: var(--space-48) var(--space-32);
+  border-radius: var(--radius-20);
+  background: var(--well);
+  text-align: center;
+}
+.mine img {
+  width: var(--space-96);
+  height: var(--space-96);
+  margin-bottom: var(--space-8);
+}
+.mine h2 {
+  font-size: var(--type-28);
+  line-height: var(--leading-28);
+}
+.mine .meta {
+  display: flex;
+  gap: var(--space-8);
+  color: var(--ink-2);
+}
+.mine .size::before {
+  content: '·';
+  margin-right: var(--space-8);
+}
+.mine .btn {
+  margin-top: var(--space-16);
+}
+.mine.phone p {
+  font-size: var(--type-20);
+  line-height: var(--leading-20);
+}
+/* Linux: two files, each its own size and 下载, and the command for both. */
+.mine .files {
+  width: 100%;
+  margin: var(--space-16) 0 0;
+  padding: 0;
+  list-style: none;
+  text-align: left;
+}
+.mine .files li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: var(--space-12) 0;
+  border-top: 1px solid var(--line-2);
+}
+.mine .files li:last-child {
+  border-bottom: 1px solid var(--line-2);
+}
+.mine .files .size {
+  color: var(--ink-2);
+}
+.mine .files .size::before {
+  content: none;
+}
+.mine .files a {
+  margin-left: auto;
+}
+.mine .how-to {
+  margin-top: var(--space-16);
+  color: var(--ink-2);
+}
+/* On the well of the card, the command on the page's own ground. */
+.mine .cmd {
+  width: 100%;
+  background: var(--page);
+  text-align: left;
+}
+.all {
+  padding-top: var(--space-96);
+}
+.all h2,
+.how h2 {
+  font-size: var(--type-28);
+  line-height: var(--leading-28);
+}
+.table {
+  margin-top: var(--space-24);
+  border-top: 1px solid var(--line-2);
+}
+.row {
+  display: grid;
+  grid-template-columns: var(--width-toc) 1fr;
+  gap: var(--space-24);
+  padding: var(--space-16) 0;
+  border-bottom: 1px solid var(--line-2);
+}
+.row b {
+  font-weight: 600;
+}
+.files {
+  display: grid;
+  gap: var(--space-8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.row .files li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-24);
+}
+.row .files .mono {
+  color: var(--ink-2);
+}
+.how {
+  max-width: var(--width-text);
+  padding: var(--space-96) 0 var(--space-160);
+}
+.how p {
+  margin-top: var(--space-12);
+  color: var(--ink-2);
+}
+.how .aside {
+  font-size: var(--type-13);
+  line-height: var(--leading-13);
+}
+.cmd {
+  display: flex;
+  align-items: center;
+  gap: var(--space-16);
+  margin-top: var(--space-12);
+  padding: var(--space-12) var(--space-16);
+  border-radius: var(--radius-12);
+  background: var(--well);
+}
+.cmd code {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  font-size: var(--type-13);
+  white-space: nowrap;
+}
+.cmd .link {
+  flex: none;
+  min-width: calc(var(--space-48) - var(--space-4));
+  text-align: right;
+}
+.disclose {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-top: var(--space-48);
+  font-size: var(--type-15);
+}
+.disclose svg {
+  transition: transform var(--motion-smooth) var(--ease-smooth);
+}
+.disclose[aria-expanded='true'] svg {
+  transform: rotate(90deg);
+}
+.help {
+  overflow: hidden;
+  margin-top: var(--space-8);
+  padding: var(--space-16);
+  border-radius: var(--radius-12);
+  background: var(--well);
+}
+.kv {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-8) var(--space-16);
+  margin: 0;
+}
+.kv dt {
+  color: var(--ink-2);
+}
+.kv dd {
+  margin: 0;
+}
+
+/* ---- The docs ------------------------------------------------------------ */
+.docs {
+  display: grid;
+  grid-template-columns: var(--width-toc) minmax(0, var(--width-text));
+  gap: var(--space-64);
+  padding-top: var(--space-64);
+  padding-bottom: var(--space-128);
+}
+.toc {
+  position: sticky;
+  top: calc(var(--space-48) + var(--space-32));
+  align-self: start;
+  display: grid;
+  gap: var(--space-4);
+}
+.toc b {
+  margin-bottom: var(--space-8);
+  padding: 0 var(--space-12);
+  font-size: var(--type-13);
+  font-weight: 600;
+}
+.toc a {
+  padding: var(--space-4) var(--space-12);
+  border-radius: var(--radius-8);
+  font-size: var(--type-13);
+  color: var(--ink-2);
+  transition:
+    background-color var(--motion-fade) ease-out,
+    color var(--motion-fade) ease-out;
+}
+.toc a:hover {
+  color: var(--ink);
+}
+.toc a.here {
+  background: var(--well);
+  color: var(--ink);
+  font-weight: 500;
+}
+.doc h1 {
+  font-size: var(--type-40);
+  line-height: var(--leading-40);
+}
+.doc .intro {
+  margin: var(--space-12) 0 var(--space-48);
+  font-size: var(--type-20);
+  line-height: var(--leading-20);
+  color: var(--ink-2);
+}
+/* A step: its number on the middle of the first line. */
+.st {
+  display: grid;
+  grid-template-columns: var(--space-24) 1fr;
+  gap: var(--space-4) var(--space-12);
+  margin-bottom: var(--space-32);
+}
+.st > .num {
+  margin-top: calc((var(--leading-15) * var(--type-15) - var(--space-24)) / 2);
+}
+.st > :not(.num) {
+  grid-column: 2;
+}
+.st ul {
+  margin: 0;
+  padding-left: var(--space-16);
+  color: var(--ink-2);
+}
+.st p + p {
+  color: var(--ink-2);
+}
+/* The docs' pictures at the window's own size, a thin edge around them. */
+.doc .shot {
+  width: fit-content;
+  max-width: 100%;
+  border-radius: var(--radius-12);
+  overflow: hidden;
+  box-shadow:
+    0 0 0 1px var(--line-2),
+    var(--shadow-sm);
+}
+.st .shot {
+  margin-top: var(--space-12);
+}
+.doc > p,
+.doc > ul {
+  margin: 0 0 var(--space-16);
+}
+.doc > ul {
+  padding-left: var(--space-16);
+}
+.doc h2 {
+  margin: var(--space-48) 0 var(--space-12);
+  font-size: var(--type-20);
+  line-height: var(--leading-20);
+}
+.doc p a,
+.doc li a,
+.note a {
+  color: var(--primary);
+}
+.doc p a:hover,
+.doc li a:hover,
+.note a:hover {
+  text-decoration: underline;
+  text-underline-offset: var(--space-4);
+}
+.doc > .shot {
+  margin: 0 0 var(--space-24);
+}
+.doc .note {
+  margin: var(--space-8) 0 var(--space-24);
+  padding: var(--space-16);
+  border-radius: var(--radius-12);
+  background: var(--well);
+  font-size: var(--type-13);
+  line-height: var(--leading-13);
+  color: var(--ink-2);
+}
+.doc .note p + p {
+  margin-top: var(--space-8);
+}
+.pager {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-24);
+  margin-top: var(--space-64);
+  padding-top: var(--space-24);
+  border-top: 1px solid var(--line-2);
+}
+.pager a {
+  display: grid;
+  gap: var(--space-4);
+  font-size: var(--type-13);
+  color: var(--ink-2);
+}
+.pager .next {
+  text-align: right;
+}
+.pager a b {
+  font-size: var(--type-15);
+  font-weight: 500;
+  color: var(--primary);
+  transition: color var(--motion-fade) ease-out;
+}
+.pager a:hover b {
+  color: var(--primary-2);
+}
+
+/* ---- Middle widths ------------------------------------------------------- */
+@media (max-width: 1068px) {
+  .hero {
+    padding-top: var(--space-64);
+    padding-bottom: var(--space-96);
+  }
+  .hero h1 {
+    font-size: var(--type-56);
+    line-height: var(--leading-56);
+  }
+  .hero .sub {
+    font-size: var(--type-20);
+    line-height: var(--leading-20);
+  }
+  .product {
+    margin-top: var(--space-48);
+  }
+  .block {
+    padding: var(--space-128) 0;
+  }
+  .block h2 {
+    font-size: var(--type-40);
+    line-height: var(--leading-40);
+  }
+  .pic {
+    margin-top: var(--space-48);
+  }
+  .page-head h1 {
+    font-size: var(--type-40);
+    line-height: var(--leading-40);
+  }
+  .docs {
+    gap: var(--space-48);
+  }
+}
+
+/* ---- Narrow -------------------------------------------------------------- */
+@media (max-width: 734px) {
+  .wrap,
+  .top .bar,
+  .product {
+    padding: 0 var(--space-24);
+  }
+  .top nav {
+    gap: var(--space-16);
+  }
+  .hero {
+    padding-top: var(--space-48);
+    padding-bottom: var(--space-64);
+  }
+  .hero h1 {
+    font-size: var(--type-40);
+    line-height: var(--leading-40);
+  }
+  .product {
+    margin-top: var(--space-48);
+  }
+  /* The window's middle, larger: the canvas, not the whole window made
+     small (the window's points 260–1100 across, 72–740 down). */
+  .window {
+    aspect-ratio: 840 / 668;
+  }
+  .window picture {
+    width: calc(100% * 1180 / 840);
+    max-width: none;
+    margin-left: calc(-100% * 260 / 840);
+    margin-top: calc(-100% * 72 / 840);
+  }
+  .window video {
+    inset: auto;
+    top: calc(-100% * 72 / 668);
+    left: calc(-100% * 260 / 840);
+    width: calc(100% * 1180 / 840);
+    height: auto;
+  }
+  .block {
+    padding: var(--space-96) 0;
+  }
+  .block h2 {
+    font-size: var(--type-28);
+    line-height: var(--leading-28);
+  }
+  .block .say {
+    margin-top: var(--space-12);
+    font-size: var(--type-15);
+    line-height: var(--leading-15);
+  }
+  .pic {
+    margin-top: var(--space-32);
+    border-radius: var(--radius-12);
+  }
+  .steps {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-48);
+    margin-top: var(--space-48);
+  }
+  .page-head {
+    padding-top: var(--space-64);
+    padding-bottom: var(--space-48);
+  }
+  .mine {
+    padding: var(--space-32) var(--space-24);
+  }
+  .row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-8);
+  }
+  .docs {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-32);
+    padding-top: var(--space-32);
+  }
+  .toc {
+    position: static;
+  }
+  .doc h1 {
+    font-size: var(--type-28);
+    line-height: var(--leading-28);
+  }
+  .foot .c {
+    margin-left: 0;
+  }
+}
+
+/* ---- The recordings' pointer (site.js, ?record) -------------------------- */
+.fake-cursor {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 100;
+  pointer-events: none;
+  opacity: 0;
+}
+.fake-cursor.seen {
+  opacity: 1;
+}
+.fake-cursor .press {
+  position: absolute;
+  left: calc((var(--space-24) + var(--space-4)) / -2);
+  top: calc((var(--space-24) + var(--space-4)) / -2);
+  width: calc(var(--space-24) + var(--space-4));
+  height: calc(var(--space-24) + var(--space-4));
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--primary) 24%, transparent);
+  opacity: 0;
+}

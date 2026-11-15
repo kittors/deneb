@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>中转站 · Deneb 使用文档</title>
+    <meta name="description" content="两台设备无法直接连接时（比如都在公司或学校的网络后面），Deneb 会经一台服务器转发，这台服务器就是中转站。转发的内容是加密的，中转站无法解密。" />
+    <link rel="icon" href="/site/img/favicon.svg" />
+    <link rel="stylesheet" href="/tokens.css" />
+    <link rel="stylesheet" href="/site/site.css" />
+    <script src="/site/theme.js"></script>
+  </head>
+  <body data-page="docs">
+    <header class="top">
+      <div class="bar">
+        <a class="brand" href="/" aria-label="Deneb 首页"><svg viewBox="0 0 18 18" width="18" height="18" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M7.23,2.5A1.77,1.77 0 0 1 10.77,2.5A5.2,5.2 0 0 0 14.56,7.29A1.77,1.77 0 0 1 14.56,10.71A5.2,5.2 0 0 0 10.77,15.5A1.77,1.77 0 0 1 7.23,15.5A5.2,5.2 0 0 0 3.44,10.71A1.77,1.77 0 0 1 3.44,7.29A5.2,5.2 0 0 0 7.23,2.5ZM7,8H7A1,1 0 0 1 8,9V10A1,1 0 0 1 7,11H7A1,1 0 0 1 6,10V9A1,1 0 0 1 7,8ZM11,8H11A1,1 0 0 1 12,9V10A1,1 0 0 1 11,11H11A1,1 0 0 1 10,10V9A1,1 0 0 1 11,8Z" /></svg>Deneb</a>
+        <nav aria-label="网站">
+          <a href="/docs" class="here" aria-current="page">使用文档</a>
+          <a class="signin" href="/login">登录</a>
+          <a class="open-app" href="/">打开网页版</a>
+          <a class="btn primary sm" href="/download">下载</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="wrap docs">
+      <nav class="toc" aria-label="使用文档">
+        <b>使用文档</b>
+        <a href="/docs/install">安装</a>
+        <a href="/docs/add-computer">添加另一台电脑</a>
+        <a href="/docs/lan">新建局域网、邀请朋友</a>
+        <a href="/docs/share">把一台设备分享给朋友</a>
+        <a href="/docs/services">开放服务</a>
+        <a href="/docs/relays" class="here" aria-current="page">中转站</a>
+        <a href="/docs/account">账号和隐私</a>
+        <a href="/docs/faq">常见问题</a>
+      </nav>
+      <article class="doc">
+        <h1>中转站</h1><p class="intro">两台设备无法直接连接时（比如都在公司或学校的网络后面），Deneb 会经一台服务器转发，这台服务器就是中转站。转发的内容是加密的，中转站无法解密。</p><div class="shot"><picture><source media="(prefers-color-scheme: dark)" srcset="/site/img/dark-relay-line.webp 2x" /><img src="/site/img/light-relay-line.webp" srcset="/site/img/light-relay-line.webp 2x" width="602" height="330" alt="连线上写着直接连上、经香港中转" loading="lazy" decoding="async" /></picture></div><ul><li>线上写「直接连上」，表示没有经过中转站；写「经香港中转」，表示经香港那台。</li><li>公共中转站由 Deneb 提供，自动使用。</li></ul><h2>用自己的服务器做中转站</h2><div class="st"><span class="num">1</span><p>点托盘最后的「+」（用我自己的服务器当中转站），在卡片里复制那一行命令。</p><div class="shot"><picture><source media="(prefers-color-scheme: dark)" srcset="/site/img/dark-relays-plus.webp 2x" /><img src="/site/img/light-relays-plus.webp" srcset="/site/img/light-relays-plus.webp 2x" width="370" height="105" alt="托盘最后的「+」" loading="lazy" decoding="async" /></picture></div></div><div class="st"><span class="num">2</span><p>在服务器上运行这行命令。装好以后，托盘写「我的服务器刚上线，拖进来就能用」。</p></div><div class="st"><span class="num">3</span><p>把它拖进局域网，这个局域网就使用它。</p><div class="shot"><picture><source media="(prefers-color-scheme: dark)" srcset="/site/img/dark-own-relay.webp 2x" /><img src="/site/img/light-own-relay.webp" srcset="/site/img/light-own-relay.webp 2x" width="602" height="320" alt="局域网用上了自己的服务器" loading="lazy" decoding="async" /></picture></div></div>
+        <nav class="pager" aria-label="上一篇和下一篇"><a class="prev" href="/docs/services"><span>上一篇</span><b>开放服务</b></a><a class="next" href="/docs/account"><span>下一篇</span><b>账号和隐私</b></a></nav>
+      </article>
+    </main>
+
+    <footer class="foot">
+      <div class="wrap">
+        <nav aria-label="页脚"><a href="/download">下载</a><a href="/docs">使用文档</a><a href="https://github.com/kittors/deneb/blob/main/PRIVACY.md">隐私说明</a><a href="https://github.com/kittors/deneb">GitHub</a></nav>
+        <span class="c">© 2026 Deneb</span>
+      </div>
+    </footer>
+    <script src="/site/site.js" defer></script>
+  </body>
+</html>

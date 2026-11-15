@@ -1,6 +1,7 @@
 #!/bin/sh
 # Builds the Web version for Linux into deploy/web/: deneb-web, one static
-# file (pure Go, CGO off), into bin/<arch>/, and the browser app into app/.
+# file (pure Go, CGO off), into bin/<arch>/, and the browser app with the
+# website (web/site) into app/.
 # The app is built from web/app/src in a scratch copy, so the image always
 # has the source as it is and nothing in the repository changes (web/app/dist
 # is the Web line's).
@@ -14,6 +15,7 @@ trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/web/app"
 cp -R web/app/src web/app/build.mjs web/app/index.html "$tmp/web/app/"
 cp web/tokens.json web/tokens.css "$tmp/web/"
+cp -R web/site "$tmp/web/"
 node "$tmp/web/app/build.mjs"
 rm -rf deploy/web/app
 cp -R "$tmp/web/app/dist" deploy/web/app

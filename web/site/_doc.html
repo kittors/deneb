@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>{{title}} · Deneb 使用文档</title>
+    <meta name="description" content="{{description}}" />
+    <link rel="icon" href="/site/img/favicon.svg" />
+    <link rel="stylesheet" href="/tokens.css" />
+    <link rel="stylesheet" href="/site/site.css" />
+    <script src="/site/theme.js"></script>
+  </head>
+  <body data-page="docs">
+{{> top}}
+
+    <main class="wrap docs">
+      <nav class="toc" aria-label="使用文档">
+        <b>使用文档</b>
+        {{toc}}
+      </nav>
+      <article class="doc">
+        {{body}}
+        {{pager}}
+      </article>
+    </main>
+
+{{> foot}}
+    <script src="/site/site.js" defer></script>
+  </body>
+</html>

@@ -1,0 +1,10 @@
+[
+  { "slug": "install", "title": "安装" },
+  { "slug": "add-computer", "title": "添加另一台电脑" },
+  { "slug": "lan", "title": "新建局域网、邀请朋友" },
+  { "slug": "share", "title": "把一台设备分享给朋友" },
+  { "slug": "services", "title": "开放服务" },
+  { "slug": "relays", "title": "中转站" },
+  { "slug": "account", "title": "账号和隐私" },
+  { "slug": "faq", "title": "常见问题" }
+]

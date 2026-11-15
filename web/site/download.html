@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>下载 Deneb</title>
+    <meta name="description" content="Deneb 的安装包：macOS（Apple 芯片）、Windows、Linux。" />
+    <link rel="icon" href="/site/img/favicon.svg" />
+    <link rel="stylesheet" href="/tokens.css" />
+    <link rel="stylesheet" href="/site/site.css" />
+    <script src="/site/theme.js"></script>
+  </head>
+  <body data-page="download">
+{{> top}}
+
+    <main>
+      <section class="page-head">
+        <div class="wrap">
+          <h1>下载 Deneb</h1>
+          <p class="sub" data-version hidden></p>
+        </div>
+      </section>
+
+      <div class="wrap narrow">
+        <!-- This computer's system; not shown when it is not known. -->
+        <section class="mine" hidden>
+          <img src="/site/img/app-icon.png" alt="" width="96" height="96" />
+          <h2 data-name>macOS（Apple 芯片）</h2>
+          <p class="meta"><span class="mono" data-file>Deneb.dmg</span><span class="size" data-size hidden></span></p>
+          <a class="btn primary lg" data-get href="https://deneb.app/download/Deneb.dmg">下载</a>
+        </section>
+
+        <!-- On a phone: Deneb is for computers; its link, to open on one. -->
+        <section class="mine phone" hidden>
+          <img src="/site/img/app-icon.png" alt="" width="96" height="96" />
+          <p>Deneb 安装在电脑上使用。</p>
+          <button class="more" type="button" data-copy-link>复制链接</button>
+        </section>
+      </div>
+
+      <div class="wrap">
+        <section class="all">
+          <h2>全部安装包</h2>
+          <div class="table">
+            <div class="row"><b>macOS（Apple 芯片）</b><ul class="files"><li><span class="mono">Deneb.dmg</span><a class="link" href="https://deneb.app/download/Deneb.dmg" aria-label="下载 Deneb.dmg">下载</a></li></ul></div>
+            <div class="row"><b>Windows（64 位）</b><ul class="files"><li><span class="mono">Deneb-Setup.exe</span><a class="link" href="https://deneb.app/download/Deneb-Setup.exe" aria-label="下载 Deneb-Setup.exe">下载</a></li></ul></div>
+            <div class="row"><b>Linux（x86_64）</b><ul class="files"><li><span class="mono">deneb.deb</span><a class="link" href="https://deneb.app/download/deneb.deb" aria-label="下载 deneb.deb">下载</a></li><li><span class="mono">denebd.deb</span><a class="link" href="https://deneb.app/download/denebd.deb" aria-label="下载 denebd.deb">下载</a></li></ul></div>
+            <div class="row"><b>Linux（ARM64）</b><ul class="files"><li><span class="mono">deneb-arm64.deb</span><a class="link" href="https://deneb.app/download/deneb-arm64.deb" aria-label="下载 deneb-arm64.deb">下载</a></li><li><span class="mono">denebd-arm64.deb</span><a class="link" href="https://deneb.app/download/denebd-arm64.deb" aria-label="下载 denebd-arm64.deb">下载</a></li></ul></div>
+            <div class="row"><b>Linux 服务器（无界面）</b><ul class="files"><li><span class="mono">deneb-server.deb</span><a class="link" href="https://deneb.app/download/deneb-server.deb" aria-label="下载 deneb-server.deb">下载</a></li><li><span class="mono">deneb-server-arm64.deb</span><a class="link" href="https://deneb.app/download/deneb-server-arm64.deb" aria-label="下载 deneb-server-arm64.deb">下载</a></li></ul></div>
+          </div>
+        </section>
+
+        <section class="how">
+          <h2>Linux</h2>
+          <p>窗口和后台服务两个包一起安装。在下载目录中运行：</p>
+          <div class="cmd"><code>sudo apt install ./deneb.deb ./denebd.deb</code><button class="link" type="button" data-copy="sudo apt install ./deneb.deb ./denebd.deb">复制</button></div>
+          <p class="aside">ARM64 换成 deneb-arm64.deb、denebd-arm64.deb。没有屏幕的服务器装 deneb-server.deb。</p>
+          <button class="link disclose" type="button" aria-expanded="false" data-fold="blocked">首次打开时被系统阻止<svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M4.5 2.5 8 6l-3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+          <div class="help" id="blocked" hidden>
+            <dl class="kv"><dt>Mac</dt><dd>打开「系统设置」>「隐私与安全」，在「安全性」中点按「仍要打开」，再输入登录密码。</dd><dt>Windows</dt><dd>出现「Windows 已保护你的电脑」时，点「更多信息」，再点「仍要运行」。</dd></dl>
+          </div>
+        </section>
+      </div>
+    </main>
+
+{{> foot}}
+    <script src="/site/site.js" defer></script>
+  </body>
+</html>
