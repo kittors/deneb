@@ -504,6 +504,36 @@ func TestReportCheckUnreachable(t *testing.T) {
 	}
 }
 
+// TestReportCheckSkipped: an address a place did not check (no address on
+// the Internet) gets a plain line, no failure; UDP not checked is no
+// trouble, and the line does not claim it either.
+func TestReportCheckSkipped(t *testing.T) {
+	f := newFakeHost(t, true)
+	f.check = func(context.Context, *controlClient) (*proto.RelayStatus, error) {
+		return &proto.RelayStatus{State: proto.RelayOK,
+			Probes: []proto.RelayProbe{
+				{From: "control", Family: "ipv4", Addr: netip.MustParseAddr("203.0.113.7"), TCP: proto.RelayProbeOK, UDP: proto.RelayProbeOK},
+				{From: "香港", Family: "ipv4", Addr: netip.MustParseAddr("192.168.1.5"), TCP: proto.RelayProbeSkipped, UDP: proto.RelayProbeSkipped},
+				{From: "control", Family: "ipv6", Addr: netip.MustParseAddr("2001:db8::8"), TCP: proto.RelayProbeOK, UDP: proto.RelayProbeSkipped},
+			}}, nil
+	}
+	rc := f.reportCheck(context.Background(), &steps{w: &f.out}, nil, 47445, 47478, scopeSystem, nil)
+	out := f.out.String()
+	for _, want := range []string{
+		"✓ 从外网（Deneb 服务器）连得上 203.0.113.7：TCP 47445、UDP 47478\n",
+		"  从外网（香港）没查 192.168.1.5：不是公网地址\n",
+		"✓ 从外网（Deneb 服务器）连得上 2001:db8::8：TCP 47445\n",
+		"可以用了",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no %q in:\n%s", want, out)
+		}
+	}
+	if rc != exitOK || strings.Contains(out, "✗") || strings.Contains(out, "! ") {
+		t.Errorf("exit %d:\n%s", rc, out)
+	}
+}
+
 // TestCheckAndLeaveWithServer: the relay's calls as the control server
 // answers them: a check from outside comes back with a state, and once
 // it said it leaves, the server answers it with 410, which stops it.

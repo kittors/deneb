@@ -411,18 +411,30 @@ func (h *host) reportCheck(ctx context.Context, st *steps, ctl *controlClient, t
 		return exitOK
 	}
 	for _, p := range res.Probes {
-		if p.TCP == proto.RelayProbeNoRoute {
+		place, where := placeWords(p.From), p.Addr.String()
+		switch p.TCP {
+		case proto.RelayProbeNoRoute:
 			continue // the place has no route to that family: says nothing
+		case proto.RelayProbeSkipped:
+			// A place checks only addresses on the Internet (a development
+			// control server hands out this machine's): says nothing either,
+			// and the control server does not count it.
+			st.note("从外网（%s）没查 %s：不是公网地址", place, where)
+			continue
 		}
-		where := p.Addr.String()
-		tcpOK, udpOK := p.TCP == proto.RelayProbeOK, p.UDP == "" || p.UDP == proto.RelayProbeOK || p.UDP == proto.RelayProbeNone
+		tcpOK := p.TCP == proto.RelayProbeOK
+		// UDP not checked there, or no STUN to check, is no trouble either,
+		// as the control server counts it; the line just does not claim it.
+		udpOK := p.UDP == "" || p.UDP == proto.RelayProbeOK || p.UDP == proto.RelayProbeNone || p.UDP == proto.RelayProbeSkipped
 		switch {
+		case tcpOK && p.UDP == proto.RelayProbeOK:
+			st.ok("从外网（%s）连得上 %s：TCP %d、UDP %d", place, where, tcp, udp)
 		case tcpOK && udpOK:
-			st.ok("从外网（%s）连得上 %s：TCP %d、UDP %d", placeWords(p.From), where, tcp, udp)
+			st.ok("从外网（%s）连得上 %s：TCP %d", place, where, tcp)
 		case tcpOK:
-			st.warn("从外网（%s）连得上 %s 的 TCP %d，UDP %d %s", placeWords(p.From), where, tcp, udp, probeWords[p.UDP])
+			st.warn("从外网（%s）连得上 %s 的 TCP %d，UDP %d %s", place, where, tcp, udp, probeWords[p.UDP])
 		default:
-			st.fail("从外网（%s）连不上 %s 的 TCP %d：%s", placeWords(p.From), where, tcp, probeWords[p.TCP])
+			st.fail("从外网（%s）连不上 %s 的 TCP %d：%s", place, where, tcp, probeWords[p.TCP])
 		}
 	}
 	h.printProblems(st, res.Problems)
