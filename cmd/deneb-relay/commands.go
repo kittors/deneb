@@ -64,7 +64,12 @@ func (h *host) status(ctx context.Context, recheck bool) int {
 		return exitFailed
 	}
 	st.ok("中转站“%s”", rs.Name)
-	st.ok("端口：TCP %d、UDP %d", s.tcpPort(), s.udpPort())
+	if running && h.answers(s.tcpPort()) {
+		st.ok("端口：TCP %d、UDP %d", s.tcpPort(), s.udpPort())
+	} else {
+		// Stopped, or serving no more (deleted in Deneb): it holds no port.
+		st.warn("端口：TCP %d、UDP %d，现在没在服务", s.tcpPort(), s.udpPort())
+	}
 	if v4, v6, _ := h.addrs(); v4.IsValid() || v6.IsValid() {
 		st.ok("公网地址：%s", addrsLine(v4, v6))
 	} else {
@@ -215,7 +220,12 @@ func (h *host) uninstall(ctx context.Context, keepData bool) int {
 			case errors.Is(err, errNoLeave):
 				st.warn("Deneb 服务器还不支持卸载通知：请在 Deneb 里删掉中转站“%s”", rs.Name)
 			default:
-				st.warn("没能告诉 Deneb（%v）：请在 Deneb 里删掉中转站“%s”", err, rs.Name)
+				var ce *callError
+				if errors.As(err, &ce) {
+					st.warn("Deneb 服务器没收下卸载的通知：请在 Deneb 里删掉中转站“%s”", rs.Name)
+				} else {
+					st.warn("连不上 Deneb 服务器：请在 Deneb 里删掉中转站“%s”", rs.Name)
+				}
 			}
 		}
 	}

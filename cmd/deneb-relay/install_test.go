@@ -593,10 +593,13 @@ func TestStatus(t *testing.T) {
 		t.Errorf("exit %d, %d checks from outside (install's alone)", rc, f.checks)
 	}
 	f.current = func(context.Context, *controlClient) (*proto.RelayStatus, error) { return nil, errRemoved }
+	f.answers = func(int) bool { return false } // serving no more: it holds no port
 	f.out.Reset()
-	if rc := f.status(context.Background(), false); rc != exitFailed || !strings.Contains(f.out.String(), "✗ Deneb 里已经删掉了这个中转站") {
+	if rc := f.status(context.Background(), false); rc != exitFailed || !strings.Contains(f.out.String(), "✗ Deneb 里已经删掉了这个中转站") ||
+		!strings.Contains(f.out.String(), "! 端口：TCP 47445、UDP 47478，现在没在服务") || strings.Contains(f.out.String(), "✓ 端口") {
 		t.Errorf("deleted in Deneb: %d\n%s", rc, f.out.String())
 	}
+	f.answers = func(int) bool { return true }
 	f.out.Reset()
 	f.status(context.Background(), true)
 	if f.checks != 2 {
