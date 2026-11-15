@@ -248,9 +248,13 @@ func (s *Server) handleRelayRegister(w http.ResponseWriter, r *http.Request) {
 		again = ", the same machine again"
 	}
 	s.logf("relay %s (%s) registered from %s%s: %s", res.Relay, res.Name, remoteIP(r), again, place)
-	s.checks.forget(res.Relay)
-	s.relayCheckedIn(res.Relay)
-	s.checkRelay(res.Relay, true, 0, "registered")
+	// Not checked yet: its ports may not listen before its service runs.
+	// Its card says 检查中 until its program asks for a check (deneb-relay
+	// install does, once they listen) or syncs (heard).
+	s.checks.setUp(res.Relay)
+	if !s.relayOnline(res.Relay) {
+		s.publishChecks(res.Relay, "set up")
+	}
 	writeJSON(w, http.StatusOK, res)
 }
 
@@ -453,19 +457,26 @@ func (s *Server) relayReported(rl *proto.Relay, wd *World, req proto.RelaySyncRe
 }
 
 // relayCheckedIn notes that a relay synced; if it just came online, its
-// owner's view says so in a new version, and it is checked from outside
-// again, unless that was done a minute ago.
+// owner's view says so in a new version. Its program runs: it is checked
+// from outside soon if it was just set up, or came online again and was
+// not checked in the last minute (heard).
 func (s *Server) relayCheckedIn(id proto.RelayID) {
+	s.checks.heard(id, s.now(), s.relayOnline(id))
+}
+
+// relayOnline notes that relay id was heard from, and publishes its card
+// if it just came online (reported).
+func (s *Server) relayOnline(id proto.RelayID) bool {
 	if !s.relayLive.checkIn(id, s.now()) {
-		return
+		return false
 	}
 	v, err := s.change("", func(*sql.Tx, *World) error { return nil })
 	if err != nil {
 		s.logf("relay %s online: %v", id, err)
-		return
+		return false
 	}
 	s.logf("relay %s online; version %d", id, v)
-	s.checkRelay(id, false, time.Minute, "online again")
+	return true
 }
 
 // maxUsageBytes bounds one client's bytes in one sync: a minute at 100

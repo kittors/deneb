@@ -566,7 +566,8 @@ func TestRelayCheckOp(t *testing.T) {
 
 // TestRelayCheckWhilePublished: who asks while a check publishes what it
 // found waits for it, and hears of it once the card says it: its card
-// usable, since when written down.
+// usable, since when written down. The relay's program asks; asked again
+// at once, the check under way stands for that too.
 func TestRelayCheckWhilePublished(t *testing.T) {
 	probes := &fakeProbes{}
 	w := newCheckWorld(t, func(c *Config) { c.ProbeRelay = probes.probe })
@@ -583,29 +584,101 @@ func TestRelayCheckWhilePublished(t *testing.T) {
 	w.s.checks.mu.Unlock()
 	rc := w.mac.must(proto.OpRelayCreate, proto.OpArgs{Name: "东京"}).Result
 	relay, _ := registerRelay(t, w.mac.url, rc.RelayToken)
-	<-found // the check it set up found it usable, and has not said so
 
-	answered := make(chan proto.RelayStatus, 1)
-	go func() {
-		var st proto.RelayStatus
-		req, _ := http.NewRequest("POST", relay.url+proto.PathRelayCheck, strings.NewReader("{}"))
-		req.Header.Set("Authorization", "Bearer "+relay.secret)
-		if resp, err := http.DefaultClient.Do(req); err == nil {
-			json.NewDecoder(resp.Body).Decode(&st)
-			resp.Body.Close()
-		}
-		answered <- st
-	}()
+	answered := make(chan proto.RelayStatus, 2)
+	ask := func() {
+		go func() {
+			var st proto.RelayStatus
+			req, _ := http.NewRequest("POST", relay.url+proto.PathRelayCheck, strings.NewReader("{}"))
+			req.Header.Set("Authorization", "Bearer "+relay.secret)
+			if resp, err := http.DefaultClient.Do(req); err == nil {
+				json.NewDecoder(resp.Body).Decode(&st)
+				resp.Body.Close()
+			}
+			answered <- st
+		}()
+	}
+	ask()
+	<-found // its check found it usable, and has not said so
+	ask()
 	select {
 	case st := <-answered:
 		t.Fatalf("answered before its card said it: %+v", st)
 	case <-time.After(200 * time.Millisecond):
 	}
 	close(gate)
-	st := <-answered
 	w.mac.auth()
-	if mv := myRelay(w.mac.view(), rc.Relay); st.State != proto.RelayOK || mv.Status == nil || mv.Status.UsableAt.IsZero() {
-		t.Fatalf("checked: %+v; its card: %+v", st, mv.Status)
+	for range 2 {
+		st := <-answered
+		if mv := myRelay(w.mac.view(), rc.Relay); st.State != proto.RelayOK || mv.Status == nil || mv.Status.UsableAt.IsZero() {
+			t.Fatalf("checked: %+v; its card: %+v", st, mv.Status)
+		}
+	}
+	probes.mu.Lock()
+	defer probes.mu.Unlock()
+	if probes.calls != 1 {
+		t.Fatalf("%d probes for two asks at once", probes.calls)
+	}
+}
+
+// TestRelaySetUpNotCheckedEarly: just set up, a relay is not checked
+// before its program runs (its ports may not listen yet): its card says
+// 检查中 until its program asks, once they listen (deneb-relay install),
+// and then gets a check of its own. One whose program does not ask (a
+// Docker one, an old one) is checked soon after it first syncs. Asked
+// again within checkAgainAfter, the last check stands.
+func TestRelaySetUpNotCheckedEarly(t *testing.T) {
+	probes := &fakeProbes{}
+	w := newCheckWorld(t, func(c *Config) { c.ProbeRelay = probes.probe })
+	s := w.s
+	calls := func() int {
+		probes.mu.Lock()
+		defer probes.mu.Unlock()
+		return probes.calls
+	}
+	// Its service does not listen yet.
+	probes.set(lo, proto.RelayProbeRefused, proto.RelayProbeTimeout)
+	rc := w.mac.must(proto.OpRelayCreate, proto.OpArgs{Name: "东京"}).Result
+	relay, _ := registerRelay(t, w.mac.url, rc.RelayToken)
+	w.clk.add(sweepEvery) // a sweep while deneb-relay install still sets it up
+	s.scheduleChecks()
+	w.mac.auth()
+	if mv := myRelay(w.mac.view(), rc.Relay); calls() != 0 || mv.Status == nil || mv.Status.State != proto.RelayChecking {
+		t.Fatalf("checked before its program ran: %d probes, %+v", calls(), mv.Status)
+	}
+	// It listens; its program asks.
+	probes.set(lo, proto.RelayProbeOK, proto.RelayProbeOK)
+	if st := relay.check(); st.State != proto.RelayOK || calls() != 1 {
+		t.Fatalf("asked: %+v, %d probes", st, calls())
+	}
+	if st := relay.check(); st.State != proto.RelayOK || calls() != 1 {
+		t.Fatalf("asked again at once: %+v, %d probes", st, calls())
+	}
+	w.clk.add(checkAgainAfter)
+	if relay.check(); calls() != 2 {
+		t.Fatalf("asked again later: %d probes", calls())
+	}
+
+	// A Docker one: set up, its program syncs, and never asks.
+	s.cfg.Pin = testPin
+	j := w.mac.must(proto.OpRelayJoin, proto.OpArgs{Name: "大阪"}).Result.RelayJoin
+	_, reg := joinRegister(t, s, j.Code, proto.RelayInfo{STUNPort: defaultRelaySTUNPort})
+	docker := &testRelay{t: t, url: s.cfg.PublicURL, secret: reg.Secret}
+	before := calls()
+	docker.sync(proto.RelaySyncRequest{})
+	s.scheduleChecks()
+	if calls() != before {
+		t.Fatalf("checked the moment it synced: %d probes, %d before", calls(), before)
+	}
+	w.clk.add(checkSoonAfter)
+	s.scheduleChecks()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if st := docker.status(); st.State == proto.RelayOK && calls() > before {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("not checked after it synced: %+v, %d probes", docker.status(), calls())
+		}
 	}
 }
 
@@ -659,28 +732,41 @@ func TestPublicRelayUnreachableAlert(t *testing.T) {
 func TestInstallCommand(t *testing.T) {
 	sums := "aa  deneb-relay-linux-amd64\nbb  deneb-relay-linux-arm64\n"
 	var mu sync.Mutex
-	latest := "0.1.9"
+	latest := "" // no release on the site yet
 	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
-		switch r.URL.Path {
-		case "/download/relay/latest":
+		switch {
+		case r.URL.Path == "/download/relay/latest" && latest != "":
 			fmt.Fprintln(w, latest)
-		case "/download/relay/0.1.9/SHA256SUMS":
+		case r.URL.Path == "/download/relay/0.1.9/SHA256SUMS":
 			fmt.Fprint(w, sums)
 		default:
 			http.NotFound(w, r)
 		}
 	}))
 	defer site.Close()
+	setSite := func(v string) {
+		mu.Lock()
+		defer mu.Unlock()
+		latest = v
+	}
+	// The server reads the site as it starts; with nothing there yet, the
+	// command carries no hash, and says so: no sha256.
 	w := newCheckWorld(t, func(c *Config) { c.RelayDownload = site.URL + "/download/relay" })
 	s := w.s
 	s.relayClient = site.Client()
-
 	j := w.mac.must(proto.OpRelayJoin, proto.OpArgs{}).Result.RelayJoin
-	if j.Command != "curl -fsSL "+site.URL+"/relay | sh -s -- "+j.Code || j.Version != "" || !strings.HasPrefix(j.DockerCommand, "docker run") {
-		t.Fatalf("before the site was read: %+v", j)
+	if j.Command != "curl -fsSL "+site.URL+"/relay | sh -s -- "+j.Code || j.Version != "" || j.SHA256 != "" || !strings.HasPrefix(j.DockerCommand, "docker run") {
+		t.Fatalf("before the site had a release: %+v", j)
 	}
+	// A release now: read again a minute on, not ten.
+	setSite("0.1.9")
+	s.refreshRelayBuild(context.Background())
+	if v, _ := s.installBuild(); v != "" {
+		t.Fatalf("read again at once: %q", v)
+	}
+	w.clk.add(relayBuildRetry)
 	s.refreshRelayBuild(context.Background())
 	sum := sha256.Sum256([]byte(sums))
 	hash := hex.EncodeToString(sum[:])
@@ -691,13 +777,18 @@ func TestInstallCommand(t *testing.T) {
 		t.Fatalf("after: %+v", j)
 	}
 	// A broken site keeps what it said before.
-	mu.Lock()
-	latest = "not a version!"
-	mu.Unlock()
+	setSite("not a version!")
 	w.clk.add(relayBuildEvery)
 	s.refreshRelayBuild(context.Background())
 	if v, _ := s.installBuild(); v != "0.1.9" {
 		t.Fatalf("after a broken read: %q", v)
+	}
+	// A server that starts with the site up: its first command has the
+	// hash, with no wait for a sweep.
+	setSite("0.1.9")
+	w2 := newCheckWorld(t, func(c *Config) { c.RelayDownload = site.URL + "/download/relay" })
+	if j := w2.mac.must(proto.OpRelayJoin, proto.OpArgs{}).Result.RelayJoin; j.Version != "0.1.9" || j.SHA256 != hash || !strings.HasSuffix(j.Command, " 0.1.9:"+hash) {
+		t.Fatalf("from the start: %+v", j)
 	}
 	if _, err := checkDownloadURL("https://x.example.com/a b/"); err == nil {
 		t.Fatal("a folder with a space")

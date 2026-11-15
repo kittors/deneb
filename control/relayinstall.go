@@ -34,8 +34,14 @@ import (
 // One hash covers every CPU's program: the script checks SHA256SUMS against
 // it, then the program against SHA256SUMS.
 
-// relayBuildEvery is how often the site is read.
-const relayBuildEvery = 10 * time.Minute
+// relayBuildEvery is how often the site is read; relayBuildRetry, how soon
+// again when it could not be; relayBuildFirst, how long New waits for the
+// first read, so the commands carry the hash from the start.
+const (
+	relayBuildEvery = 10 * time.Minute
+	relayBuildRetry = time.Minute
+	relayBuildFirst = 5 * time.Second
+)
 
 // relayBuild is what the site said last: the version to install and the
 // hash of its SHA256SUMS.
@@ -60,7 +66,8 @@ func (s *Server) installBuild() (version, sum string) {
 }
 
 // refreshRelayBuild reads the site again if it was read longer ago than
-// relayBuildEvery. The sweep calls it, outside any lock: a slow site never
+// relayBuildEvery, or could not be read longer ago than relayBuildRetry.
+// New calls it first; then the sweep, outside any lock: a slow site never
 // holds an op up.
 func (s *Server) refreshRelayBuild(ctx context.Context) {
 	if s.cfg.RelayDownload == "" {
@@ -68,7 +75,8 @@ func (s *Server) refreshRelayBuild(ctx context.Context) {
 	}
 	b := &s.relayBuild
 	b.mu.Lock()
-	due := b.at.IsZero() || s.now().Sub(b.at) >= relayBuildEvery
+	since := s.now().Sub(b.at)
+	due := b.at.IsZero() || since >= relayBuildEvery || b.err != nil && since >= relayBuildRetry
 	if due {
 		b.at = s.now()
 	}
@@ -81,7 +89,11 @@ func (s *Server) refreshRelayBuild(ctx context.Context) {
 	defer b.mu.Unlock()
 	if err != nil {
 		if b.err == nil || b.err.Error() != err.Error() {
-			s.logf("relay install: reading %s: %v; the command keeps %q", s.cfg.RelayDownload, err, b.version)
+			if b.version == "" {
+				s.logf("relay install: reading %s: %v; until it is read, the install command carries no hash (again in %s)", s.cfg.RelayDownload, err, relayBuildRetry)
+			} else {
+				s.logf("relay install: reading %s: %v; the command keeps %s", s.cfg.RelayDownload, err, b.version)
+			}
 		}
 		b.err = err
 		return

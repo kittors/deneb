@@ -273,6 +273,13 @@ func New(cfg Config) (*Server, error) {
 	}
 	s.routes()
 	s.startMail()
+	// The install command carries the relay program's hash from the start
+	// (M7): the download site is read before the server serves.
+	if s.cfg.RelayDownload != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), relayBuildFirst)
+		s.refreshRelayBuild(ctx)
+		cancel()
+	}
 	return s, nil
 }
 

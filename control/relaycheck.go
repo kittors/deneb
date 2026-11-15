@@ -31,6 +31,11 @@ const (
 	// checkAgainAfter is how soon a check asked for may run again: one
 	// asked for sooner gets the last one's result.
 	checkAgainAfter = 10 * time.Second
+	// checkSoonAfter: a relay whose program runs anew (its first sync since
+	// it was set up, or back online) is checked at the first sweep this
+	// long after, its ports open by then; not at once, when they may not
+	// listen yet.
+	checkSoonAfter = 10 * time.Second
 	// checkTimeout bounds a check, both places together.
 	checkTimeout = 15 * time.Second
 	// checkWait is how long /relay/v1/check waits for the check it asked.
@@ -59,9 +64,17 @@ type relayCheck struct {
 	running chan struct{}
 	probing bool
 	shown   bool
-	// rerun: a check was asked for anew while one was publishing what it
-	// found; it runs once that one ends (rerunShown: and it is shown).
-	rerun, rerunShown bool
+	// next, when a newer check was asked for while one ran, is that one's
+	// end: it starts once this one ends (nextShown: and is shown).
+	next      chan struct{}
+	nextShown bool
+	// setUp: it was just set up, and its program has not synced since: no
+	// check of the server's own accord yet, its ports may not listen (its
+	// program asks for one when they do). due: a check is due at the first
+	// sweep from then. asked: when its program last asked for one.
+	setUp bool
+	due   time.Time
+	asked time.Time
 }
 
 // checkSnapshot is a relay's checks as a view reads them.
@@ -97,7 +110,7 @@ func (c *relayChecks) snapshot(id proto.RelayID) checkSnapshot {
 	return checkSnapshot{at: rc.at, probes: rc.probes, done: rc.done, shown: rc.shown && rc.probing}
 }
 
-// forget drops what the checks of a relay found: it was set up again,
+// forget drops what the checks of a relay found: it moved, was
 // uninstalled or deleted.
 func (c *relayChecks) forget(id proto.RelayID) {
 	c.mu.Lock()
@@ -109,10 +122,65 @@ func (c *relayChecks) forget(id proto.RelayID) {
 	}
 }
 
-// checkRelay starts a check of relay id, unless one runs (whose end it
-// returns) or one ended less than again ago (a closed channel: its result
-// stands). shown makes the card say 正在检查 while it runs. Without a
-// prober (ProbeRelay nil, the tests) nothing is checked.
+// setUp drops what the checks of relay id found, for it was just set up
+// (again), and holds the server's own checks until its program runs: it
+// syncs, or asks for one.
+func (c *relayChecks) setUp(id proto.RelayID) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	rc := c.byRelay[id]
+	if rc == nil || rc.running == nil {
+		rc = &relayCheck{}
+		c.byRelay[id] = rc
+	}
+	rc.done, rc.probes, rc.setUp, rc.due = false, nil, true, time.Time{}
+}
+
+// heard notes a sync of relay id's program. The first since it was set up
+// means it runs: it is checked soon, its ports open by then. So is one
+// that came online again, unless it was checked in the last minute.
+func (c *relayChecks) heard(id proto.RelayID, now time.Time, cameOnline bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	rc := c.byRelay[id]
+	switch {
+	case rc != nil && rc.setUp:
+		rc.setUp, rc.due = false, now.Add(checkSoonAfter)
+	case !cameOnline:
+	case rc == nil:
+		c.byRelay[id] = &relayCheck{due: now.Add(checkSoonAfter)}
+	case rc.running == nil && now.Sub(rc.at) >= time.Minute:
+		rc.due = now.Add(checkSoonAfter)
+	}
+}
+
+// asked notes that relay id's program asked for a check (POST
+// /relay/v1/check): it runs, and its ports listen. It gets a check that
+// starts now (0), once in checkAgainAfter; asked again sooner, the one it
+// got (checkAgainAfter).
+func (c *relayChecks) asked(id proto.RelayID, now time.Time) time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	rc := c.byRelay[id]
+	if rc == nil {
+		rc = &relayCheck{}
+		c.byRelay[id] = rc
+	}
+	rc.setUp = false
+	if !rc.asked.IsZero() && now.Sub(rc.asked) < checkAgainAfter {
+		return checkAgainAfter
+	}
+	rc.asked = now
+	return 0
+}
+
+// checkRelay starts a check of relay id and returns its end, closed once
+// its card says what it found. A check that runs stands for it if again is
+// not 0 and it is fresh enough (still probing, or found less than again
+// ago); else one starts after it. With none running, one that ended less
+// than again ago stands (a closed channel). again 0 is a check that
+// starts after the call. shown makes the card say 正在检查 while it
+// probes. Without a prober (ProbeRelay nil, the tests) nothing is checked.
 func (s *Server) checkRelay(id proto.RelayID, shown bool, again time.Duration, why string) <-chan struct{} {
 	done := make(chan struct{})
 	if s.cfg.ProbeRelay == nil {
@@ -127,22 +195,23 @@ func (s *Server) checkRelay(id proto.RelayID, shown bool, again time.Duration, w
 		c.byRelay[id] = rc
 	}
 	switch {
-	case rc.running != nil && rc.probing:
+	case rc.running != nil && again > 0 && (rc.probing || s.now().Sub(rc.at) < again):
+		// The one under way stands for it: heard of once the card says it.
 		ch := rc.running
-		show := shown && !rc.shown
-		rc.shown = rc.shown || shown
+		show := shown && rc.probing && !rc.shown
+		rc.shown = rc.shown || shown && rc.probing
 		c.mu.Unlock()
 		if show {
 			s.publishChecks(id, "a check asked for runs")
 		}
 		return ch
 	case rc.running != nil:
-		// It found what it found and is publishing it: that is fresh, and
-		// heard of once the card says it. One asked for anew runs after it.
-		ch := rc.running
-		if again == 0 {
-			rc.rerun, rc.rerunShown = true, rc.rerunShown || shown
+		// A newer one: it starts once the one under way ends.
+		if rc.next == nil {
+			rc.next = make(chan struct{})
 		}
+		rc.nextShown = rc.nextShown || shown
+		ch := rc.next
 		c.mu.Unlock()
 		return ch
 	case rc.done && s.now().Sub(rc.at) < again:
@@ -150,7 +219,7 @@ func (s *Server) checkRelay(id proto.RelayID, shown bool, again time.Duration, w
 		close(done)
 		return done
 	}
-	rc.running, rc.probing, rc.shown = done, true, shown
+	rc.running, rc.probing, rc.shown, rc.due = done, true, shown, time.Time{}
 	c.mu.Unlock()
 	if shown {
 		s.publishChecks(id, "checking ("+why+")")
@@ -237,25 +306,38 @@ func (s *Server) runCheck(id proto.RelayID, done chan struct{}, why string) {
 	}
 
 	// Only now does it end: one who asked while its card was published
-	// waited for it, and hears of it once the card says it.
-	rerun, rerunShown := false, wasShown
+	// waited for it, and hears of it once the card says it. A newer check
+	// asked for meanwhile starts now; so does one if it moved while it was
+	// checked, where it is now.
+	cur := s.state.Load().w.relays[id]
+	moved := ready(cur) && !slices.Equal(probe.Targets(cur), where)
+	var next chan struct{}
+	start, nextShown, nextWhy := false, false, "asked anew while checked"
 	c.mu.Lock()
 	if mine && rc.running == done {
-		rc.running = nil
-		rerun, rerunShown = rc.rerun, rerunShown || rc.rerunShown
-		rc.rerun, rc.rerunShown = false, false
+		next, nextShown = rc.next, rc.nextShown
+		rc.next, rc.nextShown, rc.running = nil, false, nil
+		if moved {
+			nextWhy, nextShown = "moved while checked", nextShown || wasShown
+			if next == nil {
+				next = make(chan struct{})
+			}
+		}
+		if next != nil && ready(cur) && c.byRelay[id] == rc {
+			rc.running, rc.probing, rc.shown, rc.due, start = next, true, nextShown, time.Time{}, true
+		}
 	}
 	c.mu.Unlock()
 	close(done)
-	// It moved while it was checked, or it was asked for anew: check
-	// where it is now.
-	if cur := s.state.Load().w.relays[id]; mine && ready(cur) {
-		switch {
-		case !slices.Equal(probe.Targets(cur), where):
-			s.checkRelay(id, rerunShown, 0, "moved while checked")
-		case rerun:
-			s.checkRelay(id, rerunShown, 0, "asked anew while checked")
+	switch {
+	case start:
+		if nextShown {
+			s.publishChecks(id, "checking ("+nextWhy+")")
 		}
+		go s.runCheck(id, next, nextWhy)
+	case next != nil:
+		// Nothing to check any more (uninstalled, say): who waits hears now.
+		close(next)
 	}
 }
 
@@ -336,13 +418,16 @@ func (s *Server) cardOf(id proto.RelayID) card {
 }
 
 // scheduleChecks starts the checks due: each relay online that registered
-// gets one every checkEvery. The sweep calls it.
+// gets one every checkEvery, and one soon after its program runs anew
+// (heard); none while it was just set up and its program has not run yet.
+// The sweep calls it.
 func (s *Server) scheduleChecks() {
 	if s.cfg.ProbeRelay == nil {
 		return
 	}
 	st := s.state.Load()
-	var due []proto.RelayID
+	now := s.now()
+	var due, soon []proto.RelayID
 	s.checks.mu.Lock()
 	for id := range s.checks.byRelay {
 		if st.w.relays[id] == nil {
@@ -353,15 +438,26 @@ func (s *Server) scheduleChecks() {
 		if !checked(m) || !ready(st.w.relays[id]) || s.relayLive.offline(id) {
 			continue
 		}
-		rc := s.checks.byRelay[id]
-		if rc == nil || rc.running == nil && s.now().Sub(rc.at) >= checkEvery {
+		switch rc := s.checks.byRelay[id]; {
+		case rc == nil:
+			due = append(due, id)
+		case rc.running != nil || rc.setUp:
+		case !rc.due.IsZero():
+			if !now.Before(rc.due) {
+				soon = append(soon, id)
+			}
+		case now.Sub(rc.at) >= checkEvery:
 			due = append(due, id)
 		}
 	}
 	s.checks.mu.Unlock()
 	slices.Sort(due)
+	slices.Sort(soon)
 	for _, id := range due {
 		s.checkRelay(id, false, checkEvery, "every 10 minutes")
+	}
+	for _, id := range soon {
+		s.checkRelay(id, false, 0, "its program runs")
 	}
 }
 
@@ -672,10 +768,13 @@ func (w *World) relayDevices(rl *proto.Relay, isOnline online) *proto.RelayDevic
 }
 
 // handleRelayCheck checks the relay now, from every place, and answers
-// what it found: deneb-relay install prints it.
+// what it found: deneb-relay install prints it, once its ports listen. A
+// check that started before it asked does not stand for it (one from
+// before its ports listened, say), unless it asks again within
+// checkAgainAfter.
 func (s *Server) handleRelayCheck(w http.ResponseWriter, r *http.Request, rl *proto.Relay, _ *World) {
-	s.relayCheckedIn(rl.ID)
-	done := s.checkRelay(rl.ID, true, checkAgainAfter, "asked by the relay")
+	s.relayOnline(rl.ID)
+	done := s.checkRelay(rl.ID, true, s.checks.asked(rl.ID, s.now()), "asked by the relay")
 	t := time.NewTimer(checkWait)
 	defer t.Stop()
 	select {
