@@ -17,6 +17,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strconv"
 	"strings"
@@ -26,7 +27,6 @@ import (
 
 	"golang.org/x/net/http2"
 
-	"github.com/kittors/deneb/engine/bind"
 	"github.com/kittors/deneb/proto"
 )
 
@@ -38,6 +38,11 @@ type Client struct {
 	newTr   func() *http.Transport
 	logf    func(format string, args ...any)
 	bindIf  atomic.Pointer[string] // interface dials are pinned to; "" for none
+	tlsCfg  *tls.Config            // the pinned server's; nil for plain http
+	dial    dialFunc               // one connection, either way (paths.go)
+	// avoidPinned is until when new connections go by the routing table
+	// (Unix nanoseconds): the pinned way gave no answer (paths.go).
+	avoidPinned atomic.Int64
 
 	mu      sync.Mutex
 	token   string
@@ -60,9 +65,11 @@ type Options struct {
 	Machine proto.MachinePrivate
 	// BindInterface pins the connection to the physical interface, like the
 	// relay's and the UDP socket: through a proxy's TUN the control plane
-	// would rise and fall with the proxy node. If the pinned dial fails, the
-	// routing table (and so the proxy) is tried, so the server stays
-	// reachable in networks where only the proxy gets out.
+	// would rise and fall with the proxy node. A pinned connection that is
+	// not through its handshake in a few seconds, or fails before the
+	// server's first answer, has the routing table (and so the proxy) used
+	// instead for a while, so the server stays reachable in networks where
+	// only the proxy gets out (paths.go).
 	BindInterface string
 	Logf          func(format string, args ...any)
 }
@@ -77,22 +84,8 @@ func New(o Options) (*Client, error) {
 	if logf == nil {
 		logf = log.Printf
 	}
-	c := &Client{base: u, machine: o.Machine, logf: logf}
+	c := &Client{base: u, machine: o.Machine, logf: logf, dial: dialDefault}
 	c.SetBindInterface(o.BindInterface)
-	plain := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
-	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
-		if ifname := *c.bindIf.Load(); ifname != "" {
-			if ctl, err := bind.Control(ifname); err == nil {
-				pinned := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second, Control: ctl}
-				conn, err := pinned.DialContext(ctx, network, addr)
-				if err == nil || ctx.Err() != nil {
-					return conn, err
-				}
-				logf("[control] dial %s pinned to %s failed (%v); trying the routing table", addr, ifname, err)
-			}
-		}
-		return plain.DialContext(ctx, network, addr)
-	}
 	var tlsCfg *tls.Config
 	if u.Scheme == "https" {
 		if o.Pin == "" {
@@ -110,16 +103,20 @@ func New(o Options) (*Client, error) {
 		// would let a network in between rewrite the network map.
 		log.Printf("[control] WARNING: %s is plain http; only use this for development", u.Redacted())
 	}
+	c.tlsCfg = tlsCfg
 	c.newTr = func() *http.Transport {
 		tr := &http.Transport{
-			Proxy:               nil, // never through a system proxy: the pin is checked end to end
-			DialContext:         dial,
-			TLSHandshakeTimeout: 10 * time.Second,
-			MaxIdleConns:        4,
-			IdleConnTimeout:     90 * time.Second,
-			TLSClientConfig:     tlsCfg,
+			Proxy:           nil, // never through a system proxy: the pin is checked end to end
+			MaxIdleConns:    4,
+			IdleConnTimeout: 90 * time.Second,
 		}
-		if tlsCfg != nil {
+		if tlsCfg == nil {
+			tr.DialContext = c.connect
+		} else {
+			// connect does the handshake too: a pinned connection that is
+			// through TCP but never through TLS gives way to the routing
+			// table (paths.go).
+			tr.DialTLSContext = c.connect
 			// One HTTP/2 connection carries the stream and every request.
 			// When it dies quietly (the network under it changed and
 			// nothing told us), pings find out within 20 s instead of
@@ -149,10 +146,12 @@ func newConns(tr *http.Transport) *conns {
 
 // SetBindInterface pins later connections to another interface (the
 // default route moved, say from Wi-Fi to Ethernet) and starts over on new
-// connections (see ResetConnections).
+// connections (see ResetConnections). The pinned way gets its chance again
+// there (paths.go).
 func (c *Client) SetBindInterface(ifname string) {
 	c.bindIf.Store(&ifname)
 	c.ResetConnections()
+	c.avoidPinned.Store(0)
 }
 
 // ResetConnections makes later requests dial afresh, on a new transport:
@@ -283,7 +282,9 @@ func (c *Client) send(ctx context.Context, hc *http.Client, method, path string,
 		}
 		rd = bytes.NewReader(b)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.base.String()+path, rd)
+	// The response beginning shows the way the connection went works
+	// (paths.go).
+	req, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, answerTrace()), method, c.base.String()+path, rd)
 	if err != nil {
 		return nil, err
 	}
