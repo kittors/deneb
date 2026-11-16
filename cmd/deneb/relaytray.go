@@ -21,6 +21,11 @@ const (
 	relaySlotBall = 32 // a relay's ball in the tray
 	relayBall     = 40 // and on the canvas
 	relayFly      = 420 * time.Millisecond
+	// relayRoom is what a relay's ball keeps on each side in its slot, as
+	// wide as a device's tile's: the tray's round end as far from a ball
+	// as its top and bottom are (DESIGN §3.9), the balls' middles as far
+	// apart as the tiles'.
+	relayRoom = (slotTile - relaySlotBall) / 2
 )
 
 // relayChips are the "谁在用" chips of a relay's card as it opened.
@@ -110,7 +115,7 @@ func (a *app) trayRelayItems(c *ui.Context, p *palette, w, h float32, kv func(ki
 			continue
 		}
 		a.trayKids.shown("rule", kd.key)
-		trayKid(c, kd.key, k, 1+slotGap, func() { a.trayGhost(c, p, lookRule) })
+		trayKid(c, kd.key, k, 1+slotGap+relayRoom, func() { a.trayGhost(c, p, lookRule) })
 	}
 	var keys []string
 	looks := map[string]kidLook{}
@@ -138,17 +143,17 @@ func (a *app) trayRelayItems(c *ui.Context, p *palette, w, h float32, kv func(ki
 		a.trayKids.shown("relay", kd.key)
 		switch rl, j := relays[kd.key], joins[kd.key]; {
 		case kd.gone:
-			trayKid(c, kd.key, k, relaySlotBall+slotGap, func() { a.trayGhost(c, p, a.trayKids.looks[kd.key]) })
+			trayKid(c, kd.key, k, slotTile+slotGap, func() { a.trayGhost(c, p, a.trayKids.looks[kd.key]) })
 		case rl != nil:
-			trayKid(c, kd.key, k, relaySlotBall+slotGap, func() { a.trayRelayItem(c, p, rl, w, h) })
+			trayKid(c, kd.key, k, slotTile+slotGap, func() { a.trayRelayItem(c, p, rl, w, h) })
 		default:
-			trayKid(c, kd.key, k, relaySlotBall+slotGap, func() { a.trayJoinItem(c, p, j) })
+			trayKid(c, kd.key, k, slotTile+slotGap, func() { a.trayJoinItem(c, p, j) })
 		}
 	}
-	plus := ui.ButtonBase(c.Key("relay-plus")).Size(relaySlotBall+slotGap, slotTile).Padding(0, 0, 0, slotGap).Center().
+	plus := ui.ButtonBase(c.Key("relay-plus")).Size(slotTile+slotGap, slotTile).Padding(0, 0, 0, slotGap).Center().
 		FocusRing(false).Cursor(ui.CursorPointer).Label("用我自己的服务器").Shrink(0)
 	if b := plus.Bounds(); b.W > 0 {
-		a.slots["relay:+"] = ui.Point{X: b.X - a.origin.X + slotGap + relaySlotBall/2, Y: b.Y - a.origin.Y + b.H/2}
+		a.slots["relay:+"] = ui.Point{X: b.X - a.origin.X + slotGap + slotTile/2, Y: b.Y - a.origin.Y + b.H/2}
 	}
 	plus.AnimatePose(pressPose(plus, 0.92), ui.Snappy)
 	if plus.Hovered() {
@@ -174,11 +179,11 @@ func (a *app) trayRelayItems(c *ui.Context, p *palette, w, h float32, kv func(ki
 // it helps most (relayHome).
 func (a *app) trayRelayItem(c *ui.Context, p *palette, rl *model.Relay, w, h float32) {
 	key := "relay:" + string(rl.ID)
-	slot := ui.Box(c.Key("tray-"+key)).Size(relaySlotBall+slotGap, slotTile).Padding(0, 0, 0, slotGap).Shrink(0)
+	slot := ui.Box(c.Key("tray-"+key)).Size(slotTile+slotGap, slotTile).Padding(0, 0, 0, slotGap).Shrink(0)
 	fresh := a.newRelays[rl.ID]
 	home, known := a.slots[key]
 	if b := slot.Bounds(); b.W > 0 {
-		home, known = ui.Point{X: b.X - a.origin.X + slotGap + relaySlotBall/2, Y: b.Y - a.origin.Y + b.H/2}, true
+		home, known = ui.Point{X: b.X - a.origin.X + slotGap + slotTile/2, Y: b.Y - a.origin.Y + b.H/2}, true
 		a.slots[key] = home
 	}
 	off := a.trayOff[key]
@@ -187,7 +192,7 @@ func (a *app) trayRelayItem(c *ui.Context, p *palette, rl *model.Relay, w, h flo
 		a.trayOff[key] = off
 	}
 	slot.Children(func() {
-		well := ui.Box(c).Size(relaySlotBall, relaySlotBall).Radius(999).Background(p.well).Margin((slotTile-relaySlotBall)/2, 0, 0, 0)
+		well := ui.Box(c).Size(relaySlotBall, relaySlotBall).Radius(999).Background(p.well).Margin(relayRoom, 0, 0, relayRoom)
 		well.Children(func() {
 			item := ui.Box(c.Key("item")).Size(relaySlotBall, relaySlotBall).Label(rl.Label())
 			var bounds *ui.Rect
@@ -250,11 +255,11 @@ func (a *app) trayRelayItem(c *ui.Context, p *palette, rl *model.Relay, w, h flo
 // take it back.
 func (a *app) trayJoinItem(c *ui.Context, p *palette, j model.RelayJoin) {
 	key := "join:" + j.ID
-	b := ui.ButtonBase(c.Key("tray-"+key)).Size(relaySlotBall+slotGap, slotTile).Padding(0, 0, 0, slotGap).Center().
+	b := ui.ButtonBase(c.Key("tray-"+key)).Size(slotTile+slotGap, slotTile).Padding(0, 0, 0, slotGap).Center().
 		FocusRing(false).Cursor(ui.CursorPointer).Label("等待安装").Shrink(0)
 	b.AnimatePose(pressPose(b, 0.92), ui.Snappy)
 	if bb := b.Bounds(); bb.W > 0 {
-		a.slots[key] = ui.Point{X: bb.X - a.origin.X + slotGap + relaySlotBall/2, Y: bb.Y - a.origin.Y + bb.H/2}
+		a.slots[key] = ui.Point{X: bb.X - a.origin.X + slotGap + slotTile/2, Y: bb.Y - a.origin.Y + bb.H/2}
 	}
 	if b.Hovered() {
 		a.trayHintNext = "等待安装 · 命令还没跑"

@@ -22,6 +22,11 @@ const (
 	trayBand  = 104 // the band at the bottom where the tray floats and takes drops
 	slotTile  = 40  // a device's tile in the tray
 	slotGap   = 8   // the room before each of the tray's slots: as much as at its round end
+	trayRing  = 1.5 // the tray's outline
+	// trayHeight is the tray's: a slot, 8 above and under it inside its
+	// outline, which takes room within its size (MyGo's, as CSS's).
+	trayHeight = slotTile + 2*8 + 2*trayRing
+	trayBottom = 22 // from the canvas's foot to the tray's
 )
 
 // The springs. glide carries a device where the hand did not, into the

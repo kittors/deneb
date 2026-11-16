@@ -28,7 +28,7 @@ func (a *app) notify(c *ui.Context, d *device, text string, undo func()) {
 	n := &notice{id: a.toasts, text: text, dev: d, undo: undo, until: c.Now().Add(4 * time.Second)}
 	right := a.bottomRight(a.ch)
 	tw := toastWidth(text, undo != nil)
-	box := ui.Rect{X: (a.cw-right)/2 - tw/2, Y: a.ch - toastBottom(true) - 44, W: tw, H: 44}
+	box := ui.Rect{X: (a.cw-right)/2 - tw/2, Y: a.ch - toastBottom(true) - toastHeight, W: tw, H: toastHeight}
 	n.top = a.covers(box, d)
 	if n.top && a.selected != "" && !a.busy() && a.cardAt.W > 0 {
 		// The card shows from the canvas's top right: up there the toast
@@ -75,20 +75,28 @@ func toastWidth(text string, undo bool) float32 {
 // above the tray when it shows.
 func toastBottom(trayShows bool) float32 {
 	if trayShows {
-		return 22 + 56 + 12
+		return trayBottom + trayHeight + 12
 	}
-	return 22
+	return trayBottom
 }
+
+// The toast: a tile of 28 at its round end, 8 round it inside its
+// outline, which takes room within its size: as far from the end as from
+// the top and bottom (DESIGN §3.9).
+const (
+	toastRing   = 1
+	toastHeight = 28 + 2*8 + 2*toastRing
+)
 
 // bottomRight is how far the tray and the toast keep from the canvas's
 // right edge. They sit centered under the whole canvas, card open or not:
 // a tray that moved left of center whenever a card was open looked off
 // (user, 2026-11-08), and while a device is dragged the card is away
 // anyway. Only a card that is showing and reaches down into their band,
-// the bottom 146 DIPs (a toast above the tray tops out at 134), pushes
-// them left, so that they never sit under it.
+// as high as a toast above the tray tops out and 12 more, pushes them
+// left, so that they never sit under it.
 func (a *app) bottomRight(h float32) float32 {
-	if a.selected == "" || a.busy() || a.cardAt.W == 0 || a.cardAt.Y+a.cardAt.H <= h-146 {
+	if a.selected == "" || a.busy() || a.cardAt.W == 0 || a.cardAt.Y+a.cardAt.H <= h-(toastBottom(true)+toastHeight+12) {
 		return 0
 	}
 	return cardWidth + 20
@@ -173,7 +181,7 @@ func (a *app) undoLeave(c *ui.Context, d *device) {
 	}
 	from, ok := a.slots[d.id]
 	if !ok {
-		from = ui.Point{X: a.cw / 2, Y: a.ch - 50}
+		from = ui.Point{X: a.cw / 2, Y: a.ch - trayBottom - trayHeight/2}
 	}
 	a.joinFrom(c, d, from, a.freeSpot(d.rest, d, footprint, a.cw, a.ch), ui.Pose{Scale: float32(slotTile) / tileSize}, false)
 	a.send(c, model.Op{Kind: model.OpLANAddDevice, LAN: d.lan, Device: d.dev})
@@ -303,7 +311,7 @@ func (a *app) trayView(c *ui.Context, p *palette, w, h float32, now time.Time) {
 		c.After(a.cameUntil.Sub(a.now()))
 	}
 	right := a.bottomRight(h)
-	holder := ui.Row(c.Key("tray-holder")).Absolute().Left(0).Right(right).Bottom(22).Justify(ui.Center).PassThrough()
+	holder := ui.Row(c.Key("tray-holder")).Absolute().Left(0).Right(right).Bottom(trayBottom).Justify(ui.Center).PassThrough()
 	holder.Children(func() {
 		if !a.trayUp {
 			a.trayKids.next(true)
@@ -323,9 +331,12 @@ func (a *app) trayView(c *ui.Context, p *palette, w, h float32, now time.Time) {
 		// The pill hugs what is in it, which opens, closes and changes with
 		// the tray's spring (DESIGN §6.5): its own size does not lag behind,
 		// so nothing in it ever sticks out of it; only its colors fade.
-		// 8 round its last circle, as above and under it: one round end.
-		pill := ui.Row(c.Key("tray")).Height(56).Padding(0, 8, 0, 16).AlignItems(ui.Center).Radius(999).
-			Background(bg).Border(1.5, ring).
+		// Inside its ring, which takes room within its size (MyGo's borders
+		// do, as CSS's), its slots keep 8 all round: a tile or a relay's
+		// ball at its round end as far from the end as from its top and
+		// bottom. Its words keep 16, their corners as far from the curve.
+		pill := ui.Row(c.Key("tray")).Height(trayHeight).Padding(0, 8, 0, 16).AlignItems(ui.Center).Radius(999).
+			Background(bg).Border(trayRing, ring).
 			Shadow(0, 10, 28, 0, p.shadow).Shadow(0, 2, 6, 0, ui.RGBA(9, 9, 11, 0.05))
 		pill.Transition(ui.ElementTransition{Animation: &soft, Colors: true})
 		if b := pill.Bounds(); b.W > 0 {
@@ -542,9 +553,10 @@ func (a *app) trayGhost(c *ui.Context, p *palette, look kidLook) {
 	case lookAdd:
 		a.trayAdd(c, p, true)
 	case lookRule:
-		ui.Box(c).Size(1, 26).Margin(0, 0, 0, slotGap).Background(p.line).Shrink(0)
+		// As far from a tile before it as from the ball after it, in its slot.
+		ui.Box(c).Size(1, 26).Margin(0, 0, 0, slotGap+relayRoom).Background(p.line).Shrink(0)
 	case lookRound, lookJoin:
-		ui.Box(c).Size(relaySlotBall+slotGap, slotTile).Padding(0, 0, 0, slotGap).Shrink(0).Center().Children(func() {
+		ui.Box(c).Size(slotTile+slotGap, slotTile).Padding(0, 0, 0, slotGap).Shrink(0).Center().Children(func() {
 			ui.Box(c).Size(relaySlotBall, relaySlotBall).Radius(999).Background(p.well)
 		})
 	default:
@@ -710,8 +722,8 @@ func (a *app) toastView(c *ui.Context, p *palette, w, h float32, now time.Time) 
 			// The pill hugs what it says, and only its coming and going
 			// animate: a notice taking the place of the one showing never
 			// shows beside it (toastShown, DESIGN §6.5).
-			t := ui.Row(c.Key("toast")).Height(44).Padding(0, 0, 0, 8).AlignItems(ui.Center).Radius(999).
-				Background(p.bg).Border(1, p.line).
+			t := ui.Row(c.Key("toast")).Height(toastHeight).Padding(0, 0, 0, 8).AlignItems(ui.Center).Radius(999).
+				Background(p.bg).Border(toastRing, p.line).
 				Shadow(0, 12, 32, 0, p.shadow).Shadow(0, 2, 6, 0, ui.RGBA(9, 9, 11, 0.06))
 			t.Transition(ui.ElementTransition{Animation: &ui.Snappy,
 				Enter: &ui.Motion{Y: rise, Scale: 0.96}, Exit: &ui.Motion{Y: 8, Scale: 0.98}})

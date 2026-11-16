@@ -124,7 +124,7 @@ func TestToastOverTheTrayKeepsClear(t *testing.T) {
 			continue
 		}
 		seen++
-		bottom := r.Y + r.H/2 + 22 // the toast is 44 high, its words in the middle
+		bottom := r.Y + r.H/2 + toastHeight/2 // its words in the toast's middle
 		if top := headerHeight + a.trayAt.Y; bottom > top+1 {
 			t.Fatalf("frame %d: the toast reaches %v, into the tray from %v", i, bottom, top)
 		}

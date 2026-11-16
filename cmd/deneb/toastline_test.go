@@ -20,7 +20,7 @@ func TestToastKeepsOffNames(t *testing.T) {
 	// Over the tray, where a toast shows, it would cover the NAS: what this
 	// test is about.
 	tw := toastWidth(say, false)
-	over := ui.Rect{X: (a.cw-a.bottomRight(a.ch))/2 - tw/2, Y: a.ch - toastBottom(true) - 44, W: tw, H: 44}
+	over := ui.Rect{X: (a.cw-a.bottomRight(a.ch))/2 - tw/2, Y: a.ch - toastBottom(true) - toastHeight, W: tw, H: toastHeight}
 	if nas := a.device("jnas"); nas == nil || !overlaps(over, footprint(nas.at())) {
 		t.Fatal("the demo moved: over the tray, a toast no longer sits on 阿杰的 NAS")
 	}

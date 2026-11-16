@@ -392,7 +392,8 @@ func (a *app) noticePill(c *ui.Context, p *palette) {
 		if n == nil {
 			return
 		}
-		pill := ui.ButtonBase(c.Key("notice-"+n.Code)).Height(30).Padding(0, 12, 0, 8).Gap(8).Radius(999).
+		// Its dot as far from the round end as from the top and bottom.
+		pill := ui.ButtonBase(c.Key("notice-"+n.Code)).Height(30).Padding(0, 12, 0, 12).Gap(8).Radius(999).
 			Background(ui.Hex("#F59E0B").Alpha(0.1)).FocusRing(false).Cursor(ui.CursorPointer)
 		if pill.Hovered() {
 			pill.Background(ui.Hex("#F59E0B").Alpha(0.16))
@@ -400,7 +401,7 @@ func (a *app) noticePill(c *ui.Context, p *palette) {
 		pill.Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: &ui.Motion{Scale: 0.9}, Exit: &ui.Motion{Scale: 0.9}})
 		pill.AnimatePose(pressPose(pill, 0.96), ui.Snappy)
 		pill.Children(func() {
-			ui.Box(c).Size(7, 7).Radius(999).Background(ui.Hex("#F59E0B"))
+			ui.Box(c).Size(6, 6).Radius(999).Background(ui.Hex("#F59E0B"))
 			ui.Text(c, n.Short).FontSize(12).FontWeight(500).TextColor(p.ink2).SingleLine()
 		})
 		if pill.Clicked() {

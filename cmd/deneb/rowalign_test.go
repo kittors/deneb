@@ -490,6 +490,36 @@ func edgesOff(root *laid, w, h float32) []offCenter {
 	return out
 }
 
+// endBox is what shows at l's start (or its end, last) as a box: l, if it
+// is painted; else the first (or last) of those inside it that shows,
+// looked into the same way; nil for words, a mark or a picture there.
+func (l *laid) endBox(last bool) *laid {
+	if !l.shown || l.kind != 0 {
+		return nil
+	}
+	if l.painted {
+		return l
+	}
+	return l.innerEndBox(last)
+}
+
+// innerEndBox is endBox of the first (or last) of those inside l that shows.
+func (l *laid) innerEndBox(last bool) *laid {
+	for i := range l.children {
+		k := l.children[i]
+		if last {
+			k = l.children[len(l.children)-1-i]
+		}
+		if k.absolute {
+			continue
+		}
+		if _, ok := k.ink(); ok {
+			return k.endBox(last)
+		}
+	}
+	return nil
+}
+
 // offOneEdge is how far the things of a column are from one edge, each
 // meeting it at either of its two places (its ink's, its things'): 0 when
 // one edge has them all, else the least spread of the edges they keep to.
@@ -577,6 +607,28 @@ func spacingOff(root *laid, w, h float32) []offCenter {
 		// button), which the middle-line check looks at.
 		if e.panel && (e.pad[0] != 0 || e.pad[2] != 0) && (e.pad[0] != e.pad[1] || e.pad[1] != e.pad[2] || e.pad[2] != e.pad[3]) {
 			bad = append(bad, fmt.Sprintf("a panel's padding not the same all round: %v", e.pad))
+		}
+		// A pill's round ends hold a ball or a tile as far from the end as
+		// from the top and the bottom, as the end's curve and theirs nest
+		// (AGENTS.md §2.3, §2.4). Words or a mark at an end are no box: they
+		// keep the room their corners need from the curve (the tray's 16).
+		// A switch's knob runs from end to end: its drawing, not this.
+		if e.row && e.painted && e.kind == 0 && !e.toggle && e.radius >= e.rect.H/2-1 && len(e.children) > 0 {
+			for _, last := range []bool{false, true} {
+				box := e.innerEndBox(last)
+				if box == nil {
+					continue
+				}
+				r := box.rect
+				end, side := r.X-e.rect.X, "start"
+				if last {
+					end, side = e.rect.X+e.rect.W-(r.X+r.W), "end"
+				}
+				top, bottom := r.Y-e.rect.Y, e.rect.Y+e.rect.H-(r.Y+r.H)
+				if math.Abs(float64(end-top)) > 0.5 || math.Abs(float64(end-bottom)) > 0.5 {
+					bad = append(bad, fmt.Sprintf("a pill's %s holds %q %g from it, %g from the top, %g from the bottom", side, firstWords(box.words(), 16), end, top, bottom))
+				}
+			}
 		}
 		if len(bad) > 0 {
 			out = append(out, offCenter{row: firstWords(e.words(), 60), parts: bad})
@@ -706,6 +758,14 @@ func TestLayoutRules(t *testing.T) {
 	t.Logf("%d findings in %s", len(order), out)
 }
 
+// settingsWith opens the settings with the app's update in stage, as a
+// check leaves it.
+func (r *m3rig) settingsWith(stage updateStage) bool {
+	r.a.updates = newAppUpdater(r.a)
+	r.a.updates.stage = stage
+	return r.openWords("设置")
+}
+
 // away takes the pointer out of the window, and lets what it lit fade: the
 // layout is looked at, and its stills taken, at rest.
 func (r *m3rig) away() {
@@ -788,6 +848,10 @@ var alignStates = []struct {
 	{"用我自己的服务器", -1, func(r *m3rig, h float32) bool { return r.openWords("用我自己的服务器") }},
 	{"设备卡片更多", -1, func(r *m3rig, h float32) bool { return r.openAt(r.device("game")) && r.openWords("更多") }},
 	{"重命名", -1, func(r *m3rig, h float32) bool { return r.openAt(r.device("game")) && r.openWords("重命名") }},
+	// The settings after a check: what 软件更新 says, beside it (the user's
+	// first still, 11-16, had 已是最新版本 under it, indented).
+	{"设置·已是最新版本", -1, func(r *m3rig, h float32) bool { return r.settingsWith(updateCurrent) }},
+	{"设置·正在检查更新", -1, func(r *m3rig, h float32) bool { return r.settingsWith(updateChecking) }},
 	{"注销账号", m7Demo, func(r *m3rig, h float32) bool { return r.openWords("设置") && r.openWords("注销账号") }},
 	{"注销以后", m7Demo, func(r *m3rig, h float32) bool {
 		// The email typed again, and Return: the sign-in, saying so, with

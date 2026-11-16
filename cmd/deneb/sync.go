@@ -421,7 +421,7 @@ func (a *app) reconcile(c *ui.Context) {
 			// of its slot to where it rested here, or a free spot.
 			from, ok := a.slots[d.id]
 			if !ok {
-				from = ui.Point{X: a.cw / 2, Y: a.ch - 50}
+				from = ui.Point{X: a.cw / 2, Y: a.ch - trayBottom - trayHeight/2}
 			}
 			want, ok := a.places.get(a.lan, d.id)
 			if !ok {
