@@ -20,6 +20,13 @@
 # Redeploying keeps the data directory, so the certificate and with it the
 # pin devices trust stay the same. The old image stays as deneb-relay:prev;
 # to go back: docker rm -f deneb-relay, then the same docker run with it.
+#
+# TUNNEL_LISTEN and TUNNEL_HOST, off by default, give a public relay its
+# Cloudflare tunnel's way in (design/plan/control-reachability-20261116.md
+# §10): the loopback port cloudflared on the same machine brings devices
+# to, as 127.0.0.1:47451 (deploy/tunnel/deploy.sh), and the tunnel's host
+# name, as relay.deneb.app, which devices hear from the control server.
+# Both or neither; the real host name stays out of this repository.
 set -eu
 HOST=${HOST:?HOST=hk-155 or hk-spare}
 IPV4=${IPV4:?IPV4: the address devices reach the relay at}
@@ -33,6 +40,25 @@ REGION=${REGION:-香港}
 NAME=deneb-relay
 TAG=deneb-relay:v0
 REMOTE=/opt/deneb-relay
+TUNNEL_LISTEN=${TUNNEL_LISTEN:-}
+TUNNEL_HOST=${TUNNEL_HOST:-}
+TUNNEL_FLAGS=
+TUNNEL_PORT=
+if [ -n "$TUNNEL_LISTEN$TUNNEL_HOST" ]; then
+	case "$TUNNEL_LISTEN" in
+	127.*:[0-9]* | \[::1\]:[0-9]*) ;;
+	*) echo "TUNNEL_LISTEN: a loopback address, as 127.0.0.1:47451" >&2; exit 2 ;;
+	esac
+	case "$TUNNEL_HOST" in
+	*.*) ;;
+	*) echo "TUNNEL_HOST: the tunnel's host name alone, as relay.deneb.app" >&2; exit 2 ;;
+	esac
+	case "$TUNNEL_HOST" in
+	*[!a-z0-9.-]* | .* | *.) echo "TUNNEL_HOST: the tunnel's host name alone, as relay.deneb.app" >&2; exit 2 ;;
+	esac
+	TUNNEL_FLAGS="-tunnel-listen $TUNNEL_LISTEN -tunnel-host $TUNNEL_HOST"
+	TUNNEL_PORT=${TUNNEL_LISTEN##*:}
+fi
 
 cd "$(dirname "$0")/../.."
 ARCHES=amd64 deploy/relay/build.sh
@@ -47,6 +73,11 @@ ssh "$HOST" "
 		if [ -n \"\$(ss -lunH 'sport = :$STUN_PORT')\" ]; then
 			echo 'UDP port $STUN_PORT is taken on $HOST:'; ss -lunpH 'sport = :$STUN_PORT'; exit 1
 		fi
+	fi
+	# The tunnel's port too, unless the running relay is the one on it.
+	if [ -n '$TUNNEL_FLAGS' ] && ! docker inspect -f '{{join .Args \" \"}}' $NAME 2>/dev/null | grep -q -- -tunnel-listen &&
+		[ -n \"\$(ss -ltnH 'sport = :$TUNNEL_PORT')\" ]; then
+		echo 'TCP port $TUNNEL_PORT is taken on $HOST:'; ss -ltnpH 'sport = :$TUNNEL_PORT'; exit 1
 	fi
 	if [ ! -f $REMOTE/data/relay.json ] && [ -z '$TOKEN$JOIN' ]; then
 		echo 'the relay on $HOST has not registered yet: give JOIN (or TOKEN)'; exit 1
@@ -82,7 +113,7 @@ ssh "$HOST" "
 		-v $REMOTE/data:/data \
 		${TOKEN:+-e DENEB_RELAY_TOKEN=$TOKEN} ${JOIN:+-e DENEB_RELAY_JOIN=$JOIN} \
 		$TAG -control $CONTROL -control-pin $CONTROL_PIN -data /data \
-		-listen :$DERP_PORT -stun :$STUN_PORT -ipv4 $IPV4 -region $REGION
+		-listen :$DERP_PORT -stun :$STUN_PORT -ipv4 $IPV4 -region $REGION $TUNNEL_FLAGS
 	sleep 3
 	docker ps --filter name=^$NAME\$ --format '{{.Names}} {{.Status}}'
 	docker logs --tail 20 $NAME"
