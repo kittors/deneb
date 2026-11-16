@@ -228,6 +228,14 @@ type Conn struct {
 	stunAddr   map[proto.RelayID]netip.AddrPort
 	pongSelf   netip.AddrPort
 	lastEps    []netip.AddrPort
+	// viaTunnel are the public relays a connection last reached by their
+	// tunnel, and since when: a new connection starts there (tunnel.go).
+	viaTunnel map[proto.RelayID]time.Time
+	// directOff are the relays whose own address a test turned off
+	// (SetRelayDirectOff): never saved, gone with the process.
+	directOff map[proto.RelayID]bool
+	// tunnelDial, in tests, reaches a fake Cloudflare instead of port 443.
+	tunnelDial func(ctx context.Context, network, addr string) (net.Conn, error)
 
 	rx chan rxPacket
 }
@@ -242,7 +250,8 @@ type rxPacket struct {
 // unmodified Tailscale derper works as Deneb's relay.
 type relayConn struct {
 	relay    proto.Relay
-	client   *derphttp.Client
+	client   relayClient
+	ways     *twoWays // a public relay's own address and tunnel; nil without a tunnel
 	up       bool
 	since    time.Time
 	stop     chan struct{}
@@ -297,6 +306,8 @@ func New(nodePriv key.NodePrivate, discoPriv [32]byte, opts Options) (*Conn, err
 		closed:    make(chan struct{}),
 		relays:    map[proto.RelayID]*relayConn{},
 		relayCfg:  map[proto.RelayID]proto.Relay{},
+		viaTunnel: map[proto.RelayID]time.Time{},
+		directOff: map[proto.RelayID]bool{},
 		peers:     map[proto.NodePublic]*peerState{},
 		byDisco:   map[proto.DiscoPublic]*peerState{},
 		byAddr:    map[netip.AddrPort]*peerState{},
@@ -815,45 +826,191 @@ func (c *Conn) closeIdleRelaysLocked(now time.Time) []string {
 }
 
 func sameRelay(a, b proto.Relay) bool {
-	return a.HostName == b.HostName && a.IPv4 == b.IPv4 && a.DERPPort == b.DERPPort && a.STUNPort == b.STUNPort
+	return a.HostName == b.HostName && a.IPv4 == b.IPv4 && a.DERPPort == b.DERPPort && a.STUNPort == b.STUNPort && a.Tunnel == b.Tunnel
 }
 
+// newRelayConn makes a connection to relay r, its receive loop not started
+// yet. c.mu is held.
 func (c *Conn) newRelayConn(r proto.Relay, home bool) (*relayConn, error) {
 	if r.HostName == "" || r.DERPPort == 0 {
 		return nil, errors.New("relay has no host name or port")
 	}
 	hostport := net.JoinHostPort(r.HostName, strconv.Itoa(int(r.DERPPort)))
 	rc := &relayConn{relay: r, stop: make(chan struct{})}
+	var cfg *tls.Config
 	if r.Pin != "" {
-		// A Deneb relay's self-signed certificate, trusted by its key (M4).
-		// derphttp's own TLS refuses a config that skips the chain check
-		// (it panics), so the dialer does TLS itself and derphttp is told
-		// plain http: it then speaks DERP over the pinned connection.
-		cfg, err := proto.PinnedTLSConfig(r.Pin)
-		if err != nil {
+		var err error
+		if cfg, err = proto.PinnedTLSConfig(r.Pin); err != nil {
 			return nil, err
 		}
-		dc, err := derphttp.NewClient(c.nodePriv, "http://"+hostport+"/derp", c.derpLogf(r.Name), netmon.NewStatic())
-		if err != nil {
-			return nil, err
+	}
+	// The relay by its own address; with a tunnel, the dial tells the two
+	// ways whether it got through (tunnel.go).
+	var ways *twoWays
+	direct := func() *derphttp.Client {
+		dial := c.relayDialer(r)
+		url := "https://" + hostport + "/derp"
+		if cfg != nil {
+			// A Deneb relay's self-signed certificate, trusted by its key
+			// (M4). derphttp's own TLS refuses a config that skips the chain
+			// check (it panics), so the dialer does TLS itself and derphttp
+			// is told plain http: it then speaks DERP over the pinned
+			// connection.
+			dial, url = c.pinnedDialer(r, cfg), "http://"+hostport+"/derp"
 		}
-		dc.SetURLDialer(rc.noteDial(c.pinnedDialer(r, cfg)))
+		dc, err := derphttp.NewClient(c.nodePriv, url, c.derpLogf(r.Name), netmon.NewStatic())
+		if err != nil {
+			panic(err) // the URL is ours, and parses
+		}
+		if cfg == nil && c.opts.RelayRoots != nil {
+			dc.TLSConfig = &tls.Config{RootCAs: c.opts.RelayRoots}
+		}
+		dc.SetURLDialer(rc.noteDial(func(ctx context.Context, network, addr string) (net.Conn, error) {
+			c.mu.Lock()
+			off := c.directOff[r.ID]
+			c.mu.Unlock()
+			if off && r.Tunnel != "" {
+				ways.directFailed.Store(true)
+				return nil, errDirectOff
+			}
+			conn, err := dial(ctx, network, addr)
+			if err != nil && ways != nil {
+				ways.directFailed.Store(true)
+			}
+			return conn, err
+		}))
+		return dc
+	}
+	if r.Tunnel == "" {
+		dc := direct()
 		dc.NotePreferred(home)
 		rc.client = dc
 		return rc, nil
 	}
-	url := "https://" + hostport + "/derp"
-	dc, err := derphttp.NewClient(c.nodePriv, url, c.derpLogf(r.Name), netmon.NewStatic())
-	if err != nil {
-		return nil, err
-	}
-	if c.opts.RelayRoots != nil {
-		dc.TLSConfig = &tls.Config{RootCAs: c.opts.RelayRoots}
-	}
-	dc.SetURLDialer(rc.noteDial(c.relayDialer(r)))
-	dc.NotePreferred(home)
-	rc.client = dc
+	since := c.viaTunnel[r.ID] // the tunnel worked last: start there (c.mu is held)
+	ways = newTwoWays(r.Name, direct, newWSClient(c.nodePriv, r.Tunnel, c.tunnelDialer(), c.opts.RelayRoots, c.derpLogf(r.Name)),
+		func(ctx context.Context) error {
+			c.mu.Lock()
+			off := c.directOff[r.ID]
+			c.mu.Unlock()
+			if off {
+				return errDirectOff
+			}
+			dial := c.relayDialer(r)
+			if cfg != nil {
+				dial = c.pinnedDialer(r, cfg)
+			}
+			conn, err := dial(ctx, "tcp", hostport)
+			if err == nil {
+				conn.Close()
+			}
+			return err
+		},
+		func(tunnel bool) {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			if tunnel {
+				c.viaTunnel[r.ID] = time.Now()
+			} else {
+				delete(c.viaTunnel, r.ID)
+			}
+		}, since, c.logf)
+	ways.NotePreferred(home)
+	rc.client, rc.ways = ways, ways
 	return rc, nil
+}
+
+// tunnelDialer dials a relay's tunnel by its name (DNS: the CDN's
+// addresses): pinned to the interface like the relay's own address, and by
+// the routing table after tunnelHeadStart or as soon as that fails, as a
+// proxy in fake-ip mode answers the name with an address only its TUN
+// reaches (as controlclient does for the control server's CDN entrance).
+func (c *Conn) tunnelDialer() func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if c.tunnelDial != nil {
+			return c.tunnelDial(ctx, network, addr)
+		}
+		plain := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+		bound := ""
+		if b := c.boundIf.Load(); b != nil {
+			bound = *b
+		}
+		ctl, err := bind.Control(bound)
+		if bound == "" || err != nil {
+			return plain.DialContext(ctx, network, addr)
+		}
+		pinned := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second, Control: ctl}
+		type result struct {
+			conn net.Conn
+			err  error
+		}
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		results := make(chan result, 2)
+		go func() { conn, err := pinned.DialContext(ctx, network, addr); results <- result{conn, err} }()
+		head := time.NewTimer(tunnelHeadStart)
+		defer head.Stop()
+		routed, left := false, 1
+		route := func() {
+			if !routed {
+				routed, left = true, left+1
+				go func() { conn, err := plain.DialContext(ctx, network, addr); results <- result{conn, err} }()
+			}
+		}
+		var lastErr error
+		for {
+			select {
+			case <-head.C:
+				route()
+			case r := <-results:
+				left--
+				if r.err == nil {
+					if left > 0 {
+						go func() {
+							if o := <-results; o.conn != nil {
+								o.conn.Close()
+							}
+						}()
+					}
+					return r.conn, nil
+				}
+				lastErr = r.err
+				route()
+				if left == 0 {
+					return nil, lastErr
+				}
+			}
+		}
+	}
+}
+
+// SetRelayDirectOff turns a public relay's own address off (or on again)
+// for a test on a real machine: its connections go by the tunnel, as when
+// the address is blocked (deneb debug relay-direct). Not saved: a restart
+// turns it on again.
+func (c *Conn) SetRelayDirectOff(id proto.RelayID, off bool) error {
+	c.mu.Lock()
+	r, known := c.relayCfg[id]
+	if !known || r.Tunnel == "" {
+		c.mu.Unlock()
+		return fmt.Errorf("relay %s has no tunnel", id)
+	}
+	if off {
+		c.directOff[id] = true
+	} else {
+		delete(c.directOff, id)
+	}
+	rc := c.relays[id]
+	c.mu.Unlock()
+	if rc == nil || rc.ways == nil {
+		return nil
+	}
+	if off {
+		rc.ways.leaveDirect()
+	} else {
+		rc.ways.probeNow() // the own address again, now
+	}
+	return nil
 }
 
 // noteDial has the connection keep what each of its dials came to: derphttp
@@ -930,7 +1087,11 @@ func (c *Conn) pinnedDialer(r proto.Relay, cfg *tls.Config) func(ctx context.Con
 			tcfg.ServerName = r.HostName
 		}
 		tc := tls.Client(conn, tcfg)
-		if err := tc.HandshakeContext(ctx); err != nil {
+		// TCP through and the handshake never done (12:10): given up in
+		// relayTLSTimeout, and a public relay goes by its tunnel.
+		hctx, cancel := context.WithTimeout(ctx, relayTLSTimeout)
+		defer cancel()
+		if err := tc.HandshakeContext(hctx); err != nil {
 			conn.Close()
 			return nil, &tlsDialError{err}
 		}
@@ -1696,6 +1857,9 @@ type RelayState struct {
 	Home     bool
 	OnDemand bool // opened to reach a peer homed there; closed when unused
 	Since    time.Time
+	// Via is the way in use to a public relay with a tunnel: "direct"
+	// (its own address) or "tunnel"; "" for a relay without one.
+	Via string `json:",omitempty"`
 }
 
 // ResidentRelays are the relays kept open, home first, then in the table's
@@ -1776,7 +1940,14 @@ func (c *Conn) Relays() []RelayState {
 	defer c.mu.Unlock()
 	out := make([]RelayState, 0, len(c.relays))
 	for id, rc := range c.relays {
-		out = append(out, RelayState{ID: id, Name: rc.relay.Name, Up: rc.up, Home: id == c.home, OnDemand: rc.onDemand, Since: rc.since})
+		via := ""
+		if rc.ways != nil {
+			via = "direct"
+			if rc.ways.viaTunnel.Load() {
+				via = "tunnel"
+			}
+		}
+		out = append(out, RelayState{ID: id, Name: rc.relay.Name, Up: rc.up, Home: id == c.home, OnDemand: rc.onDemand, Since: rc.since, Via: via})
 	}
 	slices.SortFunc(out, func(a, b RelayState) int { return strings.Compare(string(a.ID), string(b.ID)) })
 	return out
