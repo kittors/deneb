@@ -51,7 +51,7 @@ var (
 
 // NewSignIn signs in through lc's engine, to the servers of pins.
 func NewSignIn(lc *localclient.Client, pins map[string]string) *SignIn {
-	return &SignIn{login: func(ctx context.Context) (string, error) { return lc.Login(ctx, "") }, pins: pins, client: pinnedClient,
+	return &SignIn{login: func(ctx context.Context) (string, error) { return lc.LoginLink(ctx, "") }, pins: pins, client: pinnedClient,
 		more: func(ctx context.Context) map[string]string {
 			st, err := lc.State(ctx)
 			if err != nil {

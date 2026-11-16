@@ -54,6 +54,7 @@ func (e *Engine) stateLocked() *apitype.State {
 		Version:          e.version,
 		LoggedIn:         e.st.LoggedIn,
 		LoginURL:         e.loginURL,
+		BrowserURL:       e.browserURL,
 		User:             apitype.PersonID(e.st.Person),
 		SelfDeviceID:     apitype.DeviceID(e.st.Device),
 		ControlConnected: e.controlUp,
@@ -380,7 +381,7 @@ func (e *Engine) Login(ctx context.Context, req apitype.LoginRequest) (*apitype.
 	}
 	if req.ControlURL != "" && !e.st.LoggedIn && req.ControlURL != e.controlURLLocked() {
 		// A different server for the first login: restart the loop on it.
-		e.opts.ControlURL, e.st.ControlURL, e.loginURL = req.ControlURL, "", ""
+		e.opts.ControlURL, e.st.ControlURL, e.loginURL, e.browserURL = req.ControlURL, "", "", ""
 		e.stopControlLocked()
 	}
 	if e.controlURLLocked() == "" {
@@ -393,10 +394,10 @@ func (e *Engine) Login(ctx context.Context, req apitype.LoginRequest) (*apitype.
 	deadline := time.After(15 * time.Second)
 	for {
 		e.mu.Lock()
-		url, in, running := e.loginURL, e.st.LoggedIn, e.ccRunning
+		url, browser, in, running := e.loginURL, e.browserURL, e.st.LoggedIn, e.ccRunning
 		e.mu.Unlock()
 		if url != "" {
-			return &apitype.LoginResponse{URL: url}, nil
+			return &apitype.LoginResponse{URL: url, BrowserURL: browser}, nil
 		}
 		if in {
 			return &apitype.LoginResponse{}, nil // the server already knew this machine

@@ -47,8 +47,10 @@ type State struct {
 
 	LoggedIn bool `json:"loggedIn"`
 	// LoginURL is set while a login started by POST /v1/login waits for
-	// the browser.
+	// the browser; BrowserURL is the link to give the browser
+	// (LoginResponse.BrowserURL), LoginURL when it is empty.
 	LoginURL     string   `json:"loginURL,omitempty"`
+	BrowserURL   string   `json:"browserURL,omitempty"`
 	User         PersonID `json:"user,omitempty"`
 	SelfDeviceID DeviceID `json:"selfDeviceID,omitempty"`
 
@@ -337,6 +339,10 @@ type LoginRequest struct {
 // any other.
 type LoginResponse struct {
 	URL string `json:"url"`
+	// BrowserURL is the same login for a person's browser: the Web
+	// version's page, whose certificate every browser trusts, when the
+	// server has one; empty (an older server or engine): URL.
+	BrowserURL string `json:"browserURL,omitempty"`
 }
 
 // PauseRequest is POST /v1/lan/pause. The engine changes its tables at once

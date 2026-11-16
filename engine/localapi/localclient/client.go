@@ -269,14 +269,38 @@ func NewOpID() string {
 	return hex.EncodeToString(b[:])
 }
 
-// Login asks the engine for a login link. The engine finishes the login by
-// itself once the person confirms in a browser; watch State.LoggedIn.
+// Login asks the engine for a login link, for a browser: the Web version's
+// page when the server has one, its certificate one every browser trusts.
+// The engine finishes the login by itself once the person confirms in a
+// browser; watch State.LoggedIn.
 func (c *Client) Login(ctx context.Context, controlURL string) (string, error) {
-	var res apitype.LoginResponse
-	if err := c.do(ctx, "POST", "/v1/login", apitype.LoginRequest{ControlURL: controlURL}, &res); err != nil {
+	res, err := c.login(ctx, controlURL)
+	if err != nil {
+		return "", err
+	}
+	if res.BrowserURL != "" {
+		return res.BrowserURL, nil
+	}
+	return res.URL, nil
+}
+
+// LoginLink is the same login's link on the control server itself, which
+// the window's sign-in talks to over the server's own TLS, by its pin
+// (client.SignIn).
+func (c *Client) LoginLink(ctx context.Context, controlURL string) (string, error) {
+	res, err := c.login(ctx, controlURL)
+	if err != nil {
 		return "", err
 	}
 	return res.URL, nil
+}
+
+func (c *Client) login(ctx context.Context, controlURL string) (*apitype.LoginResponse, error) {
+	var res apitype.LoginResponse
+	if err := c.do(ctx, "POST", "/v1/login", apitype.LoginRequest{ControlURL: controlURL}, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
 }
 
 func (c *Client) Logout(ctx context.Context) error {

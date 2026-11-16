@@ -4,6 +4,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -276,8 +277,8 @@ func (c *cmd) status(ctx context.Context, args []string) error {
 	}
 	if !st.LoggedIn {
 		fmt.Fprintln(c.out, "还没登录。执行 deneb login。")
-		if st.LoginURL != "" {
-			fmt.Fprintf(c.out, "登录链接：%s\n", st.LoginURL)
+		if link := cmp.Or(st.BrowserURL, st.LoginURL); link != "" {
+			fmt.Fprintf(c.out, "登录链接：%s\n", link)
 		}
 		return nil
 	}

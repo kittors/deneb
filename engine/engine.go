@@ -179,6 +179,7 @@ type Engine struct {
 	ccGen         int // which control loop is the current one
 	ccCancel      context.CancelFunc
 	loginURL      string
+	browserURL    string // the same login for a person's browser (proto.LoginState.BrowserURL)
 	controlUp     bool
 	problems      map[string]apitype.Problem
 	socksOn       bool

@@ -189,8 +189,10 @@ func (e *Engine) controlLoop(ctx context.Context, cc *controlclient.Client, gen 
 			// in that got through instead.
 			link := cc.Through(st.LoginURL)
 			e.mu.Lock()
-			changed := e.loginURL != link
-			e.loginURL = link
+			changed := e.loginURL != link || e.browserURL != st.BrowserURL
+			// The browser's is the Web version's page, which every browser
+			// trusts, by an address of its own: not an entrance.
+			e.loginURL, e.browserURL = link, st.BrowserURL
 			e.mu.Unlock()
 			if changed {
 				e.logf("[control] waiting for a login in the browser: %s", st.LoginURL)
@@ -221,7 +223,7 @@ func (e *Engine) controlLoop(ctx context.Context, cc *controlclient.Client, gen 
 		}
 		e.st.LoggedIn, e.st.Device, e.st.Person = true, st.Device, st.Person
 		e.st.ControlURL, e.st.ControlPin = e.controlURLLocked(), e.controlPinLocked()
-		e.loginURL = ""
+		e.loginURL, e.browserURL = "", ""
 		e.saveState()
 		since := e.version
 		e.mu.Unlock()
@@ -318,7 +320,7 @@ func (e *Engine) localLogout() {
 	e.st.LoggedIn, e.st.Device, e.st.Person, e.st.Paused = false, "", "", nil
 	e.saveState()
 	e.forgetMap()
-	e.nm, e.userView, e.loginURL = nil, nil, ""
+	e.nm, e.userView, e.loginURL, e.browserURL = nil, nil, "", ""
 	e.f.SetPolicy(&filter.Policy{})
 	e.ms.SetPeers(nil)
 	e.configureWGLocked(nil)
