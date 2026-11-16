@@ -30,6 +30,10 @@ type SignIn struct {
 	// pins are the servers the window knows, by origin
 	// ("https://host:port"), and their pins ("sha256:<hex>").
 	pins map[string]string
+	// more are the other ways to Deneb's own server the engine goes by
+	// (apitype.State.ControlPins): the login link names the one that got
+	// through. "" for a pin: the system's roots check its certificate.
+	more func(ctx context.Context) map[string]string
 	// client is how a page is posted to the server of pin; tests replace it.
 	client func(pin string) *http.Client
 
@@ -47,7 +51,14 @@ var (
 
 // NewSignIn signs in through lc's engine, to the servers of pins.
 func NewSignIn(lc *localclient.Client, pins map[string]string) *SignIn {
-	return &SignIn{login: func(ctx context.Context) (string, error) { return lc.Login(ctx, "") }, pins: pins, client: pinnedClient}
+	return &SignIn{login: func(ctx context.Context) (string, error) { return lc.Login(ctx, "") }, pins: pins, client: pinnedClient,
+		more: func(ctx context.Context) map[string]string {
+			st, err := lc.State(ctx)
+			if err != nil {
+				return nil
+			}
+			return st.ControlPins
+		}}
 }
 
 // SendCode asks the server to send a code to email, starting a login when
@@ -84,7 +95,7 @@ func (s *SignIn) CheckCode(ctx context.Context, email, code string) error {
 	if link == "" {
 		return errors.New("先发验证码")
 	}
-	base, c, pin, err := s.parse(link)
+	base, c, pin, err := s.parse(ctx, link)
 	if err != nil {
 		return err
 	}
@@ -121,7 +132,7 @@ func (s *SignIn) start(ctx context.Context) (base, code, pin string, err error) 
 		s.link = link
 		s.mu.Unlock()
 	}
-	return s.parse(link)
+	return s.parse(ctx, link)
 }
 
 // forget drops the login under way: the next code starts another.
@@ -132,13 +143,16 @@ func (s *SignIn) forget() {
 }
 
 // parse takes a login link apart: https://host:port/login?c=CODE.
-func (s *SignIn) parse(link string) (base, code, pin string, err error) {
+func (s *SignIn) parse(ctx context.Context, link string) (base, code, pin string, err error) {
 	u, err := url.Parse(link)
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		return "", "", "", fmt.Errorf("登录链接不对：%q", link)
 	}
 	base = u.Scheme + "://" + u.Host
 	pin, ok := s.pins[base]
+	if !ok && s.more != nil {
+		pin, ok = s.more(ctx)[base]
+	}
 	if !ok {
 		return "", "", "", ErrUseBrowser
 	}
@@ -186,10 +200,14 @@ func (s *SignIn) post(ctx context.Context, pin, u string, form url.Values) (page
 }
 
 // pinnedClient trusts the one server whose key is pin, as the engine does
-// (proto.PinnedTLSConfig). A pin it cannot read trusts nothing.
+// (proto.PinnedTLSConfig). A pin it cannot read trusts nothing; no pin (a
+// CDN's way to Deneb's own server) is the system's roots and the name.
 func pinnedClient(pin string) *http.Client {
 	cfg, err := proto.PinnedTLSConfig(pin)
-	if err != nil {
+	switch {
+	case pin == "":
+		cfg = &tls.Config{MinVersion: tls.VersionTLS12}
+	case err != nil:
 		cfg = &tls.Config{MinVersion: tls.VersionTLS13, VerifyConnection: func(tls.ConnectionState) error { return err }, InsecureSkipVerify: true}
 	}
 	return &http.Client{Timeout: 20 * time.Second, Transport: &http.Transport{TLSClientConfig: cfg},
