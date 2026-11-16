@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -457,7 +458,29 @@ func newControlClient(base, pin string) (*controlClient, error) {
 	if err != nil || u.Host == "" || u.Scheme != "https" && u.Scheme != "http" {
 		return nil, fmt.Errorf("控制服务器地址不对：%q", base)
 	}
-	tr := &http.Transport{
+	var cfg *tls.Config
+	if u.Scheme == "https" {
+		if pin == "" {
+			return nil, errors.New("HTTPS 的控制服务器要给 -control-pin")
+		}
+		if cfg, err = proto.PinnedTLSConfig(pin); err != nil {
+			return nil, err
+		}
+	}
+	var rt http.RoundTripper = controlTransport(cfg)
+	// Deneb's own server: all its ways in (entrances.go).
+	if et, err := newEntranceTransport(base, controlEntrances(), controlTransport, log.Printf); err != nil {
+		return nil, err
+	} else if et != nil {
+		rt = et
+	}
+	return &controlClient{base: base, hc: &http.Client{Transport: rt, Timeout: 30 * time.Second}}, nil
+}
+
+// controlTransport is how the relay reaches its control server, cfg its
+// TLS config (nil for plain http).
+func controlTransport(cfg *tls.Config) *http.Transport {
+	return &http.Transport{
 		// A server that reaches the Internet through a proxy goes through
 		// it ($HTTPS_PROXY, design §5.1): a CONNECT tunnel, the TLS and its
 		// pin end to end, so the proxy sees neither the secret nor the rest.
@@ -467,18 +490,8 @@ func newControlClient(base, pin string) (*controlClient, error) {
 		ResponseHeaderTimeout: 30 * time.Second,
 		MaxIdleConnsPerHost:   4,
 		IdleConnTimeout:       90 * time.Second,
+		TLSClientConfig:       cfg,
 	}
-	if u.Scheme == "https" {
-		if pin == "" {
-			return nil, errors.New("HTTPS 的控制服务器要给 -control-pin")
-		}
-		cfg, err := proto.PinnedTLSConfig(pin)
-		if err != nil {
-			return nil, err
-		}
-		tr.TLSClientConfig = cfg
-	}
-	return &controlClient{base: base, hc: &http.Client{Transport: tr, Timeout: 30 * time.Second}}, nil
 }
 
 func (c *controlClient) setSecret(s string) {

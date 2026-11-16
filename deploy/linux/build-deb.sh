@@ -28,6 +28,16 @@ esac
 out=$here/out
 mkdir -p "$out"
 [ $# -gt 0 ] || set -- amd64 arm64
+# The control server's ways in, as deploy/package.sh takes them
+# (DENEB_CONTROL_ENTRANCES, deploy/control-entrances.json).
+entrances_file=${DENEB_CONTROL_ENTRANCES:-$root/deploy/control-entrances.json}
+entrances=
+if [ -f "$entrances_file" ]; then
+	entrances=$(base64 <"$entrances_file" | tr -d '\n')
+elif [ -n "${DENEB_CONTROL_ENTRANCES:-}" ]; then
+	echo "build-deb: no $entrances_file" >&2
+	exit 2
+fi
 
 desc_engine="Deneb engine for a desktop: kernel mode
  A tun interface, a /32 route per peer and systemd-resolved for
@@ -40,7 +50,7 @@ desc_server="Deneb engine and command line for a server
 for arch in "$@"; do
 	bin=$out/denebd-linux-$arch
 	(cd "$root" && CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build ${tags:+-tags "$tags"} -trimpath \
-		-ldflags "-X main.version=$version" -o "$bin" ./cmd/denebd)
+		-ldflags "-X main.version=$version${entrances:+ -X main.builtinEntrances=$entrances}" -o "$bin" ./cmd/denebd)
 	# GOFLAGS can carry tags too: what counts is what was built.
 	[ "${DENEB_TEST_PACKAGE:-}" = 1 ] || "$root/deploy/check-release.sh" "$bin"
 	# The licenses of what the binary links (Go, its modules), and ours.

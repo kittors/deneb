@@ -35,6 +35,17 @@ https://?*) ;;
 *) echo "DENEB_RELAY_SITE must be https://<host> (or WEB_HOST in deploy/web/site.hkspare.env)" >&2; exit 2 ;;
 esac
 base=${site%/}/download/relay
+# The control server's ways in, as deploy/package.sh takes them
+# (DENEB_CONTROL_ENTRANCES, deploy/control-entrances.json): a relay whose
+# join code names Deneb's own server goes by all of them.
+entrances_file=${DENEB_CONTROL_ENTRANCES:-deploy/control-entrances.json}
+entrances=
+if [ -f "$entrances_file" ]; then
+	entrances=$(base64 <"$entrances_file" | tr -d '\n')
+elif [ -n "${DENEB_CONTROL_ENTRANCES:-}" ]; then
+	echo "no $entrances_file" >&2
+	exit 2
+fi
 out=deploy/out/$version/relay
 rm -rf "$out"
 mkdir -p "$out/$version"
@@ -44,7 +55,7 @@ for target in amd64 arm64 arm/7; do
 	name=$goarch
 	case $target in arm/*) goarm=${target#*/}; name=armv$goarm ;; esac
 	CGO_ENABLED=0 GOOS=linux GOARCH=$goarch GOARM=$goarm go build -trimpath \
-		-ldflags "-s -w -X main.relayVersion=$version -X main.updateFeed=$base/" \
+		-ldflags "-s -w -X main.relayVersion=$version -X main.updateFeed=$base/${entrances:+ -X main.builtinEntrances=$entrances}" \
 		-o "$out/$version/deneb-relay-linux-$name" ./cmd/deneb-relay
 done
 go run deploy/relay/manifest.go $dry "$out" "$version"

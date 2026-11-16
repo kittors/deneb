@@ -14,6 +14,9 @@ mygo_windows_*.syso
 # deploy/package.sh: the release it builds, and what it puts among the
 # app's resources while it builds (it takes them away again when done).
 /deploy/out/
+# The control server's ways in that a release carries (deploy/package.sh):
+# addresses that stay out of the repository.
+/deploy/control-entrances.json
 /cmd/deneb/resources/*/denebd.exe
 /cmd/deneb/resources/*/denebd
 /cmd/deneb/resources/*/wintun.dll

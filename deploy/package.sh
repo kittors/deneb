@@ -44,6 +44,12 @@
 #                deploy/web/site.hkspare.env when that file is there, which
 #                keeps the site's address out of the repository; with
 #                neither, the apps update from GitHub releases
+#   DENEB_CONTROL_ENTRANCES  the ways to Deneb's own control server, a
+#                file of proto.ControlEntrances' JSON (design/plan/
+#                control-reachability-20261116.md §9.3). Default:
+#                deploy/control-entrances.json when that file is there,
+#                which keeps the addresses out of the repository; with
+#                neither, the engine knows Deneb's own address alone
 #
 # Windows installers need NSIS's makensis; without it MyGo leaves the
 # installer out and says so. The Debian packages of the engine are made
@@ -60,6 +66,20 @@ app=$root/cmd/deneb
 res=$app/resources
 version=$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$app/mygo.json" | head -n 1)
 [ -n "$version" ] || { echo "package: no version in $app/mygo.json" >&2; exit 1; }
+# The control server's ways in, base64 for -ldflags (cmd/denebd
+# builtinEntrances).
+entrances_file=${DENEB_CONTROL_ENTRANCES:-$root/deploy/control-entrances.json}
+entrances=
+if [ -f "$entrances_file" ]; then
+	entrances=$(base64 <"$entrances_file" | tr -d '\n')
+	echo "the engine goes to its control server by the entrances in $entrances_file"
+elif [ -n "${DENEB_CONTROL_ENTRANCES:-}" ]; then
+	echo "package: no $entrances_file" >&2
+	exit 2
+else
+	echo "no control entrances: the engine knows Deneb's own address alone"
+fi
+engine_ldflags="-X main.version=$version${entrances:+ -X main.builtinEntrances=$entrances}"
 tags=${TAGS:-}
 case ",$(printf '%s' "$tags" | tr ' ' ',')," in
 *,denebtest,*)
@@ -118,7 +138,7 @@ for target in "$@"; do
 		arch=$(go env GOHOSTARCH)
 		notices darwin "$arch" ./cmd/deneb ./cmd/denebd
 		(cd "$root" && CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" go build ${tags:+-tags "$tags"} -trimpath \
-			-ldflags "-X main.version=$version" -o "$res/darwin-$arch/denebd" ./cmd/denebd)
+			-ldflags "$engine_ldflags" -o "$res/darwin-$arch/denebd" ./cmd/denebd)
 		"$root/deploy/check-release.sh" "$res/darwin-$arch/denebd"
 		sign_engine "$res/darwin-$arch/denebd"
 		platforms="$platforms,darwin/$arch"
@@ -131,7 +151,7 @@ for target in "$@"; do
 		notices windows amd64 -f "Wintun $wintun_version (wintun.dll)=$wintun/LICENSE.txt" ./cmd/deneb ./cmd/denebd
 		# Beside Deneb.exe, not in a folder: see bundledEngine.
 		(cd "$root" && CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build ${tags:+-tags "$tags"} -trimpath \
-			-ldflags "-X main.version=$version" -o "$res/windows-amd64/denebd.exe" ./cmd/denebd)
+			-ldflags "$engine_ldflags" -o "$res/windows-amd64/denebd.exe" ./cmd/denebd)
 		"$root/deploy/check-release.sh" "$res/windows-amd64/denebd.exe"
 		sign_engine "$res/windows-amd64/denebd.exe"
 		cp "$wintun/bin/amd64/wintun.dll" "$res/windows-amd64/wintun.dll"
