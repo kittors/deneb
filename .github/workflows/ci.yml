@@ -29,7 +29,9 @@ env:
   CGO_ENABLED: "0"
   # The engine's tests take about six minutes on a runner; the window's
   # (cmd/deneb, macOS only) took 761 s before the 0.1.8 batch's tests
-  # (11-14) and now take longer than 15 minutes.
+  # (11-14), 1134 s on 11-15 (cb58797), and 1559 s once its layout check
+  # came (b0a9812, 11-16); on a slower runner the same tests ran past these
+  # 30 minutes (d99b6bb).
   GOTESTFLAGS: -timeout=30m
 
 jobs:
@@ -55,6 +57,14 @@ jobs:
     name: Test (macOS)
     runs-on: macos-latest
     timeout-minutes: 40
+    env:
+      # The window's layout check (cmd/deneb TestLayoutRules) opens every
+      # state of the window in three sizes: about seven of the package's 26
+      # minutes on b0a9812; on a slower runner (d99b6bb, 11-16) the package
+      # ran past -timeout in it, the tests after it never running. Here it
+      # looks at the middle size only; the three are looked at on a Mac
+      # before a delivery's stills (design/plan/m7/layout-audit.md).
+      DENEB_LAYOUT_SIZES: 1180x740
     steps:
       - uses: actions/checkout@v7
         with:

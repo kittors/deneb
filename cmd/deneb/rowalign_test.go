@@ -770,7 +770,7 @@ func TestLayoutRules(t *testing.T) {
 			want[k] = true
 		}
 	}
-	for _, size := range [][2]float32{{980, 640}, {1180, 740}, {1440, 900}} {
+	for _, size := range layoutSizes(t) {
 		w, h := size[0], size[1]
 		at := fmt.Sprintf("%.0f×%.0f", w, h)
 		for _, st := range alignStates {
@@ -814,6 +814,28 @@ func TestLayoutRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("%d findings in %s", len(order), out)
+}
+
+// layoutSizes are the window sizes TestLayoutRules looks at every state in:
+// narrow, middle and wide, as a delivery's stills are (AGENTS.md §1.3).
+// DENEB_LAYOUT_SIZES names fewer, as "1180x740". CI names the middle one
+// (.github/workflows/ci.yml): all three took the macOS runner past its time.
+func layoutSizes(t *testing.T) [][2]float32 {
+	t.Helper()
+	all := [][2]float32{{980, 640}, {1180, 740}, {1440, 900}}
+	names := os.Getenv("DENEB_LAYOUT_SIZES")
+	if names == "" {
+		return all
+	}
+	var sizes [][2]float32
+	for _, name := range strings.Split(names, ",") {
+		var size [2]float32
+		if _, err := fmt.Sscanf(strings.TrimSpace(name), "%gx%g", &size[0], &size[1]); err != nil || size[0] <= 0 || size[1] <= 0 {
+			t.Fatalf("DENEB_LAYOUT_SIZES: %q is not a window size, as 1180x740", name)
+		}
+		sizes = append(sizes, size)
+	}
+	return sizes
 }
 
 // settingsWith opens the settings with the app's update in stage, as a

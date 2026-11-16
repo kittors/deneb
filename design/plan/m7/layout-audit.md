@@ -25,7 +25,10 @@
 - **窗口大小**：980×640（最小）、1180×740（平常）、1440×900（大）。
 - **状态**：34 个，按页列在 §4。每个状态从演示数据开始，用点击、键盘和演示事件走到那一步（局域网卡片除外：直接打开，和点页头的名字一样）。
 - **测试**：
-  - `TestLayoutRules`：34 个状态 × 3 种窗口，查 §1 的三条。
+  - `TestLayoutRules`：每个状态 × 3 种窗口，查 §1 的三条（第 11 批起 42 个状态）。
+    - CI 上只查中窗口：设了 `DENEB_LAYOUT_SIZES=1180x740`（`.github/workflows/ci.yml`）。三种窗口要七分钟左右，慢的机器上把 cmd/deneb 拖过了 30 分钟的时限。
+    - 交付截图前，在本机不设它，三种窗口照样全查。
+    - `DENEB_LAYOUT_ONLY=状态,状态` 只查列出的几个状态。
   - `TestPanelLayoutRules`：菜单栏小窗，带上待处理的事。
   - `TestHeaderLinesMeet`：页头两行的中线。
 - **报告**：`DENEB_LAYOUT_AUDIT=文件 go test -p 1 -run TestLayoutRules ./cmd/deneb` 把所有发现（包括例外）写进一个文件。本页的数字都出自它。
