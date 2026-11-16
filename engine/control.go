@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
 	"runtime"
 	"slices"
 	"time"
@@ -167,9 +166,10 @@ func (e *Engine) controlLoop(ctx context.Context, cc *controlclient.Client, gen 
 		e.mu.Lock()
 		first := !e.st.LoggedIn || e.st.Device != st.Device
 		if first && e.st.Device != "" && e.st.Device != st.Device {
-			// Another person (or device record) now: the old map is not ours.
-			e.nm = nil
-			os.Remove(e.netmapPath())
+			// Another person (or device record) now: the old map is not ours,
+			// nor the old view.
+			e.nm, e.userView = nil, nil
+			e.forgetMap()
 		}
 		e.st.LoggedIn, e.st.Device, e.st.Person = true, st.Device, st.Person
 		e.st.ControlURL, e.st.ControlPin = e.controlURLLocked(), e.controlPinLocked()
@@ -250,6 +250,10 @@ func (e *Engine) applyFrame(f controlclient.Frame) {
 	if len(f.UserView) > 0 {
 		e.userView = f.UserView
 		e.bumpVersionLocked(v)
+		// After the map, as it came: the two have the frame's version, and a
+		// start without the control server takes them back together
+		// (loadUserView).
+		writeAtomic(e.userViewPath(), f.UserView)
 	}
 	e.mu.Unlock()
 	if !wasUp {
@@ -265,7 +269,7 @@ func (e *Engine) localLogout() {
 	e.mu.Lock()
 	e.st.LoggedIn, e.st.Device, e.st.Person, e.st.Paused = false, "", "", nil
 	e.saveState()
-	os.Remove(e.netmapPath())
+	e.forgetMap()
 	e.nm, e.userView, e.loginURL = nil, nil, ""
 	e.f.SetPolicy(&filter.Policy{})
 	e.ms.SetPeers(nil)

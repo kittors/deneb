@@ -536,12 +536,19 @@ func (e *Engine) peerByAddr(a netip.Addr) (proto.Peer, bool) {
 	return proto.Peer{}, false
 }
 
+// UserView is the user view the engine has, the one saved with its network
+// map included; without one, the control server's, asked now. With no
+// control server to ask, it says so at once rather than wait for one
+// (design/plan/m7/engine-restart-offline.md §2).
 func (e *Engine) UserView(ctx context.Context) (json.RawMessage, error) {
 	e.mu.Lock()
-	uv := e.userView
+	uv, up := e.userView, e.controlUp
 	e.mu.Unlock()
 	if len(uv) > 0 {
 		return uv, nil
+	}
+	if !up {
+		return nil, offlineErr()
 	}
 	cc, err := e.loggedInClient()
 	if err != nil {

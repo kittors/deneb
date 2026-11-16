@@ -324,10 +324,21 @@ func New(opts Options) (*Engine, error) {
 
 	if e.st.LoggedIn {
 		if nm, err := e.loadNetmap(); err == nil {
+			// With the user view saved with it: the window has its LANs at
+			// once, whether the control server answers or not
+			// (design/plan/m7/engine-restart-offline.md §2).
+			uv := e.loadUserView(nm.Version)
 			e.mu.Lock()
 			e.applyNetmapLocked(nm, nm.Version)
+			if uv != nil {
+				e.userView = uv
+			}
 			e.mu.Unlock()
-			logf("[engine] restored the last network map (version %d) while the control server answers", nm.Version)
+			what := "network map"
+			if uv != nil {
+				what = "network map and user view"
+			}
+			logf("[engine] restored the last %s (version %d) while the control server answers", what, nm.Version)
 		}
 	}
 	return e, nil
@@ -400,8 +411,9 @@ func (e *Engine) controlPinLocked() string {
 	return e.opts.ControlPin
 }
 
-func (e *Engine) statePath() string  { return filepath.Join(e.opts.StateDir, "state.json") }
-func (e *Engine) netmapPath() string { return filepath.Join(e.opts.StateDir, "netmap.json") }
+func (e *Engine) statePath() string    { return filepath.Join(e.opts.StateDir, "state.json") }
+func (e *Engine) netmapPath() string   { return filepath.Join(e.opts.StateDir, "netmap.json") }
+func (e *Engine) userViewPath() string { return filepath.Join(e.opts.StateDir, "userview.json") }
 
 func (e *Engine) loadState() error {
 	b, err := os.ReadFile(e.statePath())
@@ -459,6 +471,29 @@ func (e *Engine) loadNetmap() (*proto.NetMap, error) {
 	}
 	var nm proto.NetMap
 	return &nm, json.Unmarshal(b, &nm)
+}
+
+// loadUserView reads the user view saved with the network map of version
+// v (applyFrame), as it came; nil when there is none, or when it came with
+// another map (the engine was cut off between writing the two).
+func (e *Engine) loadUserView(v uint64) json.RawMessage {
+	b, err := os.ReadFile(e.userViewPath())
+	if err != nil {
+		return nil
+	}
+	var head struct {
+		Version uint64 `json:"version"`
+	}
+	if json.Unmarshal(b, &head) != nil || head.Version != v {
+		return nil
+	}
+	return b
+}
+
+// forgetMap removes the saved network map and the user view saved with it.
+func (e *Engine) forgetMap() {
+	os.Remove(e.netmapPath())
+	os.Remove(e.userViewPath())
 }
 
 func (e *Engine) problem(code, msg string) {
