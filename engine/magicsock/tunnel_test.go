@@ -1,7 +1,6 @@
 package magicsock
 
 import (
-	"bufio"
 	"context"
 	"crypto/x509"
 	"io"
@@ -16,35 +15,51 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/kittors/deneb/cmd/deneb-relay/tunnel"
 	"github.com/kittors/deneb/proto"
 	"tailscale.com/derp"
 	"tailscale.com/derp/derpserver"
 	"tailscale.com/types/key"
 )
 
-// fakeCloudflare is a TLS server on this machine that takes nothing but a
-// WebSocket at /derp with the derp subprotocol, as Cloudflare's tunnel
-// hands one on, and has s speak DERP over it. dial reaches it whatever is
-// asked (the tunnel's name on 443); pool trusts its certificate, which is
-// for example.com.
+// fakeCloudflare stands for Cloudflare and its tunnel in front of s: a TLS
+// server on this machine, its certificate for example.com (pool trusts
+// it), that takes nothing but a WebSocket at /derp with the derp
+// subprotocol, and hands it on as cloudflared does: a WebSocket of its own
+// to the relay's tunnel port on this machine, the relay's real handler
+// (cmd/deneb-relay/tunnel), with CF-Connecting-IP. dial reaches it
+// whatever is asked (the tunnel's name on 443).
 func fakeCloudflare(t *testing.T, s *derpserver.Server) (dial func(ctx context.Context, network, addr string) (net.Conn, error), pool *x509.CertPool) {
 	t.Helper()
+	relay := httptest.NewServer(tunnel.Handler(tunnel.ServerAccept(s), func(string, ...any) {}))
+	t.Cleanup(relay.Close)
+	origin := "ws://" + relay.Listener.Addr().String() + tunnel.Path
 	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/derp" || !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		if r.URL.Path != tunnel.Path || !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 			http.Error(w, "a WebSocket only", http.StatusForbidden)
 			return
 		}
-		wc, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{"derp"}})
+		in, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{tunnel.Subprotocol}})
 		if err != nil {
 			return
 		}
-		if wc.Subprotocol() != "derp" {
-			wc.Close(websocket.StatusPolicyViolation, "derp only")
+		defer in.CloseNow()
+		out, _, err := websocket.Dial(r.Context(), origin, &websocket.DialOptions{Subprotocols: []string{tunnel.Subprotocol},
+			HTTPHeader: http.Header{"CF-Connecting-IP": {"203.0.113.7"}}})
+		if err != nil {
+			in.Close(websocket.StatusTryAgainLater, "the origin does not answer")
 			return
 		}
-		wc.SetReadLimit(1 << 20)
-		conn := websocket.NetConn(r.Context(), wc, websocket.MessageBinary)
-		s.Accept(r.Context(), conn, bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn)), r.RemoteAddr)
+		defer out.CloseNow()
+		in.SetReadLimit(1 << 20)
+		out.SetReadLimit(1 << 20)
+		ctx, cancel := context.WithCancel(r.Context())
+		defer cancel()
+		a, b := websocket.NetConn(ctx, in, websocket.MessageBinary), websocket.NetConn(ctx, out, websocket.MessageBinary)
+		done := make(chan struct{}, 2)
+		go func() { io.Copy(a, b); done <- struct{}{} }()
+		go func() { io.Copy(b, a); done <- struct{}{} }()
+		<-done
 	}))
 	ts.Config.ErrorLog = log.New(io.Discard, "", 0)
 	ts.StartTLS()
