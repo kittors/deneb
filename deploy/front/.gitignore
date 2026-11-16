@@ -1,0 +1,5 @@
+# Built binaries (build.sh), and the deployments' files: they hold the
+# control server's address.
+/bin/
+/front.*.env
+!/front.example.env

@@ -41,6 +41,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/signal"
@@ -54,6 +55,7 @@ import (
 
 	"github.com/kittors/deneb/control"
 	"github.com/kittors/deneb/control/alert"
+	"github.com/kittors/deneb/control/front"
 	"github.com/kittors/deneb/control/probe"
 	"github.com/kittors/deneb/proto"
 )
@@ -139,6 +141,9 @@ func main() {
 		openSignup  = flag.Bool("open-signup", false, "let an email with no account log in: its account is made when its code checks out")
 		webURL      = flag.String("web-url", "", "the Web version's address, as https://deneb.example.com: invite links open it, and this server's own invite links redirect there")
 		trustProxy  = flag.String("trust-proxy", "", "where deneb-web runs behind nginx, as 198.51.100.4 (comma-separated addresses or prefixes): a browser's address comes from X-Real-IP on requests from there, and from nowhere else")
+		frontListen = flag.String("front-listen", "", "a second address, as :47444, for fronts on other machines (deneb-front): TLS as on -listen, behind a PROXY header that says whom from; only from -front-from")
+		frontFrom   = flag.String("front-from", "", "the fronts' addresses for -front-listen, comma-separated addresses or prefixes")
+		tunnelAddr  = flag.String("tunnel-listen", "", "a loopback address, as 127.0.0.1:47450, for a Cloudflare tunnel's cloudflared on this machine: plain HTTP, each request from its CF-Connecting-IP")
 		alertURL    = flag.String("alert-webhook", "", "where alerts go: a WeCom, Feishu, DingTalk, Telegram or Bark bot's URL, or any JSON webhook; it holds the bot's key, so rather put it in <data>/alert.json or DENEB_ALERT_URL, which ps does not show")
 		alertKind   = flag.String("alert-kind", "", "wecom, feishu, dingtalk, telegram, bark or webhook (default: from the URL's host)")
 		name        = flag.String("name", "", "who the alerts say they are from (default: the public URL's host)")
@@ -332,6 +337,45 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// The entrances in front of this server (control/front): where its own
+	// address cannot be reached, a device comes through another machine's
+	// deneb-front, or at last through Cloudflare.
+	var fronts net.Listener
+	if *frontListen != "" {
+		from, err := control.ParseProxies(*frontFrom)
+		if err != nil || len(from) == 0 || !useTLS {
+			log.Fatalf("-front-listen wants HTTPS and the fronts' addresses in -front-from (%v)", err)
+		}
+		l, err := net.Listen("tcp", *frontListen)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fronts = front.Listener(l, from, log.Printf)
+	}
+	var tunnel *http.Server
+	if *tunnelAddr != "" {
+		ap, err := netip.ParseAddrPort(*tunnelAddr)
+		if err != nil || !ap.Addr().IsLoopback() {
+			log.Fatalf("-tunnel-listen wants a loopback address, as 127.0.0.1:47450: cloudflared runs on this machine")
+		}
+		tl, err := net.Listen("tcp", *tunnelAddr)
+		if err != nil {
+			log.Fatal(err)
+		}
+		tunnel = &http.Server{
+			Handler:           front.TunnelHandler(srv.Handler()),
+			ReadHeaderTimeout: 10 * time.Second,
+			IdleTimeout:       2 * time.Minute,
+			BaseContext:       hs.BaseContext,
+			ErrorLog:          log.New(logOut, control.LogPrefix+"tunnel: ", control.LogFlags),
+		}
+		go func() {
+			if err := tunnel.Serve(tl); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Printf("tunnel: %v", err)
+			}
+		}()
+		log.Printf("serving the Cloudflare tunnel's cloudflared on %s", *tunnelAddr)
+	}
 
 	if useTLS {
 		go func() {
@@ -365,8 +409,21 @@ func main() {
 		<-ctx.Done()
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		if tunnel != nil {
+			tunnel.Shutdown(sctx)
+		}
 		hs.Shutdown(sctx)
 	}()
+	if fronts != nil {
+		// The same server, certificate and pin: TLS ends here, not at the
+		// front.
+		go func() {
+			if err := hs.ServeTLS(fronts, "", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Printf("fronts: %v", err)
+			}
+		}()
+		log.Printf("serving fronts (deneb-front) from %s on %s", *frontFrom, *frontListen)
+	}
 	if useTLS {
 		// ServeTLS offers HTTP/2, so a device's stream and its requests
 		// share one connection. The certificate comes from GetCertificate.

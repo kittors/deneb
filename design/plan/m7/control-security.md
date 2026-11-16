@@ -336,6 +336,19 @@ docker exec deneb-control deneb-control device-delete -device <上一步里 dene
 
 **测试**：`TestRelayNoPublicAddress`（私网地址不去连）、`TestRelaySecondPlace`（密钥不对 401）、`TestRelayLeave`、`TestRelaySameMachine`（被顶掉的密钥 410）、`TestRelayFailuresReported`。
 
+## 9. 控制服务器前面的入口（控制线 11-16 加的；本机测过，没上线）
+
+国内直连控制服务器的 IP 被挡以后（[control-reachability-20261116.md](../control-reachability-20261116.md)），设备也可以经另一台机器的 `deneb-front` 或者 Cloudflare 进来。控制服务器为此多了两个监听口：`-front-listen` 和 `-tunnel-listen`。威胁和对策：
+
+1. **冒充设备的地址**：控制服务器按设备地址限流、记日志，中转站报到时也拿它当中转站的地址，所以不能让别人随便说自己是谁。
+   - `-front-listen` 只收 `-front-from` 列出的机器发来的连接，别处来的直接关掉，读都不读。从那里来的连接，开头必须是 PROXY 头，没有就关掉。
+   - `-tunnel-listen` 只能开在回环地址上，只收本机 cloudflared 的请求；地址只认 `CF-Connecting-IP`，这个头每次都由 Cloudflare 重写，设备自己写的不算。经 Cloudflare 带进来的 `X-Real-IP` 会被去掉，不会被当成可信代理给的地址。
+2. **转发的机器被人拿下**：它看得到设备的地址、连了多久、传了多少，看不到内容，因为 TLS 一直到控制服务器才解开，设备核对的还是控制服务器的指纹。它能做的最多是不转、晚转，设备会换下一个入口。
+3. **拿转发当跳板**：`deneb-front` 只连部署时写好的那一个地址（控制服务器的 `-front-listen`），不是谁都能用的代理。它同时最多 4096 个连接；一边断了，另一边最多再留 30 秒。控制服务器的限流照样按设备的真实地址算。
+4. **Cloudflare 看得到内容**：走这条路时，TLS 在 Cloudflare 解开。所以设备最后才走它，PRIVACY.md 写明了它看得到什么。
+
+**测试**：`control/front` 的 `TestHeader`（v2、v1、LOCAL 和各种坏头）、`TestListener`（经转发的 TLS 和 HTTP/2，设备地址来自头；没有头、不是转发的机器都关掉）、`TestTunnelHandler`；`cmd/deneb-front` 的 `TestPass`。本机端到端：经过 `deneb-front` 拿到的公钥指纹和直连一样；不带 PROXY 头直连转发口被拒；隧道口没有 `CF-Connecting-IP` 回 403。
+
 ## 没改、要定的
 
 1. ~~**验证码一直不变**~~：已做，见 §6；上线要用户给一个发信账号。
