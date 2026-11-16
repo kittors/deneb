@@ -644,15 +644,15 @@ func (a *app) allSummary(p *palette) (ui.Color, string) {
 // allHeader is the "全部" view's header: its title and line, and the
 // engine's notice, if any; no balls and no invite, as no one LAN shows.
 func (a *app) allHeader(c *ui.Context, p *palette) {
-	ui.Row(c).Height(headerHeight).Padding(22, 24, 0, 28).AlignItems(ui.Start).Gap(16).DragWindow().Children(func() {
-		ui.Column(c).Gap(4).Children(func() {
+	// As a LAN's header (view.go): the notice on the title's middle line, as
+	// it is there beside the balls and "邀请朋友".
+	ui.Column(c).Height(headerHeight).Padding(headerTop, 24, 0, 28).Gap(4).DragWindow().Children(func() {
+		ui.Row(c).Height(titleLine).Gap(16).Children(func() {
 			ui.Text(c, "全部局域网").FontSize(20).FontWeight(600).SingleLine()
-			a.summaryLine(c, p)
+			ui.Spacer(c)
+			a.noticePill(c, p)
 		})
-		ui.Spacer(c)
-		// As high as a LAN's balls and "邀请朋友": the pill on the line it
-		// has there, not lower.
-		ui.Row(c).Height(inviteHeight).AlignItems(ui.Center).Children(func() { a.noticePill(c, p) })
+		a.summaryLine(c, p)
 	})
 }
 

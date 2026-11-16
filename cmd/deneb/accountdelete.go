@@ -234,7 +234,7 @@ func (a *app) accountDeleteView(c *ui.Context, p *palette) {
 					case dl.refused != "":
 						ui.Column(c.Key("delete-refused")).Transition(fadeIn).Children(func() { a.deleteRefused(c, p) })
 					case dl.acc == nil:
-						ui.Row(c).Gap(10).Height(240).AlignSelf(ui.Center).AlignItems(ui.Center).Children(func() {
+						ui.Row(c).Gap(12).Height(240).AlignSelf(ui.Center).AlignItems(ui.Center).Children(func() {
 							if dl.trouble != "" {
 								ui.Text(c, dl.trouble).FontSize(13).TextColor(danger)
 								return
@@ -249,7 +249,7 @@ func (a *app) accountDeleteView(c *ui.Context, p *palette) {
 			})
 		})
 		// Back, at the top left, clear of the Mac's window buttons.
-		back := ui.ButtonBase(c.Key("delete-back")).Absolute().Left(20).Top(46).Height(30).Padding(0, 10, 0, 6).Gap(2).Radius(999).
+		back := ui.ButtonBase(c.Key("delete-back")).Absolute().Left(20).Top(46).Height(30).Padding(0, 12, 0, 8).Gap(4).Radius(999).
 			AlignItems(ui.Center).FocusRing(false).Label("返回")
 		if back.Hovered() {
 			back.Background(p.well)
@@ -272,7 +272,7 @@ const deleteWidth = 420
 // (the deployment's seed names it): its words, and the way back.
 func (a *app) deleteRefused(c *ui.Context, p *palette) {
 	ui.Text(c, "注销账号").FontSize(22).FontWeight(600)
-	ui.Text(c, a.deleting.refused).FontSize(13).TextColor(p.ink2).LineHeight(1.6).Padding(14, 16).Radius(14).Background(p.well).Margin(18, 0, 0, 0)
+	ui.Text(c, a.deleting.refused).FontSize(13).TextColor(p.ink2).LineHeight(1.6).Padding(16).Radius(14).Background(p.well).Margin(16, 0, 0, 0)
 	ui.Row(c).Margin(20, 0, 0, 0).Children(func() {
 		if ghostButton(c, p, "refused-back", "返回").Clicked() {
 			a.deleting = nil
@@ -288,7 +288,7 @@ func (a *app) deletePage(c *ui.Context, p *palette, now time.Time) {
 	ui.Text(c, a.snap.Email+" 和它名下的东西会一起删掉，删了不能恢复。").FontSize(13).TextColor(p.ink2).LineHeight(1.5).Margin(8, 0, 0, 0)
 
 	// What goes, a line each.
-	ui.Column(c.Key("what-goes")).Margin(20, 0, 0, 0).Padding(14, 16).Radius(16).Background(p.well).Gap(12).Children(func() {
+	ui.Column(c.Key("what-goes")).Margin(24, 0, 0, 0).Padding(16).Radius(16).Background(p.well).Gap(12).Children(func() {
 		if n := len(acc.Devices); n > 0 {
 			goneRow(c, p, "devices", "screen", fmt.Sprintf("%d 台设备会登出并删掉", n), a.deviceNames(acc.Devices))
 		}
@@ -331,24 +331,25 @@ func (a *app) deletePage(c *ui.Context, p *palette, now time.Time) {
 		for _, id := range acc.RelaysInUse {
 			names = append(names, "「"+a.ownRelayName(id)+"」")
 		}
-		ui.Row(c.Key("relays-in-use")).Margin(16, 0, 0, 0).Padding(12, 14).Radius(14).Gap(10).AlignItems(ui.Start).
+		ui.Row(c.Key("relays-in-use")).Margin(16, 0, 0, 0).Padding(12).Radius(14).Gap(12).AlignItems(ui.Start).
 			Background(ui.Hex("#F59E0B").Alpha(0.1)).Children(func() {
-			ui.Box(c).Size(7, 7).Radius(999).Background(ui.Hex("#F59E0B")).Margin(6, 0, 0, 0)
+			// On the middle of the words' first line, as high as it is.
+			ui.Box(c).Size(7, 20).Center().Children(func() { ui.Box(c).Size(7, 7).Radius(999).Background(ui.Hex("#F59E0B")) })
 			ui.Text(c, "你的"+strings.Join(names, "、")+"正被别人用着，注销后他们会改走公共中转站，可能慢一些。").
 				FontSize(12).TextColor(p.ink2).LineHeight(1.5).Grow(1).Shrink(1)
 		})
 	}
 
 	// The email again, and the red button.
-	ui.Text(c, "再输一遍你的邮箱，确认是你").FontSize(13).FontWeight(500).Margin(26, 0, 8, 0)
+	ui.Text(c, "再输一遍你的邮箱，确认是你").FontSize(13).FontWeight(500).Margin(24, 0, 8, 0)
 	field := ui.TextInputBase(c.Key("confirm-email"), &dl.email).Width(deleteWidth).Height(46).Padding(0, 16).Radius(12).
 		Background(p.well).FontSize(14).Placeholder("你的邮箱").PlaceholderColor(p.ink3).Label("你的邮箱")
 	ok := a.emailMatches(dl.email) && !dl.asking
 	if dl.trouble != "" {
-		ui.Text(c.Key("delete-trouble-"+dl.trouble), dl.trouble).FontSize(12).TextColor(danger).Margin(10, 0, 0, 0).
+		ui.Text(c.Key("delete-trouble-"+dl.trouble), dl.trouble).FontSize(12).TextColor(danger).Margin(8, 0, 0, 0).
 			Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{}})
 	}
-	b := ui.ButtonBase(c.Key("delete-now")).Width(deleteWidth).Height(44).Margin(14, 0, 0, 0).Radius(999).Justify(ui.Center).
+	b := ui.ButtonBase(c.Key("delete-now")).Width(deleteWidth).Height(44).Margin(16, 0, 0, 0).Radius(999).Justify(ui.Center).
 		AlignItems(ui.Center).Gap(8).FocusRing(false).Label("注销账号")
 	switch {
 	case dl.sending:
@@ -378,7 +379,7 @@ func (a *app) deletePage(c *ui.Context, p *palette, now time.Time) {
 	if (b.Clicked() || field.Submitted()) && ok && !dl.sending {
 		a.deleteAccount(c)
 	}
-	ui.Text(c, "注销后不能恢复").FontSize(11).TextColor(p.ink3).Margin(10, 0, 0, 0).AlignSelf(ui.Center)
+	ui.Text(c, "注销后不能恢复").FontSize(11).TextColor(p.ink3).Margin(8, 0, 0, 0).AlignSelf(ui.Center)
 	later := ui.ButtonBase(c.Key("delete-later")).Height(32).Padding(0, 12).Radius(999).Margin(8, 0, 0, 0).FocusRing(false).AlignSelf(ui.Center)
 	if later.Hovered() {
 		later.Background(p.well)
@@ -395,7 +396,7 @@ func goneRow(c *ui.Context, p *palette, key, icon, what, line string) {
 		ui.Box(c).Size(28, 28).Radius(8).Background(p.bg).Center().Children(func() {
 			ui.Icon(c, uiGlyphs[icon]).Size(16, 16).TextColor(p.ink2)
 		})
-		ui.Column(c).Gap(2).Grow(1).Shrink(1).Padding(4, 0, 0, 0).Children(func() {
+		ui.Column(c).Gap(4).Grow(1).Shrink(1).Padding(4, 0, 0, 0).Children(func() {
 			ui.Text(c, what).FontSize(13).FontWeight(500).LineHeight(1.4)
 			if line != "" {
 				ui.Text(c, line).FontSize(12).TextColor(p.ink2).LineHeight(1.45)
@@ -408,7 +409,7 @@ func goneRow(c *ui.Context, p *palette, key, icon, what, line string) {
 // ways with them: handed to who joined first (the default), or deleted.
 func (a *app) ownedChoice(c *ui.Context, p *palette) {
 	dl := a.deleting
-	ui.Text(c, "你建的局域网里还有别人").FontSize(13).FontWeight(500).Margin(22, 0, 10, 0)
+	ui.Text(c, "你建的局域网里还有别人").FontSize(13).FontWeight(500).Margin(24, 0, 8, 0)
 	ui.Column(c).Gap(8).Children(func() {
 		for _, id := range dl.blocked {
 			l := a.snap.LAN(id)
@@ -457,7 +458,7 @@ func (a *app) ownedChoice(c *ui.Context, p *palette) {
 		}
 		line = fmt.Sprintf("%s会删掉，里面的 %d 个人都会失去它", strings.Join(names, "、"), len(people))
 	}
-	ui.Box(c.Key("owned-line")).Height(20).Margin(10, 0, 0, 0).Children(func() {
+	ui.Box(c.Key("owned-line")).Height(20).Margin(8, 0, 0, 0).Children(func() {
 		if line != "" {
 			ui.Text(c.Key("owned-line-"+line), strings.TrimSpace(line)).FontSize(12).TextColor(p.ink2).
 				Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{}, Exit: &ui.Motion{}})
@@ -470,7 +471,7 @@ func (a *app) ownedChoice(c *ui.Context, p *palette) {
 func (a *app) ownedCard(c *ui.Context, p *palette, owned, title, sub string, col ui.Color) {
 	dl := a.deleting
 	on := dl.owned == owned
-	b := ui.ButtonBase(c.Key("owned-"+owned)).Width((deleteWidth-12)/2).Padding(14, 14).Radius(14).Background(p.bg).
+	b := ui.ButtonBase(c.Key("owned-"+owned)).Width((deleteWidth-12)/2).Padding(16).Radius(14).Background(p.bg).
 		Border(1.5, p.line).FocusRing(false).AlignItems(ui.Start).Label(title)
 	if on {
 		b.Border(1.5, col).Background(col.Alpha(0.06))
@@ -571,7 +572,7 @@ func (a *app) lanNames(ids []model.LANID) string {
 // was, and, for one who ran relays of their own, how to stop them on their
 // machines, with a button to copy it.
 func (a *app) goneNote(c *ui.Context, p *palette) {
-	ui.Row(c.Key("gone-line")).Gap(6).Height(20).AlignItems(ui.Center).Margin(0, 0, 18, 0).Children(func() {
+	ui.Row(c.Key("gone-line")).Gap(8).Height(20).AlignItems(ui.Center).Margin(0, 0, 16, 0).Children(func() {
 		checkMark(c, p.ok, 14)
 		ui.Text(c, "账号已经注销").FontSize(13).FontWeight(500).TextColor(p.ok)
 	}).Transition(ui.ElementTransition{Duration: 240 * time.Millisecond, Enter: &ui.Motion{Y: -4}})
@@ -588,12 +589,12 @@ func (a *app) goneRelays(c *ui.Context, p *palette) {
 	for _, n := range g.relays {
 		names = append(names, "「"+n+"」")
 	}
-	box := ui.Column(c.Key("gone-relays")).Width(360).Margin(28, 0, 0, 0).Padding(14, 16).Radius(16).Background(p.well).Gap(10)
+	box := ui.Column(c.Key("gone-relays")).Width(360).Margin(24, 0, 0, 0).Padding(16).Radius(16).Background(p.well).Gap(12)
 	box.Transition(ui.ElementTransition{Duration: 240 * time.Millisecond, Enter: &ui.Motion{Y: 6}})
 	box.Children(func() {
 		ui.Text(c, strings.Join(names, "、")+"中转站已经删掉，可那台机器上的容器还在跑，可以在上面停掉它：").FontSize(12).TextColor(p.ink2).LineHeight(1.5)
 		// The two commands a line each, as they are run; copied as one.
-		ui.Text(c, strings.ReplaceAll(relayStopCommand, " && ", "\n")).FontSize(11).FontWeight(500).LineHeight(1.6).Padding(8, 10).Radius(10).Background(p.bg)
+		ui.Text(c, strings.ReplaceAll(relayStopCommand, " && ", "\n")).FontSize(11).FontWeight(500).LineHeight(1.6).Padding(8, 12).Radius(10).Background(p.bg)
 		ui.Row(c).Children(func() {
 			ui.Spacer(c)
 			// No toast on the sign-in: the button says it was copied.
@@ -602,7 +603,7 @@ func (a *app) goneRelays(c *ui.Context, p *palette) {
 				label = "已复制"
 				c.After(2*time.Second - now.Sub(g.copied))
 			}
-			if ghostButton(c, p, "copy-stop", label).Clicked() {
+			if wellButton(c, p, "copy-stop", label).Clicked() {
 				if a.copyText != nil {
 					a.copyText(relayStopCommand)
 				}

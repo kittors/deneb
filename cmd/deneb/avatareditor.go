@@ -95,7 +95,7 @@ func (a *app) avatarLayer(c *ui.Context, p *palette) {
 			ui.Text(c, "设备已不可用").TextColor(p.ink3)
 			return
 		}
-		ui.Row(c).Gap(18).AlignItems(ui.Center).Children(func() {
+		ui.Row(c).Gap(16).AlignItems(ui.Center).Children(func() {
 			deviceTilePicture(c, p, glyphFor(e.kind), ownerColors[0], 76, false, 0, e.picture)
 			ui.Column(c).Gap(8).Children(func() {
 				ui.Text(c, d.Name).FontSize(14).FontWeight(600).SingleLine().MaxWidth(300)
@@ -132,9 +132,9 @@ func (a *app) avatarLayer(c *ui.Context, p *palette) {
 				a.askConfirm("恢复图标", d.Name, "移除自定义头像，保存后生效。", func(*ui.Context) { e.draft = nil; e.picture = nil; e.pattern = -1 })
 			}
 		})
-		ui.Row(c).Gap(6).Children(func() {
+		ui.Row(c).Gap(8).Children(func() {
 			for _, k := range deviceKinds {
-				b := ui.ButtonBase(c.Key("type-"+k.kind)).Column().Size(58, 50).Gap(3).Radius(10).Center().Label(k.name).Background(p.well).Disabled(e.busy || e.saving)
+				b := ui.ButtonBase(c.Key("type-"+k.kind)).Column().Size(58, 50).Gap(4).Radius(10).Center().Label(k.name).Background(p.well).Disabled(e.busy || e.saving)
 				if e.kind == k.kind && len(e.draft) == 0 {
 					b.Border(1.5, p.primary)
 				}
@@ -177,7 +177,7 @@ func (a *app) avatarLayer(c *ui.Context, p *palette) {
 		if e.err != "" {
 			ui.Text(c, e.err).FontSize(12).TextColor(danger).LineHeight(1.4)
 		}
-		ui.Row(c).Gap(10).Justify(ui.End).Children(func() {
+		dialogActions(c, func() {
 			if dialogButton(c, p, "cancel", "取消", false, false, e.busy || e.saving).Clicked() {
 				close()
 			}

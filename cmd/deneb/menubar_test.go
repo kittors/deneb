@@ -414,7 +414,9 @@ func TestPanelScrolls(t *testing.T) {
 	if after.Y >= last.Y || after.Y+after.H > open.Y {
 		t.Errorf("scrolling took the last LAN from %v to %v, 打开 Deneb at %v", last, after, open)
 	}
-	if head, _ := tt.Find("都连上了"); head.Y > 40 {
+	// This computer stays at the top, 20 under the panel's top edge (12 and
+	// its row's 8), its two lines under it.
+	if head, _ := tt.Find("都连上了"); head.Y > 48 {
 		t.Errorf("this computer scrolled away: %v", head)
 	}
 }

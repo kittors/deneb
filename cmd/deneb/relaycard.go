@@ -37,17 +37,17 @@ func (a *app) relayCardView(c *ui.Context, p *palette, id model.RelayID) {
 		a.relayStatus(c, p, rl, mine)
 		switch {
 		case rl.Public():
-			note(c, p, "直连或专用中转不可用时，自动使用公共中转。", 14)
-			note(c, p, "端到端加密", 6)
+			note(c, p, "直连或专用中转不可用时，自动使用公共中转。", 16)
+			note(c, p, "端到端加密", 8)
 		case mine:
 			a.relayNow(c, p, rl)
 			a.relayMonth(c, p, rl)
 			a.relayUsers(c, p, rl)
-			note(c, p, "内容端到端加密，仅显示用户与流量统计。", 14)
+			note(c, p, "内容端到端加密，仅显示用户与流量统计。", 16)
 		default:
 			who := a.personName(rl.Owner)
 			// (No space after a full stop of its own: "，Mia".)
-			note(c, p, say(who, "仅能查看用户与流量统计，无法读取内容。"), 14)
+			note(c, p, say(who, "仅能查看用户与流量统计，无法读取内容。"), 16)
 		}
 		a.relayFoot(c, p, rl, mine)
 	})
@@ -58,7 +58,7 @@ func (a *app) relayCardView(c *ui.Context, p *palette, id model.RelayID) {
 func (a *app) relayHead(c *ui.Context, p *palette, rl *model.Relay, mine bool) {
 	ui.Row(c).Gap(12).AlignItems(ui.Start).Children(func() {
 		relayOrb(c, p, 40, rl.Down, 0)
-		ui.Column(c).Gap(2).Grow(1).Children(func() {
+		ui.Column(c).Gap(4).Grow(1).Children(func() {
 			if mine {
 				name := ui.ButtonBase(c.Key("name")).FocusRing(false).Cursor(ui.CursorText).AlignSelf(ui.Start).Label("改名字")
 				name.Children(func() {
@@ -118,7 +118,7 @@ func days(d time.Duration) string {
 // ball of col with the relay's glyph (or icon's), a title and a line under
 // it, which fade in anew as they change.
 func statusRow(c *ui.Context, p *palette, icon, title, sub string, col ui.Color) {
-	ui.Row(c).Gap(10).Padding(12).Radius(14).Background(p.well).Margin(14, 0, 0, 0).Children(func() {
+	ui.Row(c).Gap(12).Padding(12).Radius(14).Background(p.well).Margin(16, 0, 0, 0).Children(func() {
 		badge := ui.Box(c).Size(30, 30).Radius(999).Center().
 			RadialGradient(ui.RadialGradient{Center: ui.Point{X: 0.34, Y: 0.28}, Stops: []ui.GradientStop{
 				{Color: col.Mix(white, 0.45), At: 0}, {Color: col, At: 0.55}, {Color: col.Mix(black, 0.15), At: 1}}})
@@ -129,7 +129,7 @@ func statusRow(c *ui.Context, p *palette, icon, title, sub string, col ui.Color)
 				ui.Icon(c, uiGlyphs[icon]).Size(16, 16).TextColor(white)
 			}
 		})
-		words := ui.Column(c.Key("how-" + title + sub)).Gap(2).Grow(1)
+		words := ui.Column(c.Key("how-" + title + sub)).Gap(4).Grow(1)
 		words.Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{}})
 		words.Children(func() {
 			ui.Text(c, title).FontSize(13).FontWeight(500)
@@ -140,12 +140,8 @@ func statusRow(c *ui.Context, p *palette, icon, title, sub string, col ui.Color)
 
 // note is a card's sentence in small grey words, top above it.
 func note(c *ui.Context, p *palette, text string, top float32) {
-	ui.Text(c, text).FontSize(12).TextColor(p.ink3).Padding(top, 4, 0, 4)
-}
-
-// heading is a card's small heading over a section.
-func heading(c *ui.Context, p *palette, text string) {
-	ui.Text(c, text).FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(18, 4, 8, 4)
+	// On the card's edge, as all its parts are.
+	ui.Text(c, text).FontSize(12).TextColor(p.ink3).Padding(top, 0, 0, 0)
 }
 
 // wellRows are a card's rows of a name and a value on the well, each with
@@ -153,7 +149,7 @@ func heading(c *ui.Context, p *palette, text string) {
 func wellRows(c *ui.Context, p *palette, rows []wellRow) {
 	ui.Column(c).Radius(14).Background(p.well).Padding(0, 12).Dividers(1, p.line).Children(func() {
 		for _, r := range rows {
-			ui.Row(c.Key("row-" + r.name)).Height(40).Gap(10).AlignItems(ui.Center).Children(func() {
+			ui.Row(c.Key("row-" + r.name)).Height(40).Gap(12).AlignItems(ui.Center).Children(func() {
 				if r.lead != nil {
 					r.lead()
 				}
@@ -171,7 +167,7 @@ type wellRow struct {
 
 // relayNow is how my relay does now: who is on it, and how busy it is.
 func (a *app) relayNow(c *ui.Context, p *palette, rl *model.Relay) {
-	heading(c, p, "现在")
+	cardLabel(c, p, "现在")
 	on := "还没有"
 	if rl.Load.People > 0 {
 		on = fmt.Sprintf("%d 个人 · %d 台设备", rl.Load.People, rl.Load.Devices)
@@ -191,7 +187,7 @@ func (a *app) relayMonth(c *ui.Context, p *palette, rl *model.Relay) {
 	if len(rl.Month) == 0 {
 		return
 	}
-	heading(c, p, "这个月替你转了")
+	cardLabel(c, p, "这个月替你转了")
 	var rows []wellRow
 	for _, m := range rl.Month {
 		name, lead := "分享", func() { ui.Icon(c, uiGlyphs["people"]).Size(16, 16).TextColor(p.ink2) }
@@ -235,7 +231,7 @@ func (a *app) relayUsers(c *ui.Context, p *palette, rl *model.Relay) {
 		users = nil
 	}
 	if len(users) > 0 {
-		heading(c, p, "谁在用")
+		cardLabel(c, p, "谁在用")
 		ui.Row(c).Gap(8).Wrap().Children(func() {
 			for _, who := range users {
 				a.kickChip(c, p, rl, who, "")
@@ -252,7 +248,7 @@ func (a *app) relayUsers(c *ui.Context, p *palette, rl *model.Relay) {
 	if len(kept) == 0 {
 		return
 	}
-	heading(c, p, "不让用的")
+	cardLabel(c, p, "不让用的")
 	ui.Row(c).Gap(8).Wrap().Children(func() {
 		for _, k := range kept {
 			a.kickChip(c, p, rl, k.Person, dayWords(a.now(), k.At))
@@ -340,7 +336,8 @@ func (a *app) kickNow(c *ui.Context, rl *model.Relay, who model.PersonID, off bo
 // and, on my relay in this LAN, the click for dragging it back to the tray.
 func (a *app) relayFoot(c *ui.Context, p *palette, rl *model.Relay, mine bool) {
 	ui.Row(c).Margin(12, 0, 0, 0).AlignItems(ui.Center).Children(func() {
-		more := ui.ButtonBase(c.Key("more")).Height(28).Padding(0, 4).Gap(2).Radius(8).FocusRing(false)
+		// Its words on the card's edge, its light standing out of it.
+		more := ui.ButtonBase(c.Key("more")).Height(28).Padding(0, 4).Margin(0, 0, 0, -4).Gap(4).Radius(8).FocusRing(false)
 		if more.Clicked() {
 			a.more = !a.more
 		}
@@ -355,7 +352,7 @@ func (a *app) relayFoot(c *ui.Context, p *palette, rl *model.Relay, mine bool) {
 		ui.Spacer(c)
 		l := a.snap.LAN(a.lan)
 		if mine && l != nil && l.Added(rl.ID) {
-			out := ui.ButtonBase(c.Key("relay-out")).Height(28).Padding(0, 10).Radius(999).FocusRing(false)
+			out := ui.ButtonBase(c.Key("relay-out")).Height(28).Padding(0, 12).Radius(999).FocusRing(false)
 			if out.Hovered() {
 				out.Background(p.well)
 			}
@@ -385,15 +382,12 @@ func (a *app) relayFoot(c *ui.Context, p *palette, rl *model.Relay, mine bool) {
 	} else {
 		lines = append(lines, "不限速")
 	}
-	detail := ui.Column(c.Key("detail"))
+	// On the card's edge, as the words of 更多 are.
+	detail := ui.Column(c.Key("detail")).Margin(8, 0, 0, 0).Gap(4)
 	detail.Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{}, Exit: &ui.Motion{}})
 	detail.Children(func() {
-		for i, line := range lines {
-			top := float32(2)
-			if i == 0 {
-				top = 8
-			}
-			ui.Text(c, line).FontSize(12).TextColor(p.ink2).Padding(top, 4, 0, 4).SingleLine()
+		for _, line := range lines {
+			ui.Text(c, line).FontSize(12).TextColor(p.ink2).SingleLine()
 		}
 	})
 }
@@ -463,7 +457,7 @@ func (a *app) joinCardView(c *ui.Context, p *palette, id string) {
 	a.cardFrame(c, p, "join-"+id, func() {
 		ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 			dashedOrb(c, p, 40)
-			ui.Column(c).Gap(2).Grow(1).Children(func() {
+			ui.Column(c).Gap(4).Grow(1).Children(func() {
 				ui.Text(c, "用我自己的服务器").FontSize(15).FontWeight(600).SingleLine()
 				ui.Text(c, "装好后，它自己出现在托盘里").FontSize(12).TextColor(p.ink2).SingleLine()
 			})
@@ -471,19 +465,19 @@ func (a *app) joinCardView(c *ui.Context, p *palette, id string) {
 				a.selected = ""
 			}
 		})
-		heading(c, p, "在服务器上运行这一行")
+		cardLabel(c, p, "在服务器上运行这一行")
 		if command == "" {
 			note(c, p, "命令只显示一次。还没装的话，收回它，再要一行。", 0)
 		} else {
 			// Broken at its spaces only, never inside "--restart": it is
 			// copied whole with the button, so the hand need not select a
 			// part of it, and leave a piece behind.
-			code := ui.Column(c).Radius(12).Background(p.well).Padding(10, 12)
+			code := ui.Column(c).Radius(12).Background(p.well).Padding(12)
 			code.Children(func() {
 				ui.Text(c, wrapAt(command, 34)).Font("SF Mono, Menlo, monospace").FontSize(11.5).LineHeight(1.45).TextColor(p.ink)
 			})
 		}
-		ui.Row(c).Gap(10).Margin(12, 0, 0, 0).AlignItems(ui.Center).Children(func() {
+		ui.Row(c).Gap(12).Margin(12, 0, 0, 0).AlignItems(ui.Center).Children(func() {
 			left := "1 小时内有效，只能用一次，要先装好 Docker。"
 			if join != nil && waiting {
 				left = say("还有", minutes(join.Expires.Sub(a.now())), "有效，只能用一次。")
@@ -504,9 +498,9 @@ func (a *app) joinCardView(c *ui.Context, p *palette, id string) {
 			}
 		})
 		if waiting && join != nil {
-			ui.Row(c).Margin(10, 0, 0, 0).Children(func() {
+			ui.Row(c).Margin(12, 0, 0, 0).Children(func() {
 				ui.Spacer(c)
-				out := ui.ButtonBase(c.Key("revoke")).Height(28).Padding(0, 10).Radius(999).FocusRing(false)
+				out := ui.ButtonBase(c.Key("revoke")).Height(28).Padding(0, 12).Radius(999).FocusRing(false)
 				if out.Hovered() {
 					out.Background(p.well)
 				}

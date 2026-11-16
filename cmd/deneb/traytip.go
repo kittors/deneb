@@ -129,7 +129,7 @@ func (m *menuBar) tipView(c *ui.Context) {
 // tipBody is the tip: Deneb's mark in a little well, and the words. Windows
 // rounds, outlines and shadows the flyout it is in, as it does the panel's.
 func tipBody(c *ui.Context, p *palette, hidden bool) ui.Element {
-	body := ui.Row(c.Key("tip")).Width(tipWidth).Padding(14, 16).Gap(12).AlignItems(ui.Start).Background(p.bg)
+	body := ui.Row(c.Key("tip")).Width(tipWidth).Padding(16).Gap(12).AlignItems(ui.Start).Background(p.bg)
 	body.Children(func() {
 		ui.Box(c).Size(28, 28).Radius(999).Background(p.well).Center().Children(func() { trayGlyph(c, "solid", p.ink) })
 		ui.Text(c, tipWords(hidden)).FontSize(13).LineHeight(1.5).Grow(1).Shrink(1)

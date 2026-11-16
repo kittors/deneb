@@ -48,6 +48,22 @@ var uiGlyphs = map[string]*ui.SVG{
 // eyes on whole points, for 16 to 40 points (design/brand/final/glyphs.txt).
 var starGlyph = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18"><path fill="#000" fill-rule="evenodd" d="M7.23,2.5A1.77,1.77 0 0 1 10.77,2.5A5.2,5.2 0 0 0 14.56,7.29A1.77,1.77 0 0 1 14.56,10.71A5.2,5.2 0 0 0 10.77,15.5A1.77,1.77 0 0 1 7.23,15.5A5.2,5.2 0 0 0 3.44,10.71A1.77,1.77 0 0 1 3.44,7.29A5.2,5.2 0 0 0 7.23,2.5ZM7,8H7A1,1 0 0 1 8,9V10A1,1 0 0 1 7,11H7A1,1 0 0 1 6,10V9A1,1 0 0 1 7,8ZM11,8H11A1,1 0 0 1 12,9V10A1,1 0 0 1 11,11H11A1,1 0 0 1 10,10V9A1,1 0 0 1 11,8Z"/></svg>`))
 
+// starTightGlyph is the star with no room to its left and right: the
+// star's own sides are its box's, for a row whose things start at one edge
+// (starMark). starTightAspect is its width for its
+// height. Its lobes reach 2.127 from the 18's sides: the arcs of 1.77 over
+// a chord of 3.42 there.
+var starTightGlyph = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="2.127 0 13.746 18"><path fill="#000" fill-rule="evenodd" d="M7.23,2.5A1.77,1.77 0 0 1 10.77,2.5A5.2,5.2 0 0 0 14.56,7.29A1.77,1.77 0 0 1 14.56,10.71A5.2,5.2 0 0 0 10.77,15.5A1.77,1.77 0 0 1 7.23,15.5A5.2,5.2 0 0 0 3.44,10.71A1.77,1.77 0 0 1 3.44,7.29A5.2,5.2 0 0 0 7.23,2.5ZM7,8H7A1,1 0 0 1 8,9V10A1,1 0 0 1 7,11H7A1,1 0 0 1 6,10V9A1,1 0 0 1 7,8ZM11,8H11A1,1 0 0 1 12,9V10A1,1 0 0 1 11,11H11A1,1 0 0 1 10,10V9A1,1 0 0 1 11,8Z"/></svg>`))
+
+const starTightAspect = 13.746 / 18
+
+// starMark is the Deneb mark, h high, its ink from edge to edge: on the
+// edge of the words beside or under it, as the sidebar's and the settings'
+// are (DESIGN §3.9).
+func starMark(c *ui.Context, p *palette, h float32) ui.Element {
+	return ui.Icon(c, starTightGlyph).Size(h*starTightAspect, h).TextColor(p.primary)
+}
+
 // markGlyph is the same mark's full cut, for 48 points and up (the login and
 // starting screens): its eyes ovals, as in the app icon.
 var markGlyph = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path fill="#000" fill-rule="evenodd" d="M39.75,11.1A10.26,10.26 0 0 1 60.25,11.1A30.29,30.29 0 0 0 83.24,40.05A10.26,10.26 0 0 1 83.24,59.95A30.29,30.29 0 0 0 60.25,88.9A10.26,10.26 0 0 1 39.75,88.9A30.29,30.29 0 0 0 16.76,59.95A10.26,10.26 0 0 1 16.76,40.05A30.29,30.29 0 0 0 39.75,11.1ZM36.67,54.79A4.44,6.5 0 1 0 45.56,54.79A4.44,6.5 0 1 0 36.67,54.79ZM54.44,54.79A4.44,6.5 0 1 0 63.33,54.79A4.44,6.5 0 1 0 54.44,54.79Z"/></svg>`))

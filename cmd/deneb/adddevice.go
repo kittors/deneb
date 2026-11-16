@@ -158,7 +158,7 @@ func (a *app) addOneLayer(c *ui.Context, p *palette) {
 						holder.Invisible()
 					}
 					holder.Children(func() {
-						inner := ui.Column(c.Key("blocked-help")).Padding(6, 0, 0, 0)
+						inner := ui.Column(c.Key("blocked-help")).Padding(8, 0, 0, 0)
 						if b := inner.Bounds(); b.H > 0 {
 							o.helpH = b.H
 						}

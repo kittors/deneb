@@ -21,7 +21,7 @@ func (a *app) shareSection(c *ui.Context, p *palette, d *device) {
 	if m == nil || !a.snap.Can(model.FeatureShare) {
 		return
 	}
-	ui.Text(c, "分享给").FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(18, 4, 8, 4)
+	cardLabel(c, p, "分享给")
 	ui.Row(c).Gap(8).Wrap().Children(func() {
 		for _, sh := range m.Shares {
 			who := a.people[string(sh.Person)]
@@ -103,9 +103,9 @@ func (a *app) shareChip(c *ui.Context, p *palette, dev model.DeviceID, who model
 // sharePlus is the last chip of "分享给": "+", or, the device given to no
 // one yet, "+ 分享给别人". A click shows whom it can go to.
 func (a *app) sharePlus(c *ui.Context, p *palette, d *device, alone bool) {
-	b := ui.ButtonBase(c.Key("share-plus")).Height(34).Radius(999).FocusRing(false).Gap(6).Label("分享给别人")
+	b := ui.ButtonBase(c.Key("share-plus")).Height(34).Radius(999).FocusRing(false).Gap(8).Label("分享给别人")
 	if alone {
-		b.Padding(0, 14, 0, 10)
+		b.Padding(0, 16, 0, 12)
 	} else {
 		b.Width(34).Center()
 	}
@@ -148,7 +148,7 @@ func (a *app) sharePlus(c *ui.Context, p *palette, d *device, alone bool) {
 // seats, the seats full, is faint, and says "位置满了" when clicked.
 func (a *app) sharePicker(c *ui.Context, p *palette, d *device, m *model.Device) {
 	now := c.Now()
-	row := ui.Row(c.Key("share-picker")).Gap(8).Wrap().Padding(10, 0, 0, 0)
+	row := ui.Row(c.Key("share-picker")).Gap(8).Wrap().Padding(12, 0, 0, 0)
 	row.Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{Y: -4}, Exit: &ui.Motion{}})
 	row.Children(func() {
 		for _, who := range a.shareCandidates(m) {
@@ -237,7 +237,7 @@ func (a *app) shareServices(c *ui.Context, p *palette, m *model.Device) {
 			}
 			for _, v := range sh.Services {
 				s := serviceOf(v)
-				ui.Row(c.Key(s.name)).Height(44).Gap(10).Children(func() {
+				ui.Row(c.Key(s.name)).Height(44).Gap(12).Children(func() {
 					ui.Icon(c, uiGlyphs[s.icon]).Size(18, 18).TextColor(p.ink2)
 					ui.Text(c, s.name).FontSize(13).FontWeight(500).Grow(1)
 					if toggle(c, p, s.on) {
@@ -266,7 +266,7 @@ func (a *app) personCardView(c *ui.Context, p *palette, id string) {
 	a.cardFrame(c, p, "person-"+id, func() {
 		ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 			ball(c, who, 40, false)
-			ui.Column(c).Gap(2).Grow(1).Children(func() {
+			ui.Column(c).Gap(4).Grow(1).Children(func() {
 				ui.Text(c, who.name).FontSize(15).FontWeight(600).SingleLine().MaxWidth(cardNameWidth)
 				ui.Text(c, a.roleOf(pid)).FontSize(12).TextColor(p.ink2).SingleLine().MaxWidth(cardNameWidth)
 			})
@@ -274,7 +274,7 @@ func (a *app) personCardView(c *ui.Context, p *palette, id string) {
 				a.selected = ""
 			}
 		})
-		ui.Text(c, say("你分享给", who.name, "的")).FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(18, 4, 8, 4)
+		cardLabel(c, p, say("你分享给", who.name, "的"))
 		var mine []*model.Device
 		for _, dev := range a.snap.Mine {
 			if m := a.snap.Device(dev); m != nil && m.ShareTo(pid) != nil {
@@ -282,7 +282,7 @@ func (a *app) personCardView(c *ui.Context, p *palette, id string) {
 			}
 		}
 		if len(mine) == 0 {
-			ui.Text(c, say("拖入设备以共享给", who.name)).FontSize(12).TextColor(p.ink3).Padding(0, 4, 0, 4)
+			ui.Text(c, say("拖入设备以共享给", who.name)).FontSize(12).TextColor(p.ink3)
 		}
 		ui.Row(c).Gap(8).Wrap().Children(func() {
 			for _, m := range mine {
@@ -307,7 +307,7 @@ func (a *app) personCardView(c *ui.Context, p *palette, id string) {
 		if len(theirs) == 0 {
 			return
 		}
-		ui.Text(c, say(who.name, "分享给你的")).FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(18, 4, 8, 4)
+		cardLabel(c, p, say(who.name, "分享给你的"))
 		ui.Row(c).Gap(8).Wrap().Children(func() {
 			for _, sh := range theirs {
 				m := a.snap.Device(sh.Device)
@@ -380,7 +380,7 @@ func (a *app) seatCardView(c *ui.Context, p *palette) {
 		if w := a.people[a.seatFor]; w != nil && full {
 			ui.Text(c, say("腾出一个位置，", w.name, "就能加入")).FontSize(12).TextColor(p.ink2).Padding(4, 0, 0, 0)
 		}
-		ui.Row(c).Gap(10).Wrap().Padding(16, 0, 0, 0).Children(func() {
+		ui.Row(c).Gap(8).Wrap().Padding(16, 0, 0, 0).Children(func() {
 			for _, id := range s.People {
 				id := string(id)
 				el := ui.Box(c.Key("seat-"+id)).Size(34, 34)
@@ -409,7 +409,7 @@ func (a *app) seatCardView(c *ui.Context, p *palette) {
 			switch {
 			case !full:
 				l := a.snap.LAN(a.lan)
-				if l != nil && !a.shared() && primaryButton(c, p, "seat-invite", "邀请朋友", 34, 14, 13).Clicked() {
+				if l != nil && !a.shared() && cardPrimary(c, p, "seat-invite", "邀请朋友").Clicked() {
 					a.selected, a.seatFreeing, a.seatFor = "", false, ""
 					a.inviteFriends(c)
 				}
@@ -418,7 +418,7 @@ func (a *app) seatCardView(c *ui.Context, p *palette) {
 					a.seatFreeing = false
 				}
 			default:
-				if primaryButton(c, p, "seat-free", "腾一个位置", 34, 14, 13).Clicked() {
+				if cardPrimary(c, p, "seat-free", "腾一个位置").Clicked() {
 					a.seatFreeing = true
 				}
 			}
@@ -444,6 +444,12 @@ func (a *app) cardFrame(c *ui.Context, p *palette, key string, body func()) {
 		b.Transition(ui.ElementTransition{Duration: 180 * time.Millisecond, Enter: &ui.Motion{}})
 		b.Children(body)
 	})
+}
+
+// cardLabel names a part of a card: on the card's edge, as all its parts
+// are, 16 under the part before it and 8 over its own (DESIGN §3.9).
+func cardLabel(c *ui.Context, p *palette, s string) {
+	ui.Text(c, s).FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(16, 0, 8, 0)
 }
 
 // givenWho is the second line of the card of a device given to me, or of

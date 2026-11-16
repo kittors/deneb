@@ -73,9 +73,9 @@ func (a *app) profileActions(c *ui.Context, p *palette, d *device) {
 	if !d.mine {
 		return
 	}
-	ui.Row(c).Gap(8).Margin(10, 0, 0, 0).Children(func() {
+	ui.Row(c).Gap(8).Margin(12, 0, 0, 0).Children(func() {
 		action := func(key, label string, fn func()) {
-			b := ui.ButtonBase(c.Key(key)).Height(28).Padding(0, 10).Radius(9).Background(p.well).FocusRing(false).Label(label)
+			b := ui.ButtonBase(c.Key(key)).Height(28).Padding(0, 12).Radius(8).Background(p.well).FocusRing(false).Label(label)
 			if b.Hovered() {
 				b.Background(p.well2)
 			}

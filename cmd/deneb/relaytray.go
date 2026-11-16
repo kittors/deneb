@@ -110,7 +110,7 @@ func (a *app) trayRelayItems(c *ui.Context, p *palette, w, h float32, kv func(ki
 			continue
 		}
 		a.trayKids.shown("rule", kd.key)
-		trayKid(c, kd.key, k, 1+slotGap+2, func() { a.trayGhost(c, p, lookRule) })
+		trayKid(c, kd.key, k, 1+slotGap, func() { a.trayGhost(c, p, lookRule) })
 	}
 	var keys []string
 	looks := map[string]kidLook{}

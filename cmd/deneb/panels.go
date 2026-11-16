@@ -323,7 +323,8 @@ func (a *app) trayView(c *ui.Context, p *palette, w, h float32, now time.Time) {
 		// The pill hugs what is in it, which opens, closes and changes with
 		// the tray's spring (DESIGN §6.5): its own size does not lag behind,
 		// so nothing in it ever sticks out of it; only its colors fade.
-		pill := ui.Row(c.Key("tray")).Height(56).Padding(0, 10, 0, 18).AlignItems(ui.Center).Radius(999).
+		// 8 round its last circle, as above and under it: one round end.
+		pill := ui.Row(c.Key("tray")).Height(56).Padding(0, 8, 0, 16).AlignItems(ui.Center).Radius(999).
 			Background(bg).Border(1.5, ring).
 			Shadow(0, 10, 28, 0, p.shadow).Shadow(0, 2, 6, 0, ui.RGBA(9, 9, 11, 0.05))
 		pill.Transition(ui.ElementTransition{Animation: &soft, Colors: true})
@@ -484,7 +485,10 @@ func (a *app) kidValue(pill ui.Element, entering bool, kd kid, target float32, a
 // (DESIGN §6.5).
 func trayKid(c *ui.Context, key string, k, w float32, inside func()) {
 	ui.Box(c.Key("kid-" + key)).Width(w * k).Height(slotTile).Shrink(0).Center().Children(func() {
-		ui.Box(c.Key("kid-in-"+key)).Width(w).Height(slotTile).Shrink(0).Scale(k, k).Opacity(k).Children(inside)
+		// What is inside sits on the tray's middle line, however high it
+		// is: 添加设备 (28) and the line between devices and relays (26) as
+		// a tile (40) does (the user, 2026-11-16).
+		ui.Box(c.Key("kid-in-"+key)).Width(w).Height(slotTile).Shrink(0).Center().Scale(k, k).Opacity(k).Children(inside)
 	})
 }
 
@@ -538,7 +542,7 @@ func (a *app) trayGhost(c *ui.Context, p *palette, look kidLook) {
 	case lookAdd:
 		a.trayAdd(c, p, true)
 	case lookRule:
-		ui.Box(c).Size(1, 26).Margin(0, 0, 0, slotGap+2).Background(p.line).Shrink(0)
+		ui.Box(c).Size(1, 26).Margin(0, 0, 0, slotGap).Background(p.line).Shrink(0)
 	case lookRound, lookJoin:
 		ui.Box(c).Size(relaySlotBall+slotGap, slotTile).Padding(0, 0, 0, slotGap).Shrink(0).Center().Children(func() {
 			ui.Box(c).Size(relaySlotBall, relaySlotBall).Radius(999).Background(p.well)
@@ -749,9 +753,9 @@ func (a *app) toastView(c *ui.Context, p *palette, w, h float32, now time.Time) 
 				box.Children(func() {
 					right := float32(16)
 					if show.undo != nil {
-						right = 6
+						right = 8
 					}
-					body := ui.Row(c.Key("toast-body")).Width(need).Gap(10).Padding(0, right, 0, 0).AlignItems(ui.Center).Shrink(0).
+					body := ui.Row(c.Key("toast-body")).Width(need).Gap(12).Padding(0, right, 0, 0).AlignItems(ui.Center).Shrink(0).
 						Opacity(alpha).IgnoreInput(show != tn)
 					body.Children(func() {
 						if show.dev != nil {
@@ -765,7 +769,9 @@ func (a *app) toastView(c *ui.Context, p *palette, w, h float32, now time.Time) 
 						sw, _ := c.MeasureText(0, ui.Span{Text: show.text, Size: 13, Weight: 500})
 						ui.Text(c, show.text).FontSize(13).FontWeight(500).SingleLine().Width(sw + 1).Shrink(0)
 						if show.undo != nil {
-							u := ui.ButtonBase(c.Key("undo")).Height(32).Padding(0, 12).Radius(999).FocusRing(false).Shrink(0)
+							// 8 from the pill's top, foot and end: its light one
+							// round end with the pill's.
+							u := ui.ButtonBase(c.Key("undo")).Height(28).Padding(0, 12).Radius(999).FocusRing(false).Shrink(0)
 							if u.Hovered() {
 								u.Background(p.primary.Alpha(0.1))
 							}
@@ -810,9 +816,9 @@ func toastWide(c *ui.Context, n *notice) float32 {
 			label = n.undoLabel
 		}
 		lw, _ := c.MeasureText(0, ui.Span{Text: label, Size: 13, Weight: 600})
-		w, parts, right = w+lw+24, parts+1, 6
+		w, parts, right = w+lw+24, parts+1, 8
 	}
-	return w + float32(parts-1)*10 + right
+	return w + float32(parts-1)*12 + right
 }
 
 // ---- Card -------------------------------------------------------------------------------
@@ -937,7 +943,7 @@ func (a *app) card(c *ui.Context, p *palette) {
 					} else {
 						a.profileTile(c, p, d.dev, d.kind, a.tileColor(d), 40, false, 0)
 					}
-					ui.Column(c).Gap(2).Grow(1).Children(func() {
+					ui.Column(c).Gap(4).Grow(1).Children(func() {
 						if named {
 							name := ui.ButtonBase(c.Key("name")).FocusRing(false).Cursor(ui.CursorText).AlignSelf(ui.Start)
 							name.Children(func() {
@@ -984,7 +990,7 @@ func (a *app) card(c *ui.Context, p *palette) {
 				}
 				// How it is connected, in one sentence. Through a relay of M4, a
 				// click shows the relay's card (DESIGN §6.12).
-				how := ui.Row(c.Key("how-row")).Gap(10).Padding(12).Radius(14).Background(p.well).Margin(14, 0, 0, 0)
+				how := ui.Row(c.Key("how-row")).Gap(12).Padding(12).Radius(14).Background(p.well).Margin(16, 0, 0, 0)
 				if d.path == "relay" && a.snap.Can(model.FeatureRelays) && a.snap.Relays[a.relayOf(d)] != nil {
 					how.Cursor(ui.CursorPointer).Label("看看这个中转站")
 					if how.Clicked() {
@@ -1007,7 +1013,7 @@ func (a *app) card(c *ui.Context, p *palette) {
 					// do; what can be done about it folds in and out under them,
 					// the card's height following.
 					ui.Column(c.Key("how")).Grow(1).Children(func() {
-						words := ui.Column(c.Key("how-" + title)).Gap(2)
+						words := ui.Column(c.Key("how-" + title)).Gap(4)
 						words.Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{}})
 						words.Children(func() {
 							ui.Text(c, title).FontSize(13).FontWeight(500)
@@ -1053,7 +1059,7 @@ func (a *app) card(c *ui.Context, p *palette) {
 					label = "公开服务"
 				}
 				if perLAN {
-					ui.Text(c, label).FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(18, 4, 8, 4)
+					cardLabel(c, p, label)
 				}
 				// The list as this frame began: an op sent from it brings a new
 				// one, which the next frame shows.
@@ -1065,7 +1071,7 @@ func (a *app) card(c *ui.Context, p *palette) {
 				ui.Column(c).Radius(14).Background(p.well).Padding(0, 12).Dividers(1, p.line).Children(func() {
 					for i := range svcs {
 						s := svcs[i]
-						ui.Row(c.Key(s.name)).Height(44).Gap(10).Children(func() {
+						ui.Row(c.Key(s.name)).Height(44).Gap(12).Children(func() {
 							muted := !mine && !s.on
 							ink := p.ink
 							if muted {
@@ -1074,11 +1080,7 @@ func (a *app) card(c *ui.Context, p *palette) {
 							ui.Icon(c, uiGlyphs[s.icon]).Size(18, 18).TextColor(p.ink2)
 							ui.Text(c, serviceLabel(d.services, s)).FontSize(13).FontWeight(500).TextColor(ink).Grow(1)
 							if s.on && d.dev != a.snap.Self {
-								b := ui.ButtonBase(c.Key("open")).Height(28).Padding(0, 12).Radius(999).Background(p.bg).FocusRing(false).
-									Shadow(0, 1, 2, 0, ui.RGBA(9, 9, 11, 0.06))
-								b.AnimatePose(pressPose(b, 0.94), ui.Snappy)
-								b.Children(func() { ui.Text(c, "打开").FontSize(12).FontWeight(500) })
-								if b.Clicked() {
+								if wellButton(c, p, "open", "打开").Clicked() {
 									a.openService(c, d, s)
 								}
 							}
@@ -1098,7 +1100,7 @@ func (a *app) card(c *ui.Context, p *palette) {
 					}
 				})
 				if mine && perLAN {
-					ui.Text(c, "访问权限").FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(18, 4, 8, 4)
+					cardLabel(c, p, "访问权限")
 					ui.Row(c).Gap(8).Wrap().Children(func() {
 						for _, id := range a.membersOf(d) {
 							if id == d.owner {
@@ -1141,7 +1143,9 @@ func (a *app) card(c *ui.Context, p *palette) {
 					ui.Text(c, "仅允许你访问此设备").FontSize(12).TextColor(p.ink3).Padding(8, 4, 0, 4)
 				}
 				ui.Row(c).Margin(12, 0, 0, 0).AlignItems(ui.Center).Children(func() {
-					more := ui.ButtonBase(c.Key("more")).Height(28).Padding(0, 4).Gap(2).Radius(8).FocusRing(false)
+					// Its words on the card's edge, its light standing out of
+					// it, as a menu row's does.
+					more := ui.ButtonBase(c.Key("more")).Height(28).Padding(0, 4).Margin(0, 0, 0, -4).Gap(4).Radius(8).FocusRing(false)
 					if more.Clicked() {
 						a.more = !a.more
 					}
@@ -1156,7 +1160,7 @@ func (a *app) card(c *ui.Context, p *palette) {
 					ui.Spacer(c)
 					if d.removable() {
 						// The click for the drag into the tray (§6.4).
-						out := ui.ButtonBase(c.Key("leave")).Height(28).Padding(0, 10).Radius(999).FocusRing(false)
+						out := ui.ButtonBase(c.Key("leave")).Height(28).Padding(0, 12).Radius(999).FocusRing(false)
 						if out.Hovered() {
 							out.Background(p.well)
 						}
@@ -1168,7 +1172,7 @@ func (a *app) card(c *ui.Context, p *palette) {
 					}
 					if given && a.shared() && a.snap.Can(model.FeatureShareMode) {
 						// Given to me: I can give it back (DESIGN §6.11).
-						out := ui.ButtonBase(c.Key("give-back")).Height(28).Padding(0, 10).Radius(999).FocusRing(false)
+						out := ui.ButtonBase(c.Key("give-back")).Height(28).Padding(0, 12).Radius(999).FocusRing(false)
 						if out.Hovered() {
 							out.Background(p.well)
 						}
@@ -1180,15 +1184,12 @@ func (a *app) card(c *ui.Context, p *palette) {
 					}
 				})
 				if a.more {
-					detail := ui.Column(c.Key("detail"))
+					// On the card's edge, as the words of 更多 are.
+					detail := ui.Column(c.Key("detail")).Margin(8, 0, 0, 0).Gap(4)
 					detail.Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{}, Exit: &ui.Motion{}})
 					detail.Children(func() {
-						for i, line := range a.details(d) {
-							top := float32(2)
-							if i == 0 {
-								top = 8
-							}
-							ui.Text(c, line).FontSize(12).TextColor(p.ink2).Padding(top, 4, 0, 4).SingleLine()
+						for _, line := range a.details(d) {
+							ui.Text(c, line).FontSize(12).TextColor(p.ink2).SingleLine()
 						}
 						if d.id == a.self && a.snap.Can(model.FeatureDiagnostics) {
 							a.diagnosticsRow(c, p)
@@ -1347,7 +1348,7 @@ func (a *app) kinds(c *ui.Context, p *palette, d *device) {
 	// Made inside the holder, to be its child: what is made outside is
 	// another child of the card.
 	holder.Children(func() {
-		row := ui.Row(c.Key("kinds")).Gap(6).Margin(12, 0, 0, 0).Opacity(k)
+		row := ui.Row(c.Key("kinds")).Gap(8).Margin(12, 0, 0, 0).Opacity(k)
 		a.kindRow(c, p, d, row)
 	})
 }
@@ -1476,12 +1477,12 @@ func (a *app) lanCard(c *ui.Context, p *palette) {
 						for i, id := range l.Members[:min(3, len(l.Members))] {
 							b := ball(c, a.people[string(id)], 16, false).Shadow(0, 0, 0, 1.5, p.well)
 							if i > 0 {
-								b.Margin(0, 0, 0, -5)
+								b.Margin(0, 0, 0, -4)
 							}
 						}
 					})
 				})
-				ui.Column(c).Gap(2).Grow(1).Children(func() {
+				ui.Column(c).Gap(4).Grow(1).Children(func() {
 					if mine {
 						name := ui.ButtonBase(c.Key("lan-name")).FocusRing(false).Cursor(ui.CursorText).AlignSelf(ui.Start)
 						name.Children(func() {
@@ -1503,7 +1504,7 @@ func (a *app) lanCard(c *ui.Context, p *palette) {
 					a.selected, a.renaming = "", nil
 				}
 			})
-			ui.Text(c, "成员").FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(18, 4, 8, 4)
+			cardLabel(c, p, "成员")
 			ui.Row(c).Gap(8).Wrap().Children(func() {
 				for _, id := range l.Members {
 					ui.Row(c.Key("member-"+string(id))).Height(34).Padding(0, 12, 0, 4).Gap(8).Radius(999).Background(p.well).Children(func() {
@@ -1516,7 +1517,7 @@ func (a *app) lanCard(c *ui.Context, p *palette) {
 				// Not mine, or a server that cannot ask me: no switches.
 				return
 			}
-			ui.Text(c, "加入审批").FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(18, 4, 8, 4)
+			cardLabel(c, p, "加入审批")
 			ui.Column(c).Radius(14).Background(p.well).Padding(0, 12).Dividers(1, p.line).Children(func() {
 				for _, sw := range []struct {
 					key, label string
@@ -1526,7 +1527,7 @@ func (a *app) lanCard(c *ui.Context, p *palette) {
 					{"approve-devices", "审批新设备", l.ApproveDevices, model.OpLANSetApproveDevices},
 					{"approve-members", "审批新成员", l.ApproveMembers, model.OpLANSetApproveMembers},
 				} {
-					ui.Row(c.Key(sw.key)).Height(44).Gap(10).Children(func() {
+					ui.Row(c.Key(sw.key)).Height(44).Gap(12).Children(func() {
 						ui.Text(c, sw.label).FontSize(13).FontWeight(500).Grow(1)
 						if toggle(c, p, sw.on) {
 							a.send(c, model.Op{Kind: sw.kind, LAN: l.ID, On: !sw.on})
@@ -1541,9 +1542,9 @@ func (a *app) lanCard(c *ui.Context, p *palette) {
 			// Members use only what the owner gives each of them (DESIGN
 			// §6.11, scene 4). Their devices go at once; the server hears
 			// of it as the toast goes, so undo is nothing done.
-			ui.Text(c, "设备共享").FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(18, 4, 8, 4)
+			cardLabel(c, p, "设备共享")
 			ui.Column(c).Radius(14).Background(p.well).Padding(0, 12).Children(func() {
-				ui.Row(c.Key("share-mode")).Height(44).Gap(10).Children(func() {
+				ui.Row(c.Key("share-mode")).Height(44).Gap(12).Children(func() {
 					ui.Text(c, "按成员分配设备").FontSize(13).FontWeight(500).Grow(1)
 					on := l.Mode == model.ModeShare
 					if toggle(c, p, on) {
@@ -1559,7 +1560,7 @@ func (a *app) lanCard(c *ui.Context, p *palette) {
 			if l.Mode == model.ModeShare {
 				line = "关闭后恢复设备互联"
 			}
-			ui.Text(c, line).FontSize(12).TextColor(p.ink3).Padding(8, 4, 0, 4)
+			ui.Text(c, line).FontSize(12).TextColor(p.ink3).Padding(8, 0, 0, 0)
 		})
 	})
 }
@@ -1602,7 +1603,9 @@ func (a *app) stackBall(c *ui.Context, p *palette, l *model.LAN, id string, how 
 	// ball it can be given to shows whole; the others fade (DESIGN §6.11).
 	spread := a.aim.d != nil
 	target := how == member && id != a.me && a.snap.Can(model.FeatureShare)
-	gap := el.AnimateTo("spread", map[bool]float32{false: -6, true: 8}[spread], ui.Snappy)
+	// At rest they overlap by 4, as the LAN mark's do: each a whole enough
+	// target for a click or a drop.
+	gap := el.AnimateTo("spread", map[bool]float32{false: -4, true: 8}[spread], ui.Snappy)
 	if overlap {
 		el.Margin(0, 0, 0, gap)
 	}

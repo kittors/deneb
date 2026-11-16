@@ -183,13 +183,13 @@ func (a *app) updateEntry(c *ui.Context, p *palette) {
 		return
 	}
 	ui.Row(c).Shrink(0).Children(func() {
-		b := ui.ButtonBase(c.Key("app-update-entry")).Height(34).Radius(999).Background(p.well2).Gap(7).Center().FocusRing(false).Label(u.title())
+		b := ui.ButtonBase(c.Key("app-update-entry")).Height(iconButtonSize).Radius(999).Background(p.well2).Gap(8).Center().FocusRing(false).Label(u.title())
 		prominent := u.stage == updateAvailable || u.stage == updateReady || u.stage == updateDownloading || u.stage == updateVerifying
 		if prominent {
 			b.Background(p.primary)
 		}
 		expanded := b.Hovered() || u.open || u.stage == updateDownloading
-		target := float32(34)
+		target := float32(iconButtonSize)
 		if expanded {
 			target = 112
 		}
@@ -257,7 +257,7 @@ func (a *app) updateLayer(c *ui.Context, p *palette) {
 			}
 			ui.Text(c, status).FontSize(12).TextColor(p.ink3)
 		}
-		ui.Row(c).Gap(10).Justify(ui.End).Children(func() {
+		dialogActions(c, func() {
 			button := func(key, label string, primary bool, fn func()) {
 				b := ui.ButtonBase(c.Key(key)).Height(34).Padding(0, 20).Radius(999).FocusRing(false).Background(p.well)
 				ink := p.ink

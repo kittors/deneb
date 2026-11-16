@@ -22,7 +22,7 @@ const markSize = 52
 // startingView is the window while this computer's engine has not answered
 // yet: the mark, greyed, and one line, as the store keeps trying.
 func (a *app) startingView(c *ui.Context, p *palette) {
-	ui.Column(c).Fill().Background(p.bg).Center().Gap(18).DragWindow().Children(func() {
+	ui.Column(c).Fill().Background(p.bg).Center().Gap(16).DragWindow().Children(func() {
 		ui.Icon(c, markGlyph).Size(markSize, markSize).TextColor(p.ink3)
 		if a.engineErr != "" && !a.snap.Engine {
 			ui.Text(c, a.engineErr).FontSize(13).TextColor(p.ink2)
@@ -37,7 +37,7 @@ func (a *app) startingView(c *ui.Context, p *palette) {
 // opens the login page in the browser, and the window turns into the LANs
 // once the login is done there; there is no field for a password here.
 func (a *app) loginView(c *ui.Context, p *palette) {
-	ui.Column(c).Fill().Background(p.bg).Center().Gap(22).DragWindow().Children(func() {
+	ui.Column(c).Fill().Background(p.bg).Center().Gap(24).DragWindow().Children(func() {
 		ui.Icon(c, markGlyph).Size(markSize, markSize).TextColor(p.primary)
 		btn := primaryButton(c, p, "login", "登录", 40, 28, 14)
 		if btn.Clicked() && !a.loggingIn {
@@ -109,7 +109,7 @@ func textButton(c *ui.Context, p *palette, key, label string, accent bool) ui.El
 
 // ghostButton is the design's secondary pill: ink on the well.
 func ghostButton(c *ui.Context, p *palette, key, label string) ui.Element {
-	btn := ui.ButtonBase(c.Key(key)).Height(34).Padding(0, 14).Radius(999).Background(p.well).FocusRing(false)
+	btn := ui.ButtonBase(c.Key(key)).Height(34).Padding(0, 16).Radius(999).Background(p.well).FocusRing(false)
 	if btn.Hovered() {
 		btn.Background(p.well2)
 	}
@@ -118,10 +118,27 @@ func ghostButton(c *ui.Context, p *palette, key, label string) ui.Element {
 	return btn
 }
 
+// wellButton is a button on a well, a grey box: white, a hair of shadow
+// under it, as the services' 打开 and the chores' 同意 are. A ghostButton,
+// grey, would not show on the grey.
+func wellButton(c *ui.Context, p *palette, key, label string) ui.Element {
+	b := ui.ButtonBase(c.Key(key)).Height(28).Padding(0, 12).Radius(999).Background(p.bg).FocusRing(false).
+		Shadow(0, 1, 2, 0, ui.RGBA(9, 9, 11, 0.06))
+	b.AnimatePose(pressPose(b, 0.94), ui.Snappy)
+	b.Children(func() { ui.Text(c, label).FontSize(12).FontWeight(500).SingleLine() })
+	return b
+}
+
+// cardPrimary is a card's main button, the ghostButton's pair: as high, as
+// much room at its sides, its words as large.
+func cardPrimary(c *ui.Context, p *palette, key, label string) ui.Element {
+	return primaryButton(c, p, key, label, 34, 16, 13)
+}
+
 // emptyCanvas is the canvas with no LAN to show yet: one line, saying how to
 // have one.
 func (a *app) emptyCanvas(c *ui.Context, p *palette) {
-	ui.Column(c).Grow(1).Center().Gap(6).Children(func() {
+	ui.Column(c).Grow(1).Center().Gap(8).Children(func() {
 		ui.Text(c, "还没有局域网").FontSize(15).FontWeight(600).TextColor(p.ink)
 		ui.Text(c, "点左边的「新建局域网」，或者打开朋友发来的邀请链接").FontSize(13).TextColor(p.ink2)
 	})
@@ -149,7 +166,8 @@ func (a *app) newLANRow(c *ui.Context, p *palette) {
 		}
 		return
 	}
-	row := ui.Row(c.Key("new-lan-name")).Height(36).Padding(0, 10).Gap(10).Radius(10).Background(p.bg).
+	// As a row of the sidebar (navRowWith): the name goes where the label was.
+	row := ui.Row(c.Key("new-lan-name")).Height(36).Padding(0, 8).Gap(12).Radius(10).Background(p.bg).
 		Shadow(0, 1, 2, 0, ui.RGBA(9, 9, 11, 0.06)).Shadow(0, 1, 1, 0, ui.RGBA(9, 9, 11, 0.04))
 	row.Children(func() {
 		ui.Icon(c, uiGlyphs["plus"]).Size(18, 18).TextColor(p.primary)
@@ -271,7 +289,7 @@ func (a *app) inviteLayer(c *ui.Context, p *palette) {
 				who := &person{id: string(inv.Inviter.ID), name: inv.Inviter.Name, ch: inv.Inviter.Initial,
 					color: ownerColors[inv.Inviter.Color%model.NumColors]}
 				ball(c, who, 40, false)
-				ui.Column(c).Gap(2).Grow(1).Children(func() {
+				ui.Column(c).Gap(4).Grow(1).Children(func() {
 					ui.Text(c, strings.TrimLeft(spaced(short(inv.Inviter.Name)), " ")+"邀请你加入「"+short(inv.LANName)+"」").
 						FontSize(15).FontWeight(600).MaxLines(2)
 					sub := "这台电脑会跟着加进去"
@@ -288,7 +306,7 @@ func (a *app) inviteLayer(c *ui.Context, p *palette) {
 				if ghostButton(c, p, "later", "以后再说").Clicked() {
 					a.invite = nil
 				}
-				if primaryButton(c, p, "join", "加入", 34, 14, 13).Clicked() {
+				if cardPrimary(c, p, "join", "加入").Clicked() {
 					a.join(c, card)
 				}
 			})
@@ -343,7 +361,7 @@ func (a *app) showInvitation(inv model.Invitation) {
 // only the owner, and a word on what I wait for (DESIGN §6.7).
 func (a *app) waitingCanvas(c *ui.Context, p *palette, l *model.LAN) {
 	owner := a.people[string(l.Owner)]
-	ui.Column(c).Grow(1).AlignItems(ui.Center).Justify(ui.Center).Gap(14).Children(func() {
+	ui.Column(c).Grow(1).AlignItems(ui.Center).Justify(ui.Center).Gap(16).Children(func() {
 		ball(c, owner, 44, false)
 		ui.Text(c, "等"+spaced(owner.name)+"同意你加入「"+short(l.Name)+"」").FontSize(15).FontWeight(500).TextColor(p.ink2)
 	})
@@ -374,7 +392,7 @@ func (a *app) noticePill(c *ui.Context, p *palette) {
 		if n == nil {
 			return
 		}
-		pill := ui.ButtonBase(c.Key("notice-"+n.Code)).Height(30).Padding(0, 12, 0, 10).Gap(8).Radius(999).
+		pill := ui.ButtonBase(c.Key("notice-"+n.Code)).Height(30).Padding(0, 12, 0, 8).Gap(8).Radius(999).
 			Background(ui.Hex("#F59E0B").Alpha(0.1)).FocusRing(false).Cursor(ui.CursorPointer)
 		if pill.Hovered() {
 			pill.Background(ui.Hex("#F59E0B").Alpha(0.16))
@@ -418,10 +436,10 @@ func (a *app) noticeCard(c *ui.Context, p *palette) {
 	card.Transition(ui.ElementTransition{Duration: 200 * time.Millisecond, Size: true,
 		Enter: &ui.Motion{Scale: 0.96, Y: -8}, Exit: &ui.Motion{Scale: 0.97, Y: -6}})
 	card.Children(func() {
-		body := ui.Column(c.Key("body-notice-" + n.Code)).Padding(16).Gap(10)
+		body := ui.Column(c.Key("body-notice-" + n.Code)).Padding(16).Gap(12)
 		body.Transition(ui.ElementTransition{Duration: 180 * time.Millisecond, Enter: &ui.Motion{}})
 		body.Children(func() {
-			ui.Row(c).Gap(10).AlignItems(ui.Start).Children(func() {
+			ui.Row(c).Gap(12).AlignItems(ui.Start).Children(func() {
 				ui.Text(c, n.Message).FontSize(15).FontWeight(600).Grow(1).Shrink(1)
 				if iconButton(c, p, "close", "关闭").Background(p.well).Clicked() {
 					a.selected = ""
@@ -442,7 +460,7 @@ func (a *app) noticeCard(c *ui.Context, p *palette) {
 				ui.Text(c, "在它的规则里加上这一条，局域网里的连接就不经过它：").FontSize(12).TextColor(p.ink2)
 			}
 			if n.Rule != "" {
-				ui.Text(c, n.Rule).FontSize(12).FontWeight(500).FontFeatures("tnum").Padding(9, 12).Radius(12).Background(p.well).SingleLine()
+				ui.Text(c, n.Rule).FontSize(12).FontWeight(500).FontFeatures("tnum").Padding(8, 12).Radius(12).Background(p.well).SingleLine()
 			}
 			ui.Row(c).Gap(8).Margin(4, 0, 0, 0).Children(func() {
 				ui.Spacer(c)
@@ -452,11 +470,11 @@ func (a *app) noticeCard(c *ui.Context, p *palette) {
 					}
 					a.noticesDone[n.Code], a.selected = true, ""
 				}
-				if n.Settings != "" && primaryButton(c, p, "settings", "去系统设置", 34, 14, 13).Clicked() && a.openURL != nil {
+				if n.Settings != "" && cardPrimary(c, p, "settings", "去系统设置").Clicked() && a.openURL != nil {
 					// Where the system's switch for Deneb is (M6 on).
 					a.openURL(n.Settings)
 				}
-				if n.Rule != "" && primaryButton(c, p, "copy-rule", "复制规则", 34, 14, 13).Clicked() {
+				if n.Rule != "" && cardPrimary(c, p, "copy-rule", "复制规则").Clicked() {
 					if a.copyText != nil {
 						a.copyText(n.Rule)
 					}

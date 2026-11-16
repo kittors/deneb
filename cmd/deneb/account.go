@@ -21,7 +21,9 @@ var danger = ui.Hex("#ef4444")
 
 // accountRowView is the compact account control in the footer toolbar.
 func (a *app) accountRowView(c *ui.Context, p *palette) {
-	row := ui.ButtonBase(c.Key("account-row")).Size(40, 40).Radius(999).Center().
+	// The ball on the edge the sidebar's marks start at, its light 4 out of
+	// it all round.
+	row := ui.ButtonBase(c.Key("account-row")).Size(40, 40).Margin(0, 0, 0, 4).Radius(999).Center().
 		FocusRing(false).Label("账号").Tooltip("账号")
 	if row.Hovered() || a.accountOpen {
 		row.Background(p.well2)
@@ -86,23 +88,23 @@ func (a *app) accountCard(c *ui.Context, p *palette) {
 	if me != nil {
 		name = me.Name
 	}
-	ui.Column(c).Padding(16, 16, 10, 16).Children(func() {
+	ui.Column(c).Padding(16).Children(func() {
 		ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 			ball(c, a.people[a.me], 40, false)
-			ui.Column(c).Gap(2).Shrink(1).Children(func() {
+			ui.Column(c).Gap(4).Shrink(1).Children(func() {
 				ui.Text(c, name).FontSize(15).FontWeight(600).SingleLine()
 				ui.Text(c, a.snap.Email).FontSize(12).TextColor(p.ink2).SingleLine()
 			})
 		})
 		rule(c, p)
 		if d := a.snap.Device(a.snap.Self); d != nil {
-			ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+			ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 				a.profileTile(c, p, d.ID, glyphFor(d.Kind), ownerColors[0], 32, false, 0)
-				ui.Column(c).Gap(1).Grow(1).Shrink(1).Children(func() {
+				ui.Column(c).Gap(4).Grow(1).Shrink(1).Children(func() {
 					ui.Text(c, "这台电脑").FontSize(11).TextColor(p.ink3)
 					ui.Text(c, d.Name).FontSize(13).FontWeight(500).SingleLine()
 				})
-				edit := ui.ButtonBase(c.Key("edit-self")).Height(28).Padding(0, 10).Radius(999).Background(p.well).FocusRing(false).Label("编辑这台电脑")
+				edit := ui.ButtonBase(c.Key("edit-self")).Height(28).Padding(0, 12).Radius(999).Background(p.well).FocusRing(false).Label("编辑这台电脑")
 				edit.Children(func() { ui.Text(c, "编辑").FontSize(12).FontWeight(500).TextColor(p.ink2) })
 				if edit.Clicked() {
 					a.accountOpen = false
@@ -128,21 +130,24 @@ func rule(c *ui.Context, p *palette) {
 	ui.Box(c).Height(1).Margin(12, 0, 12, 0).Background(p.line)
 }
 
-// menuItem is a row of a card that is one button: its words, in col, a
-// grey line under them, and an icon at the right, if any; it lights up
-// under the pointer, out to the card's edges.
-func menuItem(c *ui.Context, p *palette, key, label string, col ui.Color, icon string) ui.Element {
-	b := ui.ButtonBase(c.Key(key)).Height(40).Padding(0, 8).Margin(0, -8).Radius(10).Gap(10).AlignItems(ui.Center).FocusRing(false).Label(label)
+// menuItem is a row of a card or a panel that is one button: its words, in
+// col; at its right end what it is now (value, grey, as a 名称：值 has it)
+// and an icon, if any. It lights up under the pointer, out to the card's
+// edges, its words staying on the edge all else keeps to.
+func menuItem(c *ui.Context, p *palette, key, label, value string, col ui.Color, icon string) ui.Element {
+	b := ui.ButtonBase(c.Key(key)).Height(40).Padding(0, 8).Margin(0, -8).Radius(10).Gap(12).AlignItems(ui.Center).FocusRing(false).Label(label)
 	if b.Hovered() {
 		b.Background(p.well)
 	}
 	b.Transition(ui.ElementTransition{Duration: 120 * time.Millisecond, Colors: true})
 	b.Children(func() {
-		ui.Column(c).Gap(2).Grow(1).Shrink(1).Children(func() {
-			ui.Text(c, label).FontSize(13).FontWeight(500).TextColor(col)
-		})
+		ui.Text(c, label).FontSize(13).FontWeight(500).TextColor(col).Grow(1).Shrink(1).SingleLine()
+		if value != "" {
+			ui.Text(c, value).FontSize(12).TextColor(p.ink3).SingleLine()
+		}
 		if icon != "" {
-			ui.Icon(c, uiGlyphs[icon]).Size(16, 16).TextColor(p.ink3)
+			// Its strokes on the edge, as the panel's × is.
+			ui.Icon(c, uiGlyphs[icon]).Size(16, 16).Margin(0, -glyphRoom, 0, 0).TextColor(p.ink3)
 		}
 	})
 	return b
@@ -268,8 +273,10 @@ func (a *app) deleteRow(c *ui.Context, p *palette, id model.DeviceID) {
 	if id == a.snap.Self {
 		label = "删除这台电脑"
 	}
-	ui.Row(c.Key("delete-device")).Margin(6, 0, 0, 0).Children(func() {
-		b := ui.ButtonBase(c.Key("delete-button")).Height(32).Padding(0, 10).Gap(6).Radius(8).FocusRing(false).AlignItems(ui.Center).Label(label)
+	ui.Row(c.Key("delete-device")).Margin(8, 0, 0, 0).Children(func() {
+		// Its mark on the edge the details start at, its light standing out of
+		// it, as a menu row's does.
+		b := ui.ButtonBase(c.Key("delete-button")).Height(32).Padding(0, 8).Margin(0, 0, 0, -8).Gap(8).Radius(8).FocusRing(false).AlignItems(ui.Center).Label(label)
 		if b.Hovered() {
 			b.Background(p.well2)
 		}

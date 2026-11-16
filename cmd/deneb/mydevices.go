@@ -56,30 +56,32 @@ func (a *app) myDevices() []*model.Device {
 func (a *app) myDevicesContent(c *ui.Context, p *palette) {
 	devs := a.myDevices()
 	// As a LAN's header (view.go): the title where a LAN's name is, in its
-	// size, so that going between them nothing jumps.
-	ui.Row(c.Key("devices-header")).Height(headerHeight).Shrink(0).Padding(22, 24, 0, 28).Gap(16).AlignItems(ui.Start).DragWindow().Children(func() {
-		ui.Column(c).Grow(1).Gap(4).Children(func() {
+	// size, so that going between them nothing jumps; 添加设备 on its middle
+	// line, as 邀请朋友 is there.
+	ui.Column(c.Key("devices-header")).Height(headerHeight).Shrink(0).Padding(headerTop, 24, 0, 28).Gap(4).DragWindow().Children(func() {
+		ui.Row(c).Height(titleLine).Gap(16).Children(func() {
 			ui.Text(c, "我的设备").FontSize(20).FontWeight(600).SingleLine()
-			online := 0
-			for _, d := range devs {
-				if d.Online {
-					online++
-				}
+			ui.Spacer(c)
+			if a.addPill(c, p).Clicked() {
+				a.openAddOne(c)
 			}
-			line := fmt.Sprintf("%d 台设备，%d 台在线", len(devs), online)
-			switch {
-			case len(devs) == 0:
-				line = "暂无设备"
-			case len(devs) == 1:
-				line = "1 台设备"
-			case online == len(devs):
-				line = fmt.Sprintf("%d 台设备，全部在线", len(devs))
-			}
-			ui.Text(c, line).FontSize(13).TextColor(p.ink2)
 		})
-		if a.addPill(c, p).Clicked() {
-			a.openAddOne(c)
+		online := 0
+		for _, d := range devs {
+			if d.Online {
+				online++
+			}
 		}
+		line := fmt.Sprintf("%d 台设备，%d 台在线", len(devs), online)
+		switch {
+		case len(devs) == 0:
+			line = "暂无设备"
+		case len(devs) == 1:
+			line = "1 台设备"
+		case online == len(devs):
+			line = fmt.Sprintf("%d 台设备，全部在线", len(devs))
+		}
+		ui.Row(c).Height(statusLine).Children(func() { ui.Text(c, line).FontSize(13).TextColor(p.ink2) })
 	})
 	// The line under the header shows once the list goes under it.
 	under := float32(0)
@@ -173,7 +175,7 @@ func (a *app) deviceCard(c *ui.Context, p *palette, d *model.Device) {
 	lans := a.lansOf(d)
 	// Opening 详情 grows the card, its words clipped to it, and the cards
 	// under it make room as it grows (DESIGN §5: Smooth).
-	card := ui.Column(c.Key("host-" + string(d.ID))).Padding(18).Gap(14).Radius(16).Background(p.well).Clip().
+	card := ui.Column(c.Key("host-" + string(d.ID))).Padding(16).Gap(16).Radius(16).Background(p.well).Clip().
 		Transition(ui.ElementTransition{Animation: &ui.Smooth, Position: true, Size: true, Enter: &ui.Motion{Y: 8, Scale: 0.98}})
 	if a.revealCard == d.ID {
 		a.revealMine(c, card.Bounds())
@@ -197,7 +199,7 @@ func (a *app) deviceCard(c *ui.Context, p *palette, d *model.Device) {
 			ui.Column(c).Grow(1).Shrink(1).Gap(4).Children(func() {
 				ui.Text(c, d.Name).FontSize(15).FontWeight(600)
 				status, on := a.deviceStatus(d, now)
-				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 					dot := p.ink3.Alpha(0.6)
 					if on {
 						dot = p.ok
@@ -227,7 +229,7 @@ func (a *app) deviceCard(c *ui.Context, p *palette, d *model.Device) {
 		a.lanChipsRow(c, p, d, lans)
 		a.servicesBlock(c, p, d, lans)
 		if a.deviceDetails == d.ID {
-			more := ui.Column(c.Key("details")).Gap(14)
+			more := ui.Column(c.Key("details")).Gap(16)
 			more.Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{}, Exit: &ui.Motion{}})
 			more.Children(func() {
 				rule(c, p)
@@ -796,8 +798,8 @@ func (a *app) addService(c *ui.Context, d *model.Device, in []*model.LAN, e *svc
 func (a *app) deviceDetailsView(c *ui.Context, p *palette, d *model.Device, now time.Time) {
 	sample, has := a.snap.DeviceMetrics[d.ID]
 	stale := !d.Online || !a.snap.Control && d.ID != a.snap.Self || has && now.Sub(sample.At) > 45*time.Second
-	ui.Column(c.Key("host-details")).Gap(14).Transition(ui.ElementTransition{Animation: &ui.Smooth, Enter: &ui.Motion{Y: 4}, Exit: &ui.Motion{Y: 4}}).Children(func() {
-		ui.Row(c).Gap(14).Children(func() {
+	ui.Column(c.Key("host-details")).Gap(16).Transition(ui.ElementTransition{Animation: &ui.Smooth, Enter: &ui.Motion{Y: 4}, Exit: &ui.Motion{Y: 4}}).Children(func() {
+		ui.Row(c).Gap(16).Children(func() {
 			cpu, cpuSub, memory, memorySub, disk, diskSub := "—", "暂无数据", "—", "暂无数据", "—", "暂无数据"
 			if has && sample.CPU != nil {
 				cpu, cpuSub = fmt.Sprintf("%.0f%%", *sample.CPU*100), "使用率"
@@ -816,7 +818,7 @@ func (a *app) deviceDetailsView(c *ui.Context, p *palette, d *model.Device, now 
 			rtt, path := a.deviceLatency(d)
 			deviceMetric(c, p, "延迟", rtt, path, false)
 		})
-		ui.Column(c).Gap(10).Children(func() {
+		ui.Column(c).Gap(12).Children(func() {
 			value := sample.OSVersion
 			if !has || value == "" {
 				value = d.OS
@@ -871,7 +873,7 @@ func (a *app) deviceDetailsView(c *ui.Context, p *palette, d *model.Device, now 
 }
 
 func deviceMetric(c *ui.Context, p *palette, label, value, sub string, stale bool) {
-	ui.Column(c).Grow(1).Basis(0).Gap(5).Children(func() {
+	ui.Column(c).Grow(1).Basis(0).Gap(4).Children(func() {
 		ui.Text(c, label).FontSize(12).TextColor(p.ink3)
 		ink := p.ink
 		if stale {

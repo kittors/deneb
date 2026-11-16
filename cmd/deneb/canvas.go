@@ -21,7 +21,7 @@ const (
 	cardWidth = 300
 	trayBand  = 104 // the band at the bottom where the tray floats and takes drops
 	slotTile  = 40  // a device's tile in the tray
-	slotGap   = 10  // the room before each of the tray's slots
+	slotGap   = 8   // the room before each of the tray's slots: as much as at its round end
 )
 
 // The springs. glide carries a device where the hand did not, into the
@@ -501,7 +501,7 @@ func (a *app) deviceView(c *ui.Context, p *palette, d *device, w, h float32) {
 		c.After(d.popped.Sub(c.Now()))
 	}
 	going := !d.gone.IsZero()
-	col := ui.Column(c.Key(d.key())).Absolute().Left(d.base.X - 70).Top(d.base.Y - tileSize/2).Width(140).AlignItems(ui.Center).Gap(10)
+	col := ui.Column(c.Key(d.key())).Absolute().Left(d.base.X - 70).Top(d.base.Y - tileSize/2).Width(140).AlignItems(ui.Center).Gap(8)
 	// No Snap and no throw: a device lands where the hand lets go, as a
 	// thing set down on a table; what happens next depends on that point.
 	bounds := a.dragBoundsFrom(d.base, d.removable(), a.shareTop(d), w, h)
@@ -704,7 +704,7 @@ func (a *app) deviceView(c *ui.Context, p *palette, d *device, w, h float32) {
 			}
 			a.tileBadges(c, p, d, col.Hovered())
 		})
-		name := ui.Column(c).AlignItems(ui.Center).Gap(1)
+		name := ui.Column(c).AlignItems(ui.Center)
 		if a.all() && d.id == a.self {
 			// Over its tile in the "全部" view, clear of the links that go
 			// down to the regions under it (scene 3).
@@ -722,7 +722,7 @@ func (a *app) deviceView(c *ui.Context, p *palette, d *device, w, h float32) {
 			// it never runs under the next device's. A second of its name
 			// shows a small grey 2 after it (DESIGN §6.8).
 			if d.twin > 1 {
-				ui.Row(c).AlignItems(ui.Baseline).Gap(3).MaxWidth(nameWidth).Children(func() {
+				ui.Row(c).AlignItems(ui.Baseline).Gap(4).MaxWidth(nameWidth).Children(func() {
 					ui.Text(c, d.name).FontSize(13).FontWeight(500).SingleLine().Shrink(1)
 					ui.Text(c, strconv.Itoa(d.twin)).FontSize(11).FontWeight(500).TextColor(p.ink3).FontFeatures("tnum")
 				})

@@ -140,8 +140,8 @@ func (a *app) onboardView(c *ui.Context, p *palette) {
 		a.setOnboarded()
 	}
 	ui.Column(c.Key("onboard")).Fill().Background(p.bg).AlignItems(ui.Center).DragWindow().Children(func() {
-		ui.Box(c).Height(150)
-		ui.Icon(c, starGlyph).Size(40, 40).TextColor(p.primary)
+		ui.Box(c).Height(148)
+		starMark(c, p, 40)
 		ui.Row(c).Gap(8).Margin(16, 0, 0, 0).Children(func() {
 			for i := 0; i < 3; i++ {
 				col := p.ink3.Alpha(0.35)
@@ -197,7 +197,7 @@ func (a *app) onboardSignIn(c *ui.Context, p *palette, now time.Time) {
 	// The email, then the code: one at a time, fading across in a place
 	// that keeps its height.
 	fade := ui.ElementTransition{Duration: 180 * time.Millisecond, Enter: &ui.Motion{}, Exit: &ui.Motion{}}
-	ui.Box(c.Key("sign-ways")).Width(380).Height(150).Margin(26, 0, 0, 0).Children(func() {
+	ui.Box(c.Key("sign-ways")).Width(380).Height(150).Margin(24, 0, 0, 0).Children(func() {
 		way := func(key string) ui.Element {
 			return ui.Column(c.Key(key)).Absolute().Left(0).Top(0).Right(0).AlignItems(ui.Center).Transition(fade)
 		}
@@ -210,7 +210,7 @@ func (a *app) onboardSignIn(c *ui.Context, p *palette, now time.Time) {
 					a.sendCode(c, now)
 				}
 				if line := a.signLine(); line != "" {
-					ui.Text(c.Key("sign-line-"+line), line).FontSize(12).TextColor(a.signLineColor(p)).Margin(10, 0, 0, 0).
+					ui.Text(c.Key("sign-line-"+line), line).FontSize(12).TextColor(a.signLineColor(p)).Margin(12, 0, 0, 0).
 						TextAlign(ui.Center).MaxWidth(360).Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{}})
 				}
 			})
@@ -239,10 +239,10 @@ func (a *app) onboardCode(c *ui.Context, p *palette, now time.Time) {
 		shake = float32(6 * math.Sin(t*math.Pi*5) * (1 - t))
 		c.AnimationFrame()
 	}
-	boxes := ui.ButtonBase(c.Key("code-boxes")).Margin(14, 0, 0, 0).FocusRing(false).Cursor(ui.CursorText)
+	boxes := ui.ButtonBase(c.Key("code-boxes")).Margin(12, 0, 0, 0).FocusRing(false).Cursor(ui.CursorText)
 	boxes.Translate(shake, 0)
 	boxes.Children(func() {
-		ui.Row(c).Gap(10).Children(func() {
+		ui.Row(c).Gap(12).Children(func() {
 			for i := 0; i < 6; i++ {
 				ring := p.line
 				if i == len(digits) && o.okAt.IsZero() {
@@ -305,7 +305,7 @@ func (a *app) onboardCode(c *ui.Context, p *palette, now time.Time) {
 			line = "没收到？重发"
 		}
 	}
-	ui.Row(c.Key("code-line-"+line)).Gap(6).Height(20).Margin(14, 0, 0, 0).AlignItems(ui.Center).Children(func() {
+	ui.Row(c.Key("code-line-"+line)).Gap(8).Height(20).Margin(12, 0, 0, 0).AlignItems(ui.Center).Children(func() {
 		if !o.okAt.IsZero() {
 			checkMark(c, p.ok, 14)
 		}
@@ -321,13 +321,13 @@ func (a *app) onboardAdapter(c *ui.Context, p *palette, now time.Time) {
 	if d := a.snap.Device(a.snap.Self); d != nil {
 		kind = glyphFor(d.Kind)
 	}
-	deviceTile(c, p, kind, col, 56, false).Margin(0, 0, 18, 0)
+	deviceTile(c, p, kind, col, 56, false).Margin(0, 0, 16, 0)
 	onboardTitle(c, p, "给这台电脑装一块网卡", "装上以后，这台电脑上的任何程序（浏览器、远程桌面、游戏）都能直接连到局域网里的设备，就像在同一个 Wi-Fi 里。")
 	ask := "系统会请你输入开机密码或使用触控 ID，允许 Deneb 安装系统网卡。"
 	if a.platform == "windows" {
 		ask = "Windows 会弹一个窗口问你，点「是」就行。"
 	}
-	askBox(c, p, ask).Margin(18, 0, 0, 0).Width(360)
+	askBox(c, p, ask).Margin(16, 0, 0, 0).Width(360)
 	if a.adapter == nil && !o.asking.IsZero() && o.inAt.IsZero() && now.Sub(o.asking) >= adapterAsk {
 		// The demo's system lets it in.
 		o.inAt = now
@@ -339,7 +339,7 @@ func (a *app) onboardAdapter(c *ui.Context, p *palette, now time.Time) {
 	// The ways on, one at a time, fading across in a place that keeps its
 	// height.
 	fade := ui.ElementTransition{Duration: 180 * time.Millisecond, Enter: &ui.Motion{}, Exit: &ui.Motion{}}
-	ui.Box(c.Key("adapter-ways")).Width(360).Height(96).Margin(20, 0, 0, 0).Children(func() {
+	ui.Box(c.Key("adapter-ways")).Width(360).Height(96).Margin(24, 0, 0, 0).Children(func() {
 		way := func(key string) ui.Element {
 			return ui.Column(c.Key(key)).Absolute().Left(0).Top(0).Right(0).AlignItems(ui.Center).Transition(fade)
 		}
@@ -353,7 +353,7 @@ func (a *app) onboardAdapter(c *ui.Context, p *palette, now time.Time) {
 			})
 		case !o.asking.IsZero():
 			way("adapter-asking").Children(func() {
-				ui.Row(c).Gap(10).Height(44).Padding(0, 22).Radius(999).Background(p.well).AlignItems(ui.Center).Children(func() {
+				ui.Row(c).Gap(8).Height(44).Padding(0, 24).Radius(999).Background(p.well).AlignItems(ui.Center).Children(func() {
 					spinner(c, p, now)
 					ui.Text(c, "等你在系统里点允许…").FontSize(14).FontWeight(500).TextColor(p.ink2)
 				})
@@ -368,7 +368,7 @@ func (a *app) onboardAdapter(c *ui.Context, p *palette, now time.Time) {
 			way("adapter-idle").Children(func() {
 				if o.declined {
 					ui.Text(c, "没装上也能用，在 Deneb 里点「打开」照样能连").FontSize(12).TextColor(p.ink2).
-						Margin(0, 0, 10, 0).TextAlign(ui.Center).MaxWidth(360)
+						Margin(0, 0, 12, 0).TextAlign(ui.Center).MaxWidth(360)
 				}
 				if onboardButton(c, p, "install", "装上").Clicked() {
 					o.asking, o.declined = now, false
@@ -392,9 +392,10 @@ func (a *app) onboardAdapter(c *ui.Context, p *palette, now time.Time) {
 // askBox says what the system will ask the person, beside a lock, in a grey
 // box: the adapter's step, and its card in the window (DESIGN §7.3).
 func askBox(c *ui.Context, p *palette, text string) ui.Element {
-	box := ui.Row(c).Gap(8).Padding(10, 14).Radius(12).Background(p.well).AlignItems(ui.Start)
+	box := ui.Row(c).Gap(8).Padding(12).Radius(12).Background(p.well).AlignItems(ui.Start)
 	box.Children(func() {
-		ui.Icon(c, uiGlyphs["lock"]).Size(16, 16).TextColor(p.ink2).Margin(1, 0, 0, 0)
+		// On the middle of the words' first line: 12 high at 1.5 is 18.
+		ui.Box(c).Size(16, 18).Center().Children(func() { ui.Icon(c, uiGlyphs["lock"]).Size(16, 16).TextColor(p.ink2) })
 		ui.Text(c, text).FontSize(12).TextColor(p.ink2).LineHeight(1.5).Grow(1).Shrink(1)
 	})
 	return box
@@ -415,7 +416,7 @@ func (a *app) onboardLAN(c *ui.Context, p *palette, now time.Time) {
 	// The two cards, the link's field, the friend's invite: one at a time,
 	// fading across in a place that keeps its height.
 	fade := ui.ElementTransition{Duration: 180 * time.Millisecond, Enter: &ui.Motion{}, Exit: &ui.Motion{}}
-	ui.Box(c.Key("lan-ways")).Width(360).Height(160).Margin(26, 0, 0, 0).Children(func() {
+	ui.Box(c.Key("lan-ways")).Width(360).Height(160).Margin(24, 0, 0, 0).Children(func() {
 		way := func(key string) ui.Element {
 			return ui.Column(c.Key(key)).Absolute().Left(0).Top(0).Right(0).AlignItems(ui.Center).Transition(fade)
 		}
@@ -423,7 +424,7 @@ func (a *app) onboardLAN(c *ui.Context, p *palette, now time.Time) {
 		case o.invite != nil:
 			way("way-invite").Children(func() { a.onboardInvite(c, p) })
 		case o.joining:
-			way("way-link").Gap(10).Children(func() {
+			way("way-link").Gap(12).Children(func() {
 				field := ui.TextInputBase(c.Key("link"), &o.link).Width(360).Height(46).Padding(0, 16).Radius(12).Background(p.well).
 					FontSize(13).Placeholder("把邀请链接粘贴到这里").PlaceholderColor(p.ink3).AutoFocus()
 				join := onboardButton(c, p, "join-link", "加入")
@@ -443,7 +444,7 @@ func (a *app) onboardLAN(c *ui.Context, p *palette, now time.Time) {
 			way("way-choices").Children(func() {
 				ui.Row(c).Gap(12).Children(func() {
 					a.choiceCard(c, p, "new", "新建局域网", "先只有这台电脑，之后把别的设备拖进来、邀请朋友", func() {
-						ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+						ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 							deviceTile(c, p, "laptop", ownerColors[0], 34, false)
 							ui.Box(c).Size(22, 22).Radius(999).Background(p.primary.Alpha(0.12)).Center().Children(func() {
 								ui.Icon(c, uiGlyphs["plus"]).Size(12, 12).TextColor(p.primary)
@@ -459,7 +460,7 @@ func (a *app) onboardLAN(c *ui.Context, p *palette, now time.Time) {
 			})
 		}
 	})
-	later := ui.ButtonBase(c.Key("later")).Height(32).Padding(0, 12).Radius(999).Margin(14, 0, 0, 0).FocusRing(false)
+	later := ui.ButtonBase(c.Key("later")).Height(32).Padding(0, 12).Radius(999).Margin(16, 0, 0, 0).FocusRing(false)
 	if later.Hovered() {
 		later.Background(p.well)
 	}
@@ -472,7 +473,7 @@ func (a *app) onboardLAN(c *ui.Context, p *palette, now time.Time) {
 // choiceCard is one of the last step's two cards: its picture, its title
 // and a line, the whole card a button.
 func (a *app) choiceCard(c *ui.Context, p *palette, key, title, sub string, pic, do func()) {
-	b := ui.ButtonBase(c.Key("choice-"+key)).Width(174).Height(160).Padding(18, 16).Radius(16).Background(p.bg).Border(1, p.line).
+	b := ui.ButtonBase(c.Key("choice-"+key)).Width(174).Height(160).Padding(16).Radius(16).Background(p.bg).Border(1, p.line).
 		FocusRing(false).AlignItems(ui.Start).Label(title)
 	if b.Hovered() {
 		b.Border(1, p.primary.Alpha(0.5)).Shadow(0, 8, 20, 0, p.shadow)
@@ -480,10 +481,14 @@ func (a *app) choiceCard(c *ui.Context, p *palette, key, title, sub string, pic,
 	b.Transition(ui.ElementTransition{Duration: 140 * time.Millisecond, Colors: true})
 	b.AnimatePose(pressPose(b, 0.97), ui.Snappy)
 	b.Children(func() {
-		ui.Column(c).Gap(10).Children(func() {
+		// The picture, then the title with its line: closer to each other
+		// than to the picture (DESIGN §3.9).
+		ui.Column(c).Gap(12).Children(func() {
 			pic()
-			ui.Text(c, title).FontSize(15).FontWeight(600)
-			ui.Text(c, sub).FontSize(12).TextColor(p.ink2).LineHeight(1.45)
+			ui.Column(c).Gap(4).Children(func() {
+				ui.Text(c, title).FontSize(15).FontWeight(600)
+				ui.Text(c, sub).FontSize(12).TextColor(p.ink2).LineHeight(1.45)
+			})
 		})
 	})
 	if b.Clicked() {
@@ -503,14 +508,14 @@ func (a *app) onboardInvite(c *ui.Context, p *palette) {
 			who := &person{id: string(inv.Inviter.ID), name: inv.Inviter.Name, ch: inv.Inviter.Initial,
 				color: ownerColors[inv.Inviter.Color%model.NumColors]}
 			ball(c, who, 40, false)
-			ui.Column(c).Gap(2).Grow(1).Children(func() {
+			ui.Column(c).Gap(4).Grow(1).Children(func() {
 				ui.Text(c, strings.TrimLeft(spaced(short(inv.Inviter.Name)), " ")+"邀请你加入「"+short(inv.LANName)+"」").FontSize(15).FontWeight(600)
 				ui.Text(c, "这台电脑会跟着加进去").FontSize(12).TextColor(p.ink2)
 			})
 		})
-		ui.Row(c).Margin(14, 0, 0, 0).Children(func() {
+		ui.Row(c).Margin(16, 0, 0, 0).Children(func() {
 			ui.Spacer(c)
-			if primaryButton(c, p, "onboard-join", "加入", 34, 16, 13).Clicked() {
+			if cardPrimary(c, p, "onboard-join", "加入").Clicked() {
 				a.join(c, &inviteCard{inv: inv})
 				o.leaving = c.Now()
 			}
@@ -601,8 +606,11 @@ func (a *app) diagnosticsRow(c *ui.Context, p *palette) {
 		a.diagAt = time.Time{}
 		a.diagSaved(c, filepath.Join(downloadsDir(), diagName(now)), nil)
 	}
-	ui.Column(c.Key("diag")).Margin(10, 0, 0, 0).Gap(2).Children(func() {
-		b := ui.ButtonBase(c.Key("diag-button")).Height(28).Padding(0, 4).Gap(6).Radius(8).FocusRing(false).AlignSelf(ui.Start).AlignItems(ui.Center)
+	// Under the card's details, 4 apart as they are: its own 4 and the 8 its
+	// button keeps over its words make 16 to its words, a group's room.
+	ui.Column(c.Key("diag")).Margin(4, 0, 0, 0).Gap(4).Children(func() {
+		// Its light reaches past the words, which stay on the card's edge.
+		b := ui.ButtonBase(c.Key("diag-button")).Height(28).Padding(0, 4).Margin(0, 0, 0, -4).Gap(4).Radius(8).FocusRing(false).AlignSelf(ui.Start).AlignItems(ui.Center)
 		if b.Hovered() && !busy {
 			b.Background(p.well)
 		}
@@ -631,7 +639,7 @@ func (a *app) diagnosticsRow(c *ui.Context, p *palette) {
 				}()
 			}
 		}
-		ui.Text(c, "里面有版本、网络状况和最近的连接记录，没有密钥，也没有你传的东西").FontSize(11).TextColor(p.ink3).Padding(0, 4, 0, 4).LineHeight(1.45)
+		ui.Text(c, "里面有版本、网络状况和最近的连接记录，没有密钥，也没有你传的东西").FontSize(11).TextColor(p.ink3).LineHeight(1.45)
 	})
 }
 

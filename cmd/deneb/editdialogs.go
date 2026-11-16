@@ -41,14 +41,18 @@ func modalPanel(c *ui.Context, p *palette, key, title string, width float32, ope
 			if !open {
 				return
 			}
-			box := ui.Column(c.Key("dialog")).Width(width).MaxWidth(viewport-40).Padding(22).Gap(16).Radius(20).Background(p.bg).Shadow(0, 12, 40, 0, p.shadow).TransformOrigin(.5, .5)
+			// The same room all round (DESIGN §3.9): 24 from every edge.
+			box := ui.Column(c.Key("dialog")).Width(width).MaxWidth(viewport-40).Padding(24).Gap(16).Radius(20).Background(p.bg).Shadow(0, 12, 40, 0, p.shadow).TransformOrigin(.5, .5)
 			// Its place too: a panel that grows (加一台's help opening) stays
 			// centered as it grows, not jumping up at once.
 			box.Transition(ui.ElementTransition{Animation: &ui.Smooth, Position: true, Size: true, Enter: &ui.Motion{Scale: .96, Y: 8, Opacity: 1}, Exit: &ui.Motion{Scale: .96, Y: 8}})
 			box.Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Children(func() {
 					ui.Text(c, title).FontSize(17).FontWeight(600).Grow(1)
-					if iconButton(c, p, "close", "关闭"+title).Clicked() {
+					// The ×'s strokes end where all else in the panel does, its
+					// button standing out into the room beside it, as a menu
+					// row's light does (menuItem).
+					if iconButton(c, p, "close", "关闭"+title).Margin(0, -(iconInset + glyphRoom), 0, 0).Clicked() {
 						close()
 					}
 				})
@@ -57,8 +61,14 @@ func modalPanel(c *ui.Context, p *palette, key, title string, width float32, ope
 		})
 	})
 }
+
+// dialogActions is a panel's buttons, at its foot, at its right end.
+func dialogActions(c *ui.Context, buttons func()) {
+	ui.Row(c).Gap(12).Justify(ui.End).Children(buttons)
+}
+
 func dialogButton(c *ui.Context, p *palette, key, label string, primary, destructive, disabled bool) ui.Element {
-	b := ui.ButtonBase(c.Key(key)).Height(38).MinWidth(88).Padding(0, 18).Radius(999).Center().Label(label).Disabled(disabled)
+	b := ui.ButtonBase(c.Key(key)).Height(40).MinWidth(88).Padding(0, 16).Radius(999).Center().Label(label).Disabled(disabled)
 	bg, ink := p.well, p.ink
 	if primary {
 		bg, ink = p.primary, white
@@ -112,7 +122,7 @@ func (a *app) renameLayer(c *ui.Context, p *palette) {
 	}
 	modalPanel(c, p, "rename-modal", "重命名", 420, r != nil, close, func() {
 		ui.Text(c, r.original).FontSize(12).TextColor(p.ink3).SingleLine()
-		field := ui.TextInputBase(c.Key("rename-input-"+r.id), &r.name).Height(44).FillWidth().Padding(0, 14).Radius(12).Background(p.well).Border(1, p.line).FontSize(14).Label("名称").Placeholder("输入名称").AutoFocus().Disabled(r.saving)
+		field := ui.TextInputBase(c.Key("rename-input-"+r.id), &r.name).Height(44).FillWidth().Padding(0, 16).Radius(12).Background(p.well).Border(1, p.line).FontSize(14).Label("名称").Placeholder("输入名称").AutoFocus().Disabled(r.saving)
 		if !r.selected {
 			field.SetTextSelection(0, utf8.RuneCountInString(r.name))
 			r.selected = true
@@ -153,7 +163,7 @@ func (a *app) renameLayer(c *ui.Context, p *palette) {
 				a.sync(c)
 			})
 		}
-		ui.Row(c).Gap(10).Justify(ui.End).Children(func() {
+		dialogActions(c, func() {
 			if dialogButton(c, p, "cancel", "取消", false, false, r.saving).Clicked() {
 				close()
 			}
@@ -197,7 +207,7 @@ func (a *app) confirmLayer(c *ui.Context, p *palette) {
 		if q.detail != "" {
 			ui.Text(c, q.detail).FontSize(13).TextColor(p.ink2).LineHeight(1.5)
 		}
-		ui.Row(c).Gap(10).Justify(ui.End).Children(func() {
+		dialogActions(c, func() {
 			if dialogButton(c, p, "cancel", "取消", false, false, false).AutoFocus().Clicked() {
 				close()
 			}

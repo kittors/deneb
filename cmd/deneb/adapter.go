@@ -145,7 +145,7 @@ func (a *app) adapterCard(c *ui.Context, p *palette) {
 		case !j.asking.IsZero():
 			way("adapter-asking").Children(func() {
 				ui.Spacer(c)
-				ui.Row(c).Gap(8).Height(34).Padding(0, 14).Radius(999).Background(p.well).AlignItems(ui.Center).Children(func() {
+				ui.Row(c).Gap(8).Height(34).Padding(0, 16).Radius(999).Background(p.well).AlignItems(ui.Center).Children(func() {
 					spinner(c, p, c.Now())
 					ui.Text(c, "等你在系统里点允许…").FontSize(13).FontWeight(500).TextColor(p.ink2)
 				})
@@ -159,7 +159,7 @@ func (a *app) adapterCard(c *ui.Context, p *palette) {
 					}
 					a.noticesDone[adapterNotice.Code], a.selected = true, ""
 				}
-				if primaryButton(c, p, "adapter-install", "装网卡", 34, 14, 13).Clicked() {
+				if cardPrimary(c, p, "adapter-install", "装网卡").Clicked() {
 					a.installFromNotice(c)
 				}
 			})

@@ -140,7 +140,7 @@ func (a *app) panelBody(c *ui.Context, p *palette) ui.Element {
 	now := c.Now()
 	a.expireDone(c, now)
 	s := a.snap
-	body := ui.Column(c.Key("panel")).Width(panelWidth).MaxHeight(panelMaxHeight).Radius(20).Background(p.bg).Clip().Padding(16, 12, 12, 12)
+	body := ui.Column(c.Key("panel")).Width(panelWidth).MaxHeight(panelMaxHeight).Radius(20).Background(p.bg).Clip().Padding(12)
 	if a.platform == "windows" {
 		// Windows rounds the flyout as it rounds its menus, and outlines it
 		// (DESIGN §7.2): the panel fills it, square.
@@ -161,14 +161,14 @@ func (a *app) panelBody(c *ui.Context, p *palette) ui.Element {
 				a.panelChores(c, p, now)
 			})
 			a.fold(c, "lans-section", s.Engine && len(s.LANs) > 0, func() {
-				ui.Text(c, "局域网").FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(14, 8, 6, 8)
+				panelLabel(c, p, "局域网")
 				for _, l := range s.LANs {
 					a.panelLAN(c, p, l)
 				}
 			})
 			a.fold(c, "shared-section", s.Engine && s.Can(model.FeatureShare) && len(s.Shared) > 0, func() {
 				// The devices given to me, a row each (DESIGN §6.11).
-				ui.Text(c, "共享给我").FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(14, 8, 6, 8)
+				panelLabel(c, p, "共享给我")
 				for _, sh := range s.Shared {
 					a.panelShared(c, p, sh)
 				}
@@ -189,8 +189,10 @@ type panelNote struct {
 
 // panelNoteRow says the panel's note, under this computer.
 func (a *app) panelNoteRow(c *ui.Context, p *palette) {
-	ui.Box(c).Height(10)
-	ui.Row(c).Radius(14).Background(p.well).Padding(10, 12).Children(func() {
+	ui.Box(c).Height(8)
+	// Its words on the edge the rows' are, 8 in: the well round them as
+	// the chores' is.
+	ui.Row(c).Radius(14).Background(p.well).Padding(8).Children(func() {
 		ui.Text(c, a.panelNote.text).FontSize(12).TextColor(p.ink2).Grow(1).Shrink(1)
 	})
 }
@@ -222,7 +224,8 @@ func (a *app) fold(c *ui.Context, key string, open bool, build func()) {
 // panelHead is this computer, its name, and how things are, in a few words.
 func (a *app) panelHead(c *ui.Context, p *palette) {
 	s := a.snap
-	ui.Row(c).Gap(12).Padding(0, 6, 4, 6).AlignItems(ui.Center).Children(func() {
+	// As far from the panel's top as its rows' things are from its sides.
+	ui.Row(c).Gap(12).Padding(8, 8, 4, 8).AlignItems(ui.Center).Children(func() {
 		kind, name := "laptop", "这台电脑"
 		if d := s.Device(s.Self); d != nil {
 			kind, name = glyphFor(d.Kind), d.Name
@@ -232,9 +235,9 @@ func (a *app) panelHead(c *ui.Context, p *palette) {
 			col = ownerColors[me.Color%model.NumColors]
 		}
 		a.profileTile(c, p, s.Self, kind, col, 36, false, 0)
-		ui.Column(c).Gap(2).Grow(1).Children(func() {
+		ui.Column(c).Gap(4).Grow(1).Children(func() {
 			ui.Text(c, name).FontSize(14).FontWeight(600).SingleLine().MaxWidth(220)
-			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 				dot, line := a.panelSummary(p)
 				ui.Box(c).Size(7, 7).Radius(999).Background(dot).Shadow(0, 0, 0, 3, dot.Alpha(0.18))
 				ui.Text(c.Key("summary-"+line), line).FontSize(12).TextColor(p.ink2).SingleLine().
@@ -315,11 +318,13 @@ func (a *app) panelChores(c *ui.Context, p *palette, now time.Time) {
 		done = append(done, d)
 	}
 	slices.SortFunc(done, func(x, y *doneRow) int { return x.until.Compare(y.until) })
-	ui.Text(c, "要你处理").FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(14, 8, 6, 8)
-	list := ui.Column(c.Key("chores")).Radius(14).Background(p.well).Padding(0, 12)
+	panelLabel(c, p, "要你处理")
+	// The well reaches to the panel's sides, as a chosen row's light does;
+	// its words keep to the rows' edge, 8 in.
+	list := ui.Column(c.Key("chores")).Radius(14).Background(p.well).Padding(0, 8)
 	list.Children(func() {
 		row := func(key string) ui.Element {
-			r := ui.Row(c.Key(key)).Height(44).Gap(10).AlignItems(ui.Center)
+			r := ui.Row(c.Key(key)).Height(44).Gap(12).AlignItems(ui.Center)
 			r.Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: &ui.Motion{Collapse: true}, Exit: &ui.Motion{Collapse: true}})
 			return r
 		}
@@ -327,7 +332,8 @@ func (a *app) panelChores(c *ui.Context, p *palette, now time.Time) {
 			row(d.key).Children(func() {
 				ui.Text(c, d.text).FontSize(13).TextColor(p.ink2).SingleLine().Shrink(1).Grow(1)
 				if d.p != nil {
-					undo := ui.ButtonBase(c.Key("undo")).Height(28).Padding(0, 8).Radius(999).FocusRing(false)
+					// Its words end on the rows' edge, as 同意's pill does.
+					undo := ui.ButtonBase(c.Key("undo")).Height(28).Padding(0, 8).Margin(0, -8, 0, 0).Radius(999).FocusRing(false)
 					undo.Children(func() { ui.Text(c, "撤销").FontSize(12).FontWeight(500).TextColor(p.primary) })
 					if undo.Clicked() {
 						a.undoDone(d)
@@ -346,11 +352,7 @@ func (a *app) panelChores(c *ui.Context, p *palette, now time.Time) {
 			shown++
 			row(ch.key).Children(func() {
 				ui.Text(c, ch.text).FontSize(13).FontWeight(500).SingleLine().Shrink(1).Grow(1)
-				b := ui.ButtonBase(c.Key("do")).Height(28).Padding(0, 12).Radius(999).Background(p.bg).FocusRing(false).
-					Shadow(0, 1, 2, 0, ui.RGBA(9, 9, 11, 0.06))
-				b.AnimatePose(pressPose(b, 0.94), ui.Snappy)
-				b.Children(func() { ui.Text(c, ch.button).FontSize(12).FontWeight(500).SingleLine() })
-				if b.Clicked() {
+				if wellButton(c, p, "do", ch.button).Clicked() {
 					a.doChore(c, ch, now)
 				}
 			})
@@ -358,7 +360,7 @@ func (a *app) panelChores(c *ui.Context, p *palette, now time.Time) {
 		if more := len(chores) - shown - len(done); more > 0 {
 			row("more").Children(func() {
 				ui.Text(c, fmt.Sprintf("还有 %d 件", more)).FontSize(13).TextColor(p.ink2).Grow(1)
-				b := ui.ButtonBase(c.Key("open")).Height(28).Padding(0, 8).Radius(999).FocusRing(false)
+				b := ui.ButtonBase(c.Key("open")).Height(28).Padding(0, 8).Margin(0, -8, 0, 0).Radius(999).FocusRing(false)
 				b.Children(func() { ui.Text(c, "打开 Deneb 看").FontSize(12).FontWeight(500).TextColor(p.primary) })
 				if b.Clicked() {
 					a.openMain(c)
@@ -491,7 +493,7 @@ func (a *app) flushPanel(c *ui.Context) {
 // how it is, and its switch; a click elsewhere on it opens the window on
 // it.
 func (a *app) panelLAN(c *ui.Context, p *palette, l *model.LAN) {
-	row := ui.ButtonBase(c.Key("panel-lan-"+string(l.ID))).Height(48).Padding(0, 8).Gap(10).Radius(12).FocusRing(false)
+	row := ui.ButtonBase(c.Key("panel-lan-"+string(l.ID))).Height(48).Padding(0, 8).Gap(12).Radius(12).FocusRing(false)
 	if row.Hovered() {
 		row.Background(p.well)
 	}
@@ -505,7 +507,7 @@ func (a *app) panelLAN(c *ui.Context, p *palette, l *model.LAN) {
 				}
 			}
 		})
-		ui.Column(c).Gap(1).Grow(1).Shrink(1).Children(func() {
+		ui.Column(c).Gap(4).Grow(1).Shrink(1).Children(func() {
 			ui.Text(c, l.Name).FontSize(13).FontWeight(500).SingleLine()
 			line := a.lanLine(l)
 			ui.Text(c.Key("line-"+line), line).FontSize(12).TextColor(p.ink3).SingleLine().
@@ -561,7 +563,7 @@ func lanLineOf(s *model.Snapshot, l *model.LAN) string {
 
 // panelOpen is the panel's way into the window.
 func (a *app) panelOpen(c *ui.Context, p *palette) {
-	ui.Box(c).Height(10)
+	ui.Box(c).Height(12)
 	b := ghostButton(c, p, "open-deneb", "打开 Deneb").AlignSelf(ui.Stretch).Justify(ui.Center)
 	if b.Clicked() {
 		a.openMain(c)
@@ -630,7 +632,7 @@ func (a *app) panelShared(c *ui.Context, p *palette, sh model.SharedDevice) {
 	if m == nil {
 		return
 	}
-	row := ui.ButtonBase(c.Key("panel-shared-"+string(sh.Device))).Height(48).Padding(0, 8).Gap(10).Radius(12).FocusRing(false)
+	row := ui.ButtonBase(c.Key("panel-shared-"+string(sh.Device))).Height(48).Padding(0, 8).Gap(12).Radius(12).FocusRing(false)
 	if row.Hovered() {
 		row.Background(p.well)
 	}
@@ -646,7 +648,7 @@ func (a *app) panelShared(c *ui.Context, p *palette, sh model.SharedDevice) {
 	}
 	row.Children(func() {
 		a.profileTile(c, p, m.ID, glyphFor(m.Kind), col, 24, false, 0)
-		ui.Column(c).Gap(1).Grow(1).Shrink(1).Children(func() {
+		ui.Column(c).Gap(4).Grow(1).Shrink(1).Children(func() {
 			ui.Text(c, m.Name).FontSize(13).FontWeight(500).SingleLine()
 			line := from + " · " + a.pathWords(sh.Device)
 			ui.Text(c.Key("line-"+line), line).FontSize(12).TextColor(p.ink3).SingleLine().
@@ -685,4 +687,10 @@ func (a *app) pathWords(dev model.DeviceID) string {
 		return "主人不让你用"
 	}
 	return "直接连上"
+}
+
+// panelLabel names a part of the menu bar's panel: on the rows' edge, 12
+// under the part before it, 4 over its own rows (DESIGN §3.9).
+func panelLabel(c *ui.Context, p *palette, s string) {
+	ui.Text(c, s).FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(12, 8, 4, 8)
 }

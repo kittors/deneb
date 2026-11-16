@@ -13,6 +13,19 @@ import (
 const sidebarWidth = 232
 const headerHeight = 76
 
+// A page's header has two lines, 20 from the top, 4 apart, 12 over its
+// bottom (a LAN's, 全部's, My Devices'): its title's, as high as the title,
+// and the line under it.
+// What the header has on its right sits on their middle lines: the notice,
+// the balls and 邀请朋友 on the title's, standing out of it above and below;
+// the seats' words on the line's (the user, 2026-11-16: things beside each
+// other in a row sit on one middle line).
+const (
+	headerTop  = 20
+	titleLine  = 24
+	statusLine = 16
+)
+
 // macTitleBar is the height of the title bar the traffic lights take in
 // the Mac's window (c.TitleBar there): 32 on macOS 26, 28 before it.
 const macTitleBar = 32
@@ -144,10 +157,12 @@ func (a *app) sidebar(c *ui.Context, p *palette, bar ui.TitleBar) {
 	if bar.Right > 0 && bar.Left == 0 {
 		h = macTitleBar
 	}
-	top := max(h, 16) + 6
-	ui.Column(c).Width(sidebarWidth).Background(p.well).Padding(top, 12, 12, 12).Gap(2).DragWindow().Children(func() {
-		ui.Row(c).Gap(8).Padding(6, 8, 18, 8).Children(func() {
-			ui.Icon(c, starGlyph).Size(18, 18).TextColor(p.primary)
+	top := max(h, 16) + 8
+	// Every row's mark, the groups' names and Deneb's star start at one edge,
+	// 8 inside the rows' light (DESIGN §3.9).
+	ui.Column(c).Width(sidebarWidth).Background(p.well).Padding(top, 12, 12, 12).Gap(4).DragWindow().Children(func() {
+		ui.Row(c).Gap(8).Padding(4, 8, 16, 8).Children(func() {
+			starMark(c, p, 18)
 			ui.Text(c, "Deneb").FontSize(15).FontWeight(600)
 		})
 		group(c, p, "局域网")
@@ -237,15 +252,19 @@ func (a *app) sidebar(c *ui.Context, p *palette, bar ui.TitleBar) {
 		// Me: the account card (M7, DESIGN §6.15).
 		ui.Row(c.Key("sidebar-footer")).Height(44).Gap(8).AlignItems(ui.Center).Children(func() {
 			a.accountRowView(c, p)
-			ui.Spacer(c)
-			a.settingsEntry(c, p)
-			a.updateEntry(c, p)
+			// The settings and the update at the end, all the room before
+			// them: no gaps round a spacer, which the update's wide pill
+			// needs (TestSidebarFooterStaysInOneRow).
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Margin(0, 0, 0, ui.Auto).Children(func() {
+				a.settingsEntry(c, p)
+				a.updateEntry(c, p)
+			})
 		})
 	})
 }
 
 func group(c *ui.Context, p *palette, s string) {
-	ui.Text(c, s).FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(0, 8, 6, 8)
+	ui.Text(c, s).FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(0, 8, 4, 8)
 }
 
 // navRow is a row of the sidebar; the chosen one is a white pill. A row
@@ -283,7 +302,7 @@ type rowOpts struct {
 // navRowWith is a row of the sidebar as o asks.
 func navRowWith(c *ui.Context, p *palette, key, label string, on bool, lead func(), o rowOpts) bool {
 	count, flash, dot := o.count, o.flash, o.dot
-	row := ui.ButtonBase(c.Key(key)).Height(36).Padding(0, 10).Gap(10).Radius(10).FocusRing(false)
+	row := ui.ButtonBase(c.Key(key)).Height(36).Padding(0, 8).Gap(12).Radius(10).FocusRing(false)
 	if o.at != nil {
 		*o.at = row.Bounds()
 	}
@@ -329,14 +348,26 @@ func navRowWith(c *ui.Context, p *palette, key, label string, on bool, lead func
 }
 
 func iconButton(c *ui.Context, p *palette, icon, label string) ui.Element {
-	b := ui.ButtonBase(c.Key(label)).Size(30, 30).Radius(999).Center().Label(label).FocusRing(false)
+	b := ui.ButtonBase(c.Key(label)).Size(iconButtonSize, iconButtonSize).Radius(999).Center().Label(label).FocusRing(false)
 	if b.Hovered() {
 		b.Background(p.well2)
 	}
 	b.AnimatePose(pressPose(b, 0.92), ui.Snappy)
-	b.Children(func() { ui.Icon(c, uiGlyphs[icon]).Size(18, 18).TextColor(p.ink2) })
+	b.Children(func() { ui.Icon(c, uiGlyphs[icon]).Size(16, 16).TextColor(p.ink2) })
 	return b
 }
+
+// An icon button is 32 round, its mark 16 in the middle: iconInset from its
+// edges to the mark's box. A 16 mark's strokes keep glyphRoom of it clear on
+// each side (close, external: from 6.2 of their 24 units, the cross from 7
+// to 17, the arrow from 7 to 17.5, with half their strokes). A mark at a
+// row's end stands out by both, its strokes on the edge all else ends at:
+// the ×, the ↗ and a line's end on one edge (the user, 2026-11-16).
+const (
+	iconButtonSize = 32
+	iconInset      = (iconButtonSize - 16) / 2
+	glyphRoom      = 4
+)
 
 // pressPose shrinks what the pointer presses, so a press answers at once.
 func pressPose(e ui.Element, scale float32) ui.Pose {
@@ -354,10 +385,10 @@ func (a *app) header(c *ui.Context, p *palette) {
 		return
 	}
 	name := l.Name
-	ui.Row(c).Height(headerHeight).Padding(22, 24, 0, 28).AlignItems(ui.Start).Gap(16).DragWindow().Children(func() {
-		ui.Column(c).Gap(4).Children(func() {
+	ui.Column(c).Height(headerHeight).Padding(headerTop, 24, 0, 28).Gap(4).DragWindow().Children(func() {
+		ui.Row(c).Height(titleLine).Gap(16).Children(func() {
 			// A click on the LAN's name shows its card (DESIGN §6.7).
-			title := ui.ButtonBase(c.Key("lan-title")).FocusRing(false).Cursor(ui.CursorPointer).AlignSelf(ui.Start)
+			title := ui.ButtonBase(c.Key("lan-title")).FocusRing(false).Cursor(ui.CursorPointer)
 			title.Children(func() {
 				ui.Text(c, name).FontSize(20).FontWeight(600).SingleLine().MaxWidth(lanNameWidth)
 			})
@@ -368,60 +399,65 @@ func (a *app) header(c *ui.Context, p *palette) {
 					a.selected, a.more, a.picking, a.renaming = lanCard, false, false, nil
 				}
 			}
-			a.summaryLine(c, p)
+			ui.Spacer(c)
+			// The engine's notice and the balls with "邀请朋友" share the
+			// title's middle line: a pill centered on all of the header sat
+			// lower than the button (the user's report, 2026-11-13), and the
+			// button lower than the title (2026-11-16).
+			a.headerRight(c, p, l)
 		})
-		ui.Spacer(c)
-		// The engine's notice and the balls with "邀请朋友" share one middle
-		// line: the header's row keeps its things at the top, and a pill
-		// centered on all of it sat lower than the button (the user's
-		// report, 2026-11-13).
-		ui.Row(c).Gap(16).AlignItems(ui.Center).Children(func() {
-			a.noticePill(c, p)
-			a.ballRects = map[string]ui.Rect{}
-			ui.Row(c).Gap(14).Children(func() {
-				ui.Row(c).Children(func() {
-					// Everyone in the stack keeps one ball: a member's solid, one
-					// who waits for me, or for my invite's answer, dashed (DESIGN
-					// §6.7). Letting someone in fills theirs where it is. On the
-					// canvas of the devices given to me, they are who gave them.
-					i := 0
-					for _, id := range a.members {
-						if a.shared() && id == a.me {
-							continue
-						}
-						a.stackBall(c, p, l, id, member, i > 0, model.Invited{})
-						i++
-					}
-					for _, id := range l.PendingMembers {
-						a.stackBall(c, p, l, string(id), waitsForMe, i > 0, model.Invited{})
-						i++
-					}
-					for _, v := range l.Invited {
-						a.stackBall(c, p, l, string(v.Person), invitedByMe, i > 0, v)
-						i++
-					}
-				})
-				if l.Waiting || a.shared() {
-					// Not in yet: there is no one to invite into it. Nor into
-					// the devices given to me.
-					return
-				}
-				a.inviteButton(c, p)
-			})
-		})
+		a.summaryLine(c, p)
 		a.headerLine(c, p)
 	})
 }
 
-// inviteHeight is how high "邀请朋友" is: the header's right side, whose
-// middle line the notice's pill keeps, in 全部's header too.
+// headerRight is what a LAN's header has on its right: the engine's notice,
+// the balls of those in it and 邀请朋友.
+func (a *app) headerRight(c *ui.Context, p *palette, l *model.LAN) {
+	ui.Row(c).Gap(16).AlignItems(ui.Center).Children(func() {
+		a.noticePill(c, p)
+		a.ballRects = map[string]ui.Rect{}
+		ui.Row(c).Gap(16).Children(func() {
+			ui.Row(c).Children(func() {
+				// Everyone in the stack keeps one ball: a member's solid, one
+				// who waits for me, or for my invite's answer, dashed (DESIGN
+				// §6.7). Letting someone in fills theirs where it is. On the
+				// canvas of the devices given to me, they are who gave them.
+				i := 0
+				for _, id := range a.members {
+					if a.shared() && id == a.me {
+						continue
+					}
+					a.stackBall(c, p, l, id, member, i > 0, model.Invited{})
+					i++
+				}
+				for _, id := range l.PendingMembers {
+					a.stackBall(c, p, l, string(id), waitsForMe, i > 0, model.Invited{})
+					i++
+				}
+				for _, v := range l.Invited {
+					a.stackBall(c, p, l, string(v.Person), invitedByMe, i > 0, v)
+					i++
+				}
+			})
+			if l.Waiting || a.shared() {
+				// Not in yet: there is no one to invite into it. Nor into
+				// the devices given to me.
+				return
+			}
+			a.inviteButton(c, p)
+		})
+	})
+}
+
+// inviteHeight is how high "邀请朋友" is, on the title's middle line.
 const inviteHeight = 34
 
 // inviteButton is "邀请朋友". My seats full, it is a dashed outline, grey,
 // and a click shows the seats instead (pricing-and-relays §1.5 item 2).
 func (a *app) inviteButton(c *ui.Context, p *palette) {
 	full := a.seatsFull()
-	btn := ui.ButtonBase(c.Key("invite")).Height(inviteHeight).Padding(0, 14).Gap(6).Radius(999).FocusRing(false)
+	btn := ui.ButtonBase(c.Key("invite")).Height(inviteHeight).Padding(0, 16).Gap(8).Radius(999).FocusRing(false)
 	k := btn.AnimateTo("full", map[bool]float32{false: 0, true: 1}[full], ui.Animation{Duration: 200 * time.Millisecond})
 	fill := p.primary
 	if btn.Hovered() {
@@ -471,7 +507,8 @@ func (a *app) headerLine(c *ui.Context, p *palette) {
 		// Under "邀请朋友", where it shows.
 		text = a.seatLine()
 	}
-	holder := ui.Row(c.Key("header-line")).Absolute().Right(24).Top(60).PassThrough()
+	// On the middle line of the line under the title, across from it.
+	holder := ui.Row(c.Key("header-line")).Absolute().Right(24).Top(headerTop + titleLine + 4).Height(statusLine).AlignItems(ui.Center).PassThrough()
 	holder.Children(func() {
 		if text == "" {
 			return
@@ -535,7 +572,7 @@ func (a *app) summaryLine(c *ui.Context, p *palette) {
 	} else {
 		dot = p.ink3
 	}
-	ui.Row(c).Gap(6).Children(func() {
+	ui.Row(c).Height(statusLine).Gap(8).Children(func() {
 		d := ui.Box(c.Key("summary-dot")).Size(7, 7).Radius(999).Background(dot).Shadow(0, 0, 0, 3, dot.Alpha(0.18))
 		d.Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Colors: true})
 		ui.Text(c.Key("summary-line"), shown[1:]).FontSize(13).TextColor(p.ink2).Opacity(alpha)
@@ -702,7 +739,7 @@ func (a *app) personChip(c *ui.Context, p *palette) {
 			// Over a LAN of mine with no seat for them: said beside the
 			// chip, clear of its name.
 			right := d.at.X - 17 + 4 + 26 + 8 + textWidth(who.name, 13) + 12
-			note := ui.Row(c.Key("person-full")).Absolute().Left(right+8).Top(d.at.Y-12).Height(24).Padding(0, 10).
+			note := ui.Row(c.Key("person-full")).Absolute().Left(right+8).Top(d.at.Y-12).Height(24).Padding(0, 12).
 				AlignItems(ui.Center).Radius(999).Background(p.bg).Border(1, p.line).Shadow(0, 4, 12, 0, ui.RGBA(9, 9, 11, 0.1)).PassThrough()
 			note.Transition(ui.ElementTransition{Duration: 140 * time.Millisecond, Enter: &ui.Motion{X: -4}, Exit: &ui.Motion{}})
 			note.Children(func() {
