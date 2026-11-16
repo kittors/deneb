@@ -380,6 +380,15 @@ type Relay struct {
 	// and their card says so: a limit is never silent (implementation.md
 	// §3 M4). (M4)
 	RateLimit int64 `json:"rateLimit,omitempty"`
+	// Tunnel is a public relay's way in through its Cloudflare tunnel, a
+	// host name alone, such as relay.deneb.app: no scheme, port or path.
+	// Where its own address cannot be reached, a device dials
+	// wss://<Tunnel>/derp on port 443, checking the certificate by the
+	// system's roots, not by Pin, and speaks DERP inside the WebSocket
+	// (subprotocol "derp"). Empty for a relay with none; older devices
+	// ignore it and dial directly
+	// (design/plan/control-reachability-20261116.md §10).
+	Tunnel string `json:"tunnel,omitempty"`
 }
 
 // RelaySource is where a relay comes from (implementation.md §2.2).

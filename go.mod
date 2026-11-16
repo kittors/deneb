@@ -5,6 +5,7 @@ go 1.27.3
 tool github.com/egoist/mygo/cmd/mygo
 
 require (
+	github.com/coder/websocket v1.8.15
 	github.com/egoist/mygo v0.7.4
 	github.com/tailscale/go-winio v0.0.0-20231025203758-c4f33415bf55
 	go4.org/mem v0.0.0-20240501181205-ae6ca9944745
@@ -19,7 +20,6 @@ require (
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/axiomhq/hyperloglog v0.2.6 // indirect
-	github.com/coder/websocket v1.8.15 // indirect
 	github.com/dblohm7/wingoes v0.0.0-20260526185140-fb298caac7ca // indirect
 	github.com/dgryski/go-metro v0.0.0-20250106013310-edb8663e5e33 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
