@@ -211,24 +211,24 @@ func answerTrace() (trace *httptrace.ClientTrace, used func() net.Conn) {
 	var mu sync.Mutex
 	var conn net.Conn
 	return &httptrace.ClientTrace{
-			GotConn: func(info httptrace.GotConnInfo) {
-				mu.Lock()
-				conn = info.Conn
-				mu.Unlock()
-			},
-			GotFirstResponseByte: func() {
-				mu.Lock()
-				w := watched(conn)
-				mu.Unlock()
-				if w != nil {
-					w.answered.Store(true)
-				}
-			},
-		}, func() net.Conn {
+		GotConn: func(info httptrace.GotConnInfo) {
 			mu.Lock()
-			defer mu.Unlock()
-			return conn
-		}
+			conn = info.Conn
+			mu.Unlock()
+		},
+		GotFirstResponseByte: func() {
+			mu.Lock()
+			w := watched(conn)
+			mu.Unlock()
+			if w != nil {
+				w.answered.Store(true)
+			}
+		},
+	}, func() net.Conn {
+		mu.Lock()
+		defer mu.Unlock()
+		return conn
+	}
 }
 
 // watchedConn is a connection pinned to an interface. It works once the
