@@ -52,8 +52,15 @@ type Options struct {
 	// server it was logged in to.
 	ControlURL string
 	ControlPin string
-	Mode       apitype.Mode
-	Port       uint16 // UDP port; 0 means the saved one, or any
+	// ControlEntrances are the ways to Deneb's own control server, the most
+	// direct first (a release's, cmd/denebd), used whenever the server
+	// given or saved is Deneb's own: one of them, or one of OwnControls (an
+	// older release's address, as devices saved it). Someone's own server
+	// is left as it is (design/plan/control-reachability-20261116.md §9.3).
+	ControlEntrances []proto.ControlEntrance
+	OwnControls      []string
+	Mode             apitype.Mode
+	Port             uint16 // UDP port; 0 means the saved one, or any
 	// BindInterface is "auto" (the default route's interface), "none", or
 	// an interface name.
 	BindInterface string
@@ -202,11 +209,14 @@ type persisted struct {
 	Disco      string               `json:"discoKey"`
 	ControlURL string               `json:"controlURL,omitempty"`
 	ControlPin string               `json:"controlPin,omitempty"`
-	LoggedIn   bool                 `json:"loggedIn"`
-	Device     proto.DeviceID       `json:"device,omitempty"`
-	Person     proto.PersonID       `json:"person,omitempty"`
-	Port       uint16               `json:"port,omitempty"`
-	Paused     []proto.ScopeID      `json:"paused,omitempty"`
+	// ControlVia is the entrance to Deneb's own server that got through
+	// last: the next start goes by it first.
+	ControlVia string          `json:"controlVia,omitempty"`
+	LoggedIn   bool            `json:"loggedIn"`
+	Device     proto.DeviceID  `json:"device,omitempty"`
+	Person     proto.PersonID  `json:"person,omitempty"`
+	Port       uint16          `json:"port,omitempty"`
+	Paused     []proto.ScopeID `json:"paused,omitempty"`
 }
 
 // New loads (or makes) the device's keys, opens the UDP socket and, if the

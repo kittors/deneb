@@ -6,6 +6,7 @@ import (
 	"errors"
 	"runtime"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/kittors/deneb/engine/controlclient"
@@ -17,7 +18,7 @@ import (
 )
 
 func (e *Engine) newControlClientLocked() (*controlclient.Client, error) {
-	return controlclient.New(controlclient.Options{
+	o := controlclient.Options{
 		URL:           e.controlURLLocked(),
 		Pin:           e.controlPinLocked(),
 		Machine:       e.machine,
@@ -25,7 +26,51 @@ func (e *Engine) newControlClientLocked() (*controlclient.Client, error) {
 		Logf:          e.logf,
 		// A release build talks plain http to this machine only.
 		PlainHTTPAnywhere: TestBuild,
-	})
+	}
+	if e.ownControlLocked() {
+		// Deneb's own server: all its ways in, the last that got through
+		// first (design/plan/control-reachability-20261116.md §9.3).
+		o.Entrances, o.Prefer = e.opts.ControlEntrances, e.st.ControlVia
+		o.OnEntrance, o.OnBack = e.keepEntrance, e.kickControl
+	}
+	return controlclient.New(o)
+}
+
+// ownControlLocked: the server given or saved is Deneb's own, which has
+// several entrances; the address an older release saved counts too.
+func (e *Engine) ownControlLocked() bool {
+	if len(e.opts.ControlEntrances) == 0 {
+		return false
+	}
+	u := strings.TrimRight(e.controlURLLocked(), "/")
+	if slices.Contains(e.opts.OwnControls, u) {
+		return true
+	}
+	return slices.ContainsFunc(e.opts.ControlEntrances, func(x proto.ControlEntrance) bool { return x.URL == u })
+}
+
+// keepEntrance keeps the entrance that got through, for the next start.
+func (e *Engine) keepEntrance(url string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.st.ControlVia != url {
+		e.st.ControlVia = url
+		e.saveState()
+	}
+}
+
+// controlPinsLocked are the ways to Deneb's own server by origin, and their
+// pins ("" where the system's roots check it): the window's sign-in talks
+// to the one the login link names (apitype.State.ControlPins).
+func (e *Engine) controlPinsLocked() map[string]string {
+	if !e.ownControlLocked() {
+		return nil
+	}
+	pins := map[string]string{}
+	for _, x := range e.opts.ControlEntrances {
+		pins[x.URL] = x.Pin
+	}
+	return pins
 }
 
 // startControlLocked runs the control loop if it is not running.
@@ -140,9 +185,12 @@ func (e *Engine) controlLoop(ctx context.Context, cc *controlclient.Client, gen 
 				}
 				continue
 			}
+			// The server writes the link with its own address: by the way
+			// in that got through instead.
+			link := cc.Through(st.LoginURL)
 			e.mu.Lock()
-			changed := e.loginURL != st.LoginURL
-			e.loginURL = st.LoginURL
+			changed := e.loginURL != link
+			e.loginURL = link
 			e.mu.Unlock()
 			if changed {
 				e.logf("[control] waiting for a login in the browser: %s", st.LoginURL)

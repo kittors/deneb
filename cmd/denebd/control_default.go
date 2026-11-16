@@ -1,6 +1,35 @@
 package main
 
-import "github.com/kittors/deneb/engine"
+import (
+	"log"
+
+	"github.com/kittors/deneb/engine"
+	"github.com/kittors/deneb/proto"
+)
+
+// builtinEntrances are the ways to Deneb's own server, as base64 of
+// proto.ControlEntrances' JSON: a release sets it at build time from the
+// deployment's (deploy/package.sh, DENEB_CONTROL_ENTRANCES), whose
+// addresses past the first stay out of the repository. Unset: builtinControl
+// alone (design/plan/control-reachability-20261116.md §9.3).
+var builtinEntrances string
+
+// controlEntrances are the ways to Deneb's own server, in a release build;
+// a test build has none. A device that saved builtinControl, as releases
+// before them did, goes by them too (engine.Options.OwnControls).
+func controlEntrances() []proto.ControlEntrance {
+	if engine.TestBuild {
+		return nil
+	}
+	if builtinEntrances != "" {
+		l, err := proto.ParseControlEntrances(builtinEntrances)
+		if err == nil {
+			return l.Entrances
+		}
+		log.Printf("the built-in control entrances do not read (%v): Deneb's own address alone", err)
+	}
+	return []proto.ControlEntrance{{URL: builtinControl, Pin: builtinControlPin}}
+}
 
 // Deneb's own control server, for a release build's first login: what a
 // person who just installed the app logs in to, configuring nothing

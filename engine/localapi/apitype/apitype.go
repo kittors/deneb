@@ -57,6 +57,10 @@ type State struct {
 	// connected stay connected (§2.6.1).
 	ControlConnected bool   `json:"controlConnected"`
 	ControlURL       string `json:"controlURL,omitempty"`
+	// ControlPins are the ways to Deneb's own server, by origin, and their
+	// pins ("" where the system's roots check the certificate): the
+	// window's sign-in talks to the one the login link names.
+	ControlPins map[string]string `json:"controlPins,omitempty"`
 
 	Mode Mode `json:"mode"`
 

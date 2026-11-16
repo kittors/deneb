@@ -58,6 +58,7 @@ func (e *Engine) stateLocked() *apitype.State {
 		SelfDeviceID:     apitype.DeviceID(e.st.Device),
 		ControlConnected: e.controlUp,
 		ControlURL:       e.controlURLLocked(),
+		ControlPins:      e.controlPinsLocked(),
 		Mode:             e.opts.Mode,
 		Scopes:           []apitype.Scope{},
 		Peers:            []apitype.Peer{},

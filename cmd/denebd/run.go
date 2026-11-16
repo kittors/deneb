@@ -133,6 +133,7 @@ func runEngine(args []string, check bool) error {
 	}
 	e, err := engine.New(engine.Options{
 		StateDir: *stateDir, ControlURL: *control, ControlPin: *pin, Mode: m,
+		ControlEntrances: controlEntrances(), OwnControls: []string{builtinControl},
 		Port: uint16(*port), BindInterface: *bindIf, RelayOnly: *relayOnly, SOCKS: *socks,
 		Heartbeat: *hb, Trust: *trust, Idle: *idle, HomeRelay: proto.RelayID(*homeRelay), RelayIdle: *relayIdle, PathByLoss: *pathByLoss, DupSmall: *dupSmall, Hostname: *hostname, DisplayName: *display, Kind: proto.DeviceKind(*kind),
 		RelayRoots: roots, StaticEndpoints: eps, UserView: *userView, Version: version, LockWait: *waitLock,
