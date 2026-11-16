@@ -1,0 +1,4 @@
+# The tunnel's two public addresses (site.hk155.env, CONTROL_TUNNEL_HOST
+# and RELAY_TUNNEL_HOST): they are under the operator's own domain, which
+# is not in the repository.
+/site.*.env

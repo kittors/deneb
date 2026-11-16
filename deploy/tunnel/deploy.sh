@@ -3,7 +3,7 @@
 # (design/plan/control-reachability-20261116.md §9.4, §10). Host network,
 # so that it reaches the control server's -tunnel-listen (127.0.0.1:47450)
 # and the public relay's (127.0.0.1:47451). It only connects out, to
-# Cloudflare: devices reach nothing of it (its metrics port is loopback),
+# Cloudflare: devices reach nothing of it (its status page is loopback only),
 # and with --network host and no published port Docker adds no rules. At
 # most 0.5 CPU and 128 MB; the image's version is pinned.
 #
@@ -29,6 +29,11 @@ NAME=deneb-tunnel
 IMAGE=cloudflare/cloudflared:2026.11.0
 TOKEN=/opt/deneb-tunnel/token
 RUNAS=65532:65532
+# cloudflared's own status page (metrics, its configuration with the host
+# names, debug handlers): in a container it listens on every interface
+# unless told otherwise (metrics.Runtime "virtual" in 2026.11.0), and with
+# the host network that is the Internet. Loopback only, on a port of its own.
+METRICS_PORT=47452
 
 snapshot() {
 	ssh "$HOST" "echo '== docker'; docker ps --format '{{.Names}} {{.Image}} {{.Status}}' | sort; echo '== listening'; ss -ltnuH | awk '{print \$1, \$5}' | sort -u"
@@ -48,6 +53,10 @@ ssh "$HOST" "
 	fi
 	chown $RUNAS $TOKEN
 	chmod 600 $TOKEN
+	if [ -z \"\$(docker ps -q --filter name=^$NAME\$)\" ] && ss -ltnH 'sport = :$METRICS_PORT' | grep -q .; then
+		echo 'port $METRICS_PORT on $HOST is taken: cloudflared keeps its status page there, on loopback (METRICS_PORT in deploy/tunnel/deploy.sh)' >&2
+		exit 1
+	fi
 	docker pull -q $IMAGE >/dev/null
 	docker rm -f $NAME >/dev/null 2>&1 || true
 	docker run -d --name $NAME \
@@ -57,7 +66,7 @@ ssh "$HOST" "
 		--cpus 0.5 --memory 128m --memory-swap 128m --pids-limit 128 \
 		--log-opt max-size=5m --log-opt max-file=2 \
 		-v $TOKEN:/etc/cloudflared/token:ro \
-		$IMAGE tunnel --no-autoupdate run --token-file /etc/cloudflared/token >/dev/null
+		$IMAGE tunnel --no-autoupdate --metrics 127.0.0.1:$METRICS_PORT run --token-file /etc/cloudflared/token >/dev/null
 	sleep 5
 	docker ps --filter name=^$NAME\$ --format '{{.Names}} {{.Image}} {{.Status}}'
 	docker logs --tail 10 $NAME 2>&1"
