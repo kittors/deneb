@@ -150,6 +150,19 @@ type Relay struct {
 	Name      string  `json:"name"` // "香港"
 	Connected bool    `json:"connected"`
 	Home      bool    `json:"home"` // the relay peers use to reach this device
+	// Via is how a public relay with a tunnel is reached: "direct" (its own
+	// address) or "tunnel" (Cloudflare's); "" for a relay without one. Not
+	// shown in the window.
+	Via string `json:"via,omitempty"`
+}
+
+// RelayDirectRequest is POST /v1/debug/relay-direct: a test on a real
+// machine turns a public relay's own address off (or on again), as if it
+// were blocked, to watch the relay go by its tunnel. Not saved: a restart
+// turns it on again (deneb debug relay-direct).
+type RelayDirectRequest struct {
+	Relay string `json:"relay"` // its ID or name
+	Off   bool   `json:"off"`
 }
 
 // PathKind is how this computer reaches one peer right now.

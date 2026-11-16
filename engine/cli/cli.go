@@ -897,6 +897,18 @@ func (c *cmd) debug(ctx context.Context, args []string) error {
 	var out json.RawMessage
 	var err error
 	switch args[0] {
+	case "relay-direct":
+		// relay-direct <中转站> off|on：真机测试时让一个公共中转站的直连
+		// 不通（它就走 Cloudflare 隧道），或者恢复。发行版也有，只在内存里，
+		// 引擎一重启就恢复。
+		if len(args) != 3 || (args[2] != "off" && args[2] != "on") {
+			return errors.New("用法：deneb debug relay-direct <中转站的 ID 或名字> off|on")
+		}
+		if err := c.lc.SetRelayDirectOff(ctx, args[1], args[2] == "off"); err != nil {
+			return err
+		}
+		fmt.Fprintf(c.out, "中转站 %s 的直连：%s（引擎重启后恢复）\n", args[1], map[string]string{"off": "关了，改走隧道", "on": "开了"}[args[2]])
+		return nil
 	case "dnsflush":
 		// dnsflush off|on|now：内核模式下名字回来时刷不刷系统的 DNS 缓存
 		if len(args) != 2 || (args[1] != "off" && args[1] != "on" && args[1] != "now") {

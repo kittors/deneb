@@ -295,6 +295,12 @@ func (c *Client) LoginLink(ctx context.Context, controlURL string) (string, erro
 	return res.URL, nil
 }
 
+// SetRelayDirectOff turns a public relay's own address off or on, for a
+// test on a real machine (apitype.RelayDirectRequest).
+func (c *Client) SetRelayDirectOff(ctx context.Context, relay string, off bool) error {
+	return c.do(ctx, "POST", "/v1/debug/relay-direct", apitype.RelayDirectRequest{Relay: relay, Off: off}, nil)
+}
+
 func (c *Client) login(ctx context.Context, controlURL string) (*apitype.LoginResponse, error) {
 	var res apitype.LoginResponse
 	if err := c.do(ctx, "POST", "/v1/login", apitype.LoginRequest{ControlURL: controlURL}, &res); err != nil {

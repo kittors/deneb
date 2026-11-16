@@ -42,6 +42,36 @@ func (e *Engine) UpdateEngine(ctx context.Context, path string) apitype.UpdateRe
 	return e.opts.SelfUpdate(ctx, path)
 }
 
+// SetRelayDirectOff turns a public relay's own address off or on, for a
+// test on a real machine: its connections go by its tunnel, as when the
+// address is blocked. relay is its ID or name. Not saved: a restart turns
+// it on again (design/plan/control-reachability-20261116.md §10).
+func (e *Engine) SetRelayDirectOff(ctx context.Context, relay string, off bool) error {
+	e.mu.Lock()
+	var id proto.RelayID
+	if e.nm != nil {
+		for _, r := range e.nm.Relays {
+			if string(r.ID) == relay || r.Name == relay {
+				id = r.ID
+				break
+			}
+		}
+	}
+	e.mu.Unlock()
+	if id == "" {
+		return &apitype.Error{Code: apitype.ErrNotFound, Message: fmt.Sprintf("网络图里没有中转站 %q。", relay)}
+	}
+	if err := e.ms.SetRelayDirectOff(id, off); err != nil {
+		return &apitype.Error{Code: apitype.ErrInvalid, Message: fmt.Sprintf("中转站 %q 没有隧道：%v", relay, err)}
+	}
+	state := "on again"
+	if off {
+		state = "off, for a test"
+	}
+	e.logf("[relay] %s: its own address %s (deneb debug relay-direct)", id, state)
+	return nil
+}
+
 // State builds a snapshot for the local API.
 func (e *Engine) State() *apitype.State {
 	e.mu.Lock()
@@ -125,7 +155,7 @@ func (e *Engine) stateLocked() *apitype.State {
 		names[r.ID] = r.Name
 	}
 	for _, r := range e.ms.Relays() {
-		s.Relays = append(s.Relays, apitype.Relay{ID: apitype.RelayID(r.ID), Name: names[r.ID], Connected: r.Up, Home: r.Home})
+		s.Relays = append(s.Relays, apitype.Relay{ID: apitype.RelayID(r.ID), Name: names[r.ID], Connected: r.Up, Home: r.Home, Via: r.Via})
 	}
 	return s
 }

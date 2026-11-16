@@ -46,6 +46,9 @@ type Backend interface {
 	// UpdateEngine replaces the engine with the executable at path, where
 	// it is a system service that can (M6).
 	UpdateEngine(ctx context.Context, path string) apitype.UpdateResult
+	// SetRelayDirectOff turns a public relay's own address off or on, for
+	// a test on a real machine (apitype.RelayDirectRequest).
+	SetRelayDirectOff(ctx context.Context, relay string, off bool) error
 	// Diagnostics writes a zip for a bug report: state, paths, counters
 	// and the log; no keys, no traffic (M6 i7).
 	Diagnostics(ctx context.Context, w io.Writer) error
@@ -203,6 +206,17 @@ func Handler(b Backend, extra http.Handler) http.Handler {
 	})
 	mux.HandleFunc("POST /v1/shutdown", func(w http.ResponseWriter, r *http.Request) {
 		if err := b.Shutdown(r.Context()); err != nil {
+			WriteError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("POST /v1/debug/relay-direct", func(w http.ResponseWriter, r *http.Request) {
+		var req apitype.RelayDirectRequest
+		if !readJSON(w, r, &req) {
+			return
+		}
+		if err := b.SetRelayDirectOff(r.Context(), req.Relay, req.Off); err != nil {
 			WriteError(w, err)
 			return
 		}

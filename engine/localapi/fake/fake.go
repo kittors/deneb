@@ -258,6 +258,10 @@ func (b backend) UpdateEngine(ctx context.Context, path string) apitype.UpdateRe
 	return apitype.UpdateResult{Result: apitype.UpdateNotService, Message: "假引擎不是系统服务"}
 }
 
+func (b backend) SetRelayDirectOff(ctx context.Context, relay string, off bool) error {
+	return &apitype.Error{Code: apitype.ErrInvalid, Message: "假引擎没有中转站"}
+}
+
 // Diagnostics: a zip with one note, for the window's export to have
 // something to save.
 func (b backend) Diagnostics(ctx context.Context, w io.Writer) error {
