@@ -32,11 +32,14 @@ const (
 
 // engineSwap is an engine change under way.
 type engineSwap struct {
-	at    time.Time       // asked for
-	held  *model.Snapshot // the picture as it began
-	down  time.Time       // the engine went away
-	back  time.Time       // the new one answered with the LANs
-	asked bool            // the system's window asks for the password (updateService)
+	at time.Time // asked for
+	// held is the picture to keep: the old engine's last, as long as it
+	// answers (engine-restart-offline.md §3).
+	held  *model.Snapshot
+	said  time.Time // the engine said it changes (saidSwap)
+	down  time.Time // the engine went away
+	back  time.Time // the new one answered with the LANs
+	asked bool      // the system's window asks for the password (updateService)
 	// from and shown: the store's last snapshot and what was shown for it,
 	// so that the same one shows until the store has another (sync
 	// refreshes the view only for a new snapshot).
@@ -70,8 +73,32 @@ func (a *app) postWait(fn func(c *ui.Context)) {
 // beginSwap starts holding the picture, before the engine is asked to
 // change.
 func (a *app) beginSwap(now time.Time) {
-	a.swap = &engineSwap{at: now, held: a.base}
+	sw := &engineSwap{at: now}
+	if serving(a.base) {
+		sw.held = a.base
+	}
+	a.swap = sw
 	swapUntil.Store(time.Now().Add(swapNeverDown + swapGiveUp).UnixNano())
+}
+
+// saidSwap: the engine said it changes (UpdateEngine answered so, or the
+// service was installed again). From now, the window's clock, it has
+// swapNeverDown to go away: not from the asking, as checking the new one
+// takes its time.
+func (a *app) saidSwap() {
+	if a.swap == nil || !a.swap.said.IsZero() {
+		return
+	}
+	a.swap.said = a.clock
+	if a.clock.IsZero() {
+		a.swap.said = time.Now()
+	}
+}
+
+// serving: s pictures an engine that answers with what it has, the LANs
+// when someone logged in: one to keep while the engine is changed.
+func serving(s *model.Snapshot) bool {
+	return s != nil && s.Engine && !(s.LoggedIn && !s.Loaded)
 }
 
 // endSwap stops holding it: the engine did not change after all, or the
@@ -89,29 +116,32 @@ func (a *app) holdThroughSwap(base *model.Snapshot) *model.Snapshot {
 		return base
 	}
 	now := a.clock
-	if sw.held == nil || !sw.held.Loaded {
-		// Nothing shown yet to hold.
-		a.endSwap()
-		return base
-	}
-	gone := base == nil || !base.Engine || base.LoggedIn && !base.Loaded
-	switch {
-	case gone && sw.down.IsZero():
+	gone := !serving(base)
+	if sw.down.IsZero() {
+		if !gone {
+			// The old engine still answers: what it shows is the picture to
+			// keep once it goes, even when the window had none as the change
+			// was asked for (a window just opened asks at once, 11-16).
+			sw.held = base
+		}
+		if !gone || sw.held == nil {
+			// Still there; or gone with nothing shown to keep, and what is
+			// shows, as it would (the starting view).
+			if !sw.said.IsZero() && now.Sub(sw.said) >= swapNeverDown {
+				// It said it changes, and never went away.
+				a.endSwap()
+			}
+			return base
+		}
 		sw.down = now
-	case sw.down.IsZero() && !sw.asked && now.Sub(sw.at) >= swapNeverDown:
-		// It said it changes, and never went away.
-		a.endSwap()
-		return base
 	}
 	switch {
-	case !sw.down.IsZero() && now.Sub(sw.down) >= swapGiveUp:
+	case now.Sub(sw.down) >= swapGiveUp:
 		// Gone too long: what is shows.
 		a.endSwap()
 		return base
 	case gone:
 		return sw.held
-	case sw.down.IsZero():
-		return base // the old engine still serves
 	}
 	if sw.back.IsZero() {
 		sw.back = now

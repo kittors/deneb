@@ -30,13 +30,18 @@ func TestSwapFrames(t *testing.T) {
 	scenes := []struct {
 		key  string
 		play func(r *m3rig)
+		// opening: the window just opened, the engine's first picture not
+		// in yet (engine-restart-offline.md §3).
+		opening bool
 	}{
-		{"quick", playSwapQuick},
-		{"slow", playSwapSlow},
-		{"rollback", playSwapRollback},
-		{"password", playSwapPassword},
-		{"badsig", playSwapBadSig},
-		{"before", playSwapBefore},
+		{"quick", playSwapQuick, false},
+		{"slow", playSwapSlow, false},
+		{"rollback", playSwapRollback, false},
+		{"password", playSwapPassword, false},
+		{"badsig", playSwapBadSig, false},
+		{"before", playSwapBefore, false},
+		{"fresh", playSwapFresh, true},
+		{"nocontrol", playSwapNoControl, false},
 	}
 	for _, dark := range []bool{false, true} {
 		theme := map[bool]string{false: "light", true: "dark"}[dark]
@@ -44,17 +49,21 @@ func TestSwapFrames(t *testing.T) {
 			if len(only) > 0 && !only[sc.key] {
 				continue
 			}
-			sc.play(swapRig(t, root, theme, dark, sc.key))
+			sc.play(swapRig(t, root, theme, dark, sc.key, sc.opening))
 		}
 	}
 }
 
 // swapRig is the demo at the window's usual size, recording into
-// <theme>-<key>/, the pointer out of the way.
-func swapRig(t *testing.T, root, theme string, dark bool, key string) *m3rig {
+// <theme>-<key>/, the pointer out of the way; opening: as a window just
+// opened, the engine's first picture not in yet.
+func swapRig(t *testing.T, root, theme string, dark bool, key string, opening bool) *m3rig {
 	t.Helper()
 	a, d := newDemoApp()
 	d.Manual()
+	if opening {
+		d.Simulate("engine-loading")
+	}
 	r := &m3rig{t: t, a: a, d: d, tt: ui.NewTester(a.view, 1180, 740)}
 	r.tt.SetDark(dark)
 	r.run(1200 * time.Millisecond)
@@ -157,6 +166,55 @@ func playSwapBadSig(r *m3rig) {
 	r.run(800 * time.Millisecond)
 	r.shot("toast")
 	r.run(4500 * time.Millisecond)
+	r.shot("done")
+}
+
+// A window just opened asks for the change at once, before the engine's
+// first picture is in (11-16, the real one); the new engine then comes back
+// without its LANs a while, the control server out of reach. From the first
+// picture on, the window stays as it is.
+func playSwapFresh(r *m3rig) {
+	r.shot("opening")
+	r.swap(false)
+	r.run(150 * time.Millisecond)
+	r.d.Simulate("engine-up")
+	r.run(1500 * time.Millisecond)
+	r.shot("first")
+	r.d.Simulate("engine-away")
+	r.run(time.Second)
+	r.shot("away")
+	r.d.Simulate("engine-loading")
+	r.run(4 * time.Second)
+	r.shot("no-lans")
+	r.d.Simulate("engine-new")
+	r.run(1500 * time.Millisecond)
+	r.shot("back-connecting")
+	r.d.Simulate("nonet-back")
+	r.run(3 * time.Second)
+	r.shot("done")
+}
+
+// The new engine comes back without its LANs, the control server out of
+// reach (11-16): the picture stays; past 10 s from the old engine going
+// away, the line says 正在更新网卡…; then the LANs come, and each device
+// keeps its line until it is connected again.
+func playSwapNoControl(r *m3rig) {
+	r.shot("start")
+	r.swap(false)
+	r.run(500 * time.Millisecond)
+	r.d.Simulate("engine-away")
+	r.run(time.Second)
+	r.d.Simulate("engine-loading")
+	r.run(8 * time.Second)
+	r.shot("no-lans-9s")
+	r.run(2 * time.Second)
+	r.shot("no-lans-11s")
+	r.run(2 * time.Second)
+	r.d.Simulate("engine-new")
+	r.run(1500 * time.Millisecond)
+	r.shot("back-connecting")
+	r.d.Simulate("nonet-back")
+	r.run(3 * time.Second)
 	r.shot("done")
 }
 

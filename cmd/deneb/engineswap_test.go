@@ -23,16 +23,18 @@ func TestHoldThroughSwap(t *testing.T) {
 	a.beginSwap(t0)
 
 	at := func(d time.Duration) { a.clock = t0.Add(d) }
-	// The old engine serves a while longer: what it says shows.
+	// The old engine serves a while longer: what it says shows, and is the
+	// picture to keep.
 	at(200 * time.Millisecond)
 	still := &model.Snapshot{Engine: true, LoggedIn: true, Loaded: true, Version: 8, Paths: held.Paths}
 	if got := a.holdThroughSwap(still); got != still {
 		t.Fatal("the old engine's own snapshot did not show")
 	}
-	// Gone: the picture stays.
+	a.saidSwap()
+	// Gone: its last picture stays.
 	at(time.Second)
 	gone := &model.Snapshot{Version: 8}
-	if got := a.holdThroughSwap(gone); got != held {
+	if got := a.holdThroughSwap(gone); got != still {
 		t.Fatal("the picture did not stay with the engine gone")
 	}
 	at(5 * time.Second)
@@ -45,7 +47,7 @@ func TestHoldThroughSwap(t *testing.T) {
 	}
 	// Back, without the LANs yet: still the picture.
 	at(13 * time.Second)
-	if got := a.holdThroughSwap(&model.Snapshot{Engine: true, LoggedIn: true}); got != held {
+	if got := a.holdThroughSwap(&model.Snapshot{Engine: true, LoggedIn: true}); got != still {
 		t.Fatal("the picture did not stay before the LANs came")
 	}
 	// With the LANs, the devices still connecting: their lines as they were.
@@ -85,10 +87,17 @@ func TestHoldThroughSwap(t *testing.T) {
 		t.Error("still held past 60 s gone")
 	}
 
-	// Never went away (the change did not happen): over after 15 s.
+	// Said it changes and never went away (the change did not happen): over
+	// 15 s after it said so. While checking the new one, before it says, no
+	// end: that takes its time.
 	a = &app{base: held, clock: t0}
 	a.beginSwap(t0)
-	at(16 * time.Second)
+	at(20 * time.Second)
+	if got := a.holdThroughSwap(still); got != still || a.swap == nil {
+		t.Error("the swap ended before the engine said it changes")
+	}
+	a.saidSwap()
+	at(36 * time.Second)
 	if got := a.holdThroughSwap(still); got != still || a.swap != nil {
 		t.Error("still held for an engine that never went away")
 	}
@@ -106,6 +115,104 @@ func TestHoldThroughSwap(t *testing.T) {
 		t.Errorf("line while asking: %q", line)
 	}
 	a.endSwap()
+}
+
+// TestSwapInAWindowJustOpened: a window just opened asks for the change at
+// once, before it has shown anything (11-16, the real one: the hold ended
+// there and then). The old engine's first picture is the one kept, through
+// it going away and the new one coming back; had it gone before showing
+// anything, what is shows: the starting view, as before.
+func TestSwapInAWindowJustOpened(t *testing.T) {
+	t0 := time.Date(2026, 11, 16, 13, 23, 46, 0, time.UTC)
+	starting := &model.Snapshot{} // no engine heard yet
+	a := &app{base: starting, clock: t0}
+	at := func(d time.Duration) { a.clock = t0.Add(d) }
+	a.beginSwap(t0)
+	if got := a.holdThroughSwap(starting); got != starting || a.swap == nil {
+		t.Fatal("before anything shows: not what is, or the swap given up")
+	}
+	at(100 * time.Millisecond)
+	first := &model.Snapshot{Engine: true, LoggedIn: true, Loaded: true, Version: 2891}
+	if got := a.holdThroughSwap(first); got != first {
+		t.Fatal("the old engine's first picture did not show")
+	}
+	a.saidSwap()
+	at(2 * time.Second)
+	if got := a.holdThroughSwap(&model.Snapshot{Version: 2891}); got != first {
+		t.Fatal("the engine gone: the picture did not stay")
+	}
+	at(3 * time.Second)
+	if got := a.holdThroughSwap(&model.Snapshot{Engine: true, LoggedIn: true, Version: 2891}); got != first {
+		t.Fatal("the new engine without its LANs: the picture did not stay")
+	}
+	at(4 * time.Second)
+	back := &model.Snapshot{Engine: true, LoggedIn: true, Loaded: true, Version: 2892}
+	if got := a.holdThroughSwap(back); got.Version != back.Version {
+		t.Fatal("the new engine with its LANs did not show")
+	}
+
+	// Gone before showing anything: nothing to keep; the starting view.
+	a = &app{base: starting, clock: t0}
+	a.beginSwap(t0)
+	a.saidSwap()
+	at(time.Second)
+	if got := a.holdThroughSwap(starting); got != starting {
+		t.Error("nothing to keep, and not what is")
+	}
+	at(2 * time.Second)
+	if got := a.holdThroughSwap(back); got != back {
+		t.Error("the new engine did not show")
+	}
+	at(16 * time.Second)
+	a.holdThroughSwap(back)
+	if a.swap != nil {
+		t.Error("the swap went on past 15 s after the engine said it changes")
+	}
+}
+
+// TestSwapNewEngineWithoutControl: the new engine comes back without its
+// LANs, the control server out of reach and none saved: the picture stays,
+// the line says "正在更新网卡…" past 10 s, and past 60 s from the old engine
+// going away, what is shows; the LANs coming before that end it as usual.
+func TestSwapNewEngineWithoutControl(t *testing.T) {
+	t0 := time.Date(2026, 11, 16, 13, 23, 46, 0, time.UTC)
+	held := &model.Snapshot{Engine: true, LoggedIn: true, Loaded: true, Version: 7}
+	noLANs := &model.Snapshot{Engine: true, LoggedIn: true, Version: 7}
+	for _, lansAt := range []time.Duration{0, 30 * time.Second} {
+		a := &app{base: held, clock: t0}
+		at := func(d time.Duration) { a.clock = t0.Add(d) }
+		a.beginSwap(t0)
+		a.saidSwap()
+		at(time.Second)
+		a.holdThroughSwap(&model.Snapshot{Version: 7})
+		at(2 * time.Second)
+		if got := a.holdThroughSwap(noLANs); got != held {
+			t.Fatal("the new engine without its LANs: the picture did not stay")
+		}
+		at(12 * time.Second)
+		if line, ok := a.swapLine(); !ok || line != "正在更新网卡…" {
+			t.Errorf("line at 11 s: %q %v", line, ok)
+		}
+		if lansAt > 0 {
+			at(lansAt)
+			back := &model.Snapshot{Engine: true, LoggedIn: true, Loaded: true, Version: 8}
+			if got := a.holdThroughSwap(back); got.Version != 8 {
+				t.Fatal("the LANs came: they did not show")
+			}
+			if _, ok := a.swapLine(); ok {
+				t.Error("the line stayed once the LANs came")
+			}
+			continue
+		}
+		at(40 * time.Second)
+		if got := a.holdThroughSwap(noLANs); got != held {
+			t.Error("the picture did not stay at 40 s")
+		}
+		at(62 * time.Second)
+		if got := a.holdThroughSwap(noLANs); got != noLANs || a.swap != nil {
+			t.Error("still held past 60 s gone")
+		}
+	}
 }
 
 // pidEngine answers Version with its pids in turn, the last one after.

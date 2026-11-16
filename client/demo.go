@@ -254,6 +254,7 @@ const demoInviteLAN model.LANID = "boardgame"
 //   - "engine": this computer's Deneb stops answering, or answers again.
 //   - "engine-away", "engine-loading", "engine-new": the engine changed for
 //     the one shipped, in its three steps; "nonet-back" ends it.
+//     "engine-up": it answers with all it has, as to a window just opened.
 func (d *Demo) Simulate(event string) {
 	now := time.Now()
 	d.update(func(s *model.Snapshot) *model.Snapshot {
@@ -319,6 +320,10 @@ func (d *Demo) Simulate(event string) {
 			d.netPaths = maps(s.Paths)
 		case "engine-loading":
 			n.Engine, n.Loaded = true, false
+		case "engine-up":
+			// The engine answers with all it has, as to a window just opened
+			// (design/plan/m7/engine-restart-offline.md §3).
+			n.Engine, n.Loaded = true, true
 		case "engine-new":
 			n.Engine, n.Loaded = true, true
 			for id := range d.netPaths {

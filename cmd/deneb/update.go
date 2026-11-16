@@ -175,6 +175,8 @@ func followEngineOnce(a *app, lc engineAPI) {
 			// Not given the password, or it did not go in: the engine is the
 			// one it was, and the next launch asks again.
 			a.post(func(*ui.Context) { a.endSwap() })
+		} else {
+			a.post(func(*ui.Context) { a.saidSwap() })
 		}
 		return err
 	}
@@ -224,9 +226,12 @@ func (s *swapAPI) UpdateEngine(ctx context.Context, path string) (*apitype.Updat
 	if err == nil {
 		s.result = r.Result
 	}
-	if err != nil || r.Result != apitype.UpdateDone && r.Result != apitype.UpdateNeedsInstall {
+	switch {
+	case err != nil || r.Result != apitype.UpdateDone && r.Result != apitype.UpdateNeedsInstall:
 		// Nothing changes: the picture goes on as it is.
 		s.a.post(func(*ui.Context) { s.a.endSwap() })
+	case r.Result == apitype.UpdateDone:
+		s.a.post(func(*ui.Context) { s.a.saidSwap() })
 	}
 	return r, err
 }
