@@ -601,11 +601,7 @@ func onlyDigits(s string, n int) string {
 // which has none, only pretends, for as long as it usually takes.
 func (a *app) diagnosticsRow(c *ui.Context, p *palette) {
 	now := c.Now()
-	busy := a.diagBusy || a.diagnostics == nil && !a.diagAt.IsZero() && now.Sub(a.diagAt) < 1300*time.Millisecond
-	if a.diagnostics == nil && !a.diagAt.IsZero() && !busy {
-		a.diagAt = time.Time{}
-		a.diagSaved(c, filepath.Join(downloadsDir(), diagName(now)), nil)
-	}
+	busy := a.diagWorking(c, now)
 	// Under the card's details, 4 apart as they are: its own 4 and the 8 its
 	// button keeps over its words make 16 to its words, a group's room.
 	ui.Column(c.Key("diag")).Margin(4, 0, 0, 0).Gap(4).Children(func() {
@@ -616,9 +612,6 @@ func (a *app) diagnosticsRow(c *ui.Context, p *palette) {
 		}
 		b.Children(func() {
 			if busy {
-				if a.diagnostics == nil {
-					c.After(1300*time.Millisecond - now.Sub(a.diagAt))
-				}
 				spinner(c, p, now)
 				ui.Text(c, "正在收集…").FontSize(12).TextColor(p.ink2)
 				return
@@ -627,20 +620,53 @@ func (a *app) diagnosticsRow(c *ui.Context, p *palette) {
 			ui.Text(c, "导出诊断包").FontSize(12).FontWeight(500).TextColor(p.primary)
 		})
 		if b.Clicked() && !busy {
-			a.diagAt = now
-			if put := a.diagnostics; put != nil {
-				a.diagBusy = true
-				go func() {
-					path, err := put()
-					a.post(func(c *ui.Context) {
-						a.diagBusy, a.diagAt = false, time.Time{}
-						a.diagSaved(c, path, err)
-					})
-				}()
-			}
+			a.exportDiag(now)
 		}
 		ui.Text(c, "里面有版本、网络状况和最近的连接记录，没有密钥，也没有你传的东西").FontSize(11).TextColor(p.ink3).LineHeight(1.45)
 	})
+}
+
+// diagPretend is how long the demo, which has no engine to put the
+// diagnostics package together, pretends it takes: as long as one usually
+// does.
+const diagPretend = 1300 * time.Millisecond
+
+// diagWorking reports whether the diagnostics package is being put
+// together at now. The demo's, done pretending, says where it went then;
+// till then it has the frame built anew as that comes.
+func (a *app) diagWorking(c *ui.Context, now time.Time) bool {
+	if a.diagBusy {
+		return true
+	}
+	if a.diagnostics != nil || a.diagAt.IsZero() {
+		return false
+	}
+	if left := diagPretend - now.Sub(a.diagAt); left > 0 {
+		c.After(left)
+		return true
+	}
+	a.diagAt = time.Time{}
+	a.diagSaved(c, filepath.Join(downloadsDir(), diagName(now)), nil)
+	return false
+}
+
+// exportDiag has the engine put the diagnostics package together, asked at
+// now: the row or button that asked turns while it does (diagWorking), and
+// the toast says where it went (diagSaved).
+func (a *app) exportDiag(now time.Time) {
+	a.diagAt = now
+	put := a.diagnostics
+	if put == nil {
+		return
+	}
+	a.diagBusy = true
+	go func() {
+		path, err := put()
+		a.post(func(c *ui.Context) {
+			a.diagBusy, a.diagAt = false, time.Time{}
+			a.diagSaved(c, path, err)
+		})
+	}()
 }
 
 // diagSaved says where the diagnostics package went, with the way to see

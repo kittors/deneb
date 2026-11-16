@@ -19,18 +19,132 @@ import (
 // earlier one did at 44, and weighs as much beside the button.
 const markSize = 52
 
+// startingPatience is how long the starting page says only "正在连接
+// Deneb…" (engine-restart-offline.md §2.3): a control server that can be
+// reached answers well within it, in a few seconds.
+const startingPatience = 10 * time.Second
+
+// The starting page's line past startingPatience: the control server out of
+// reach; or this computer without a network, which DESIGN §6.10 never has
+// the window call 连不上.
+const (
+	startNoControl = "连不上 Deneb 服务器，正在重试…"
+	startNoNetwork = "这台电脑没联网，联网后会自动连上"
+)
+
+// startingRoom is the room under the starting page's line for what a long
+// wait adds there: a line 4 under it, then the button 8 under that. As much
+// is kept over the mark, so that the mark and the line stay where they are
+// as it comes.
+const startingRoom = 56
+
 // startingView is the window while this computer's engine has not answered
-// yet: the mark, greyed, and one line, as the store keeps trying.
+// yet, or answers without the person's view: the mark, greyed, and one
+// line, as the store keeps trying. With the control server out of reach
+// past startingPatience, the line says so, the new words fading in after
+// the old fade out (DESIGN §6.5); under it, in the same fade, that the
+// devices connected still work, if some are, and the way to the
+// diagnostics (DESIGN §6.14). The view coming ends it at once.
 func (a *app) startingView(c *ui.Context, p *palette) {
-	ui.Column(c).Fill().Background(p.bg).Center().Gap(16).DragWindow().Children(func() {
+	now := a.now()
+	line := "正在连接 Deneb…"
+	switch {
+	case a.engineErr != "" && !a.snap.Engine:
+		line = a.engineErr
+	case a.longWait(c, now) && a.snap.NoNetwork:
+		line = startNoNetwork
+	case a.longWait(c, now):
+		line = startNoControl
+	}
+	shown, alpha, busy := a.startWords.step(line, now)
+	if busy {
+		c.AnimationFrame()
+	}
+	// No card on this page: a toast here keeps to the middle.
+	a.cardAt = ui.Rect{}
+	ui.Column(c).Fill().Background(p.bg).Center().DragWindow().Children(func() {
+		ui.Box(c.Key("starting-over")).Height(startingRoom).Shrink(0)
 		ui.Icon(c, markGlyph).Size(markSize, markSize).TextColor(p.ink3)
-		if a.engineErr != "" && !a.snap.Engine {
-			ui.Text(c, a.engineErr).FontSize(13).TextColor(p.ink2)
+		ui.Text(c.Key("starting-line"), shown).FontSize(13).TextColor(p.ink2).Margin(16, 0, 0, 0).Opacity(alpha)
+		ui.Column(c.Key("starting-under")).Height(startingRoom).Shrink(0).AlignItems(ui.Center).Opacity(alpha).Children(func() {
+			if shown != startNoControl {
+				return
+			}
+			if a.someConnected() {
+				ui.Text(c, "已经连上的设备照常能用").FontSize(12).TextColor(p.ink3).Margin(4, 0, 0, 0)
+			}
+			a.startingDiag(c, p, now)
+		})
+	})
+	ww, wh := c.Size()
+	a.toastView(c, p, ww, wh, now)
+}
+
+// starting reports whether the window is the starting page: this
+// computer's engine not answering yet, or answering without the person's
+// view.
+func (a *app) starting() bool {
+	return !a.snap.Engine && a.snap.Version == 0 || a.snap.LoggedIn && !a.snap.Loaded
+}
+
+// longWait reports whether the control server has been out of reach past
+// startingPatience, this computer's engine answering without the person's
+// view; till then it has the frame built anew as that comes.
+func (a *app) longWait(c *ui.Context, now time.Time) bool {
+	if a.waitSince.IsZero() || !a.snap.Engine {
+		return false
+	}
+	if left := startingPatience - now.Sub(a.waitSince); left > 0 {
+		c.After(left)
+		return false
+	}
+	return true
+}
+
+// noteWait keeps waitSince from s, the store's own snapshot: since when it
+// has this computer's engine answering, logged in, without the person's
+// view and without the control server.
+func (a *app) noteWait(s *model.Snapshot) {
+	if s == nil || !s.Engine || !s.LoggedIn || s.Loaded || s.Control {
+		a.waitSince = time.Time{}
+		return
+	}
+	if a.waitSince.IsZero() {
+		a.waitSince = a.now()
+	}
+}
+
+// someConnected reports whether this computer's engine has some other
+// device connected now, as the network map it kept has them.
+func (a *app) someConnected() bool {
+	for id, p := range a.snap.Paths {
+		if id != a.snap.Self && p.Kind != model.PathSelf && p.Kind.Connected() {
+			return true
+		}
+	}
+	return false
+}
+
+// startingDiag is the starting page's way to the diagnostics package
+// (DESIGN §6.14), 8 under the words over it: a text button, the page's one
+// thing to do; while the package is put together, "正在收集…" turning in
+// its place. The toast then says where it went, as from the card.
+func (a *app) startingDiag(c *ui.Context, p *palette, now time.Time) {
+	ui.Row(c.Key("starting-diag")).Height(28).Margin(8, 0, 0, 0).Gap(4).AlignItems(ui.Center).Children(func() {
+		if a.diagWorking(c, now) {
+			spinner(c, p, now)
+			ui.Text(c, "正在收集…").FontSize(12).TextColor(p.ink2)
 			return
 		}
-		ui.Text(c, "正在连接 Deneb…").FontSize(13).TextColor(p.ink2)
+		if textButton(c, p, "starting-diag-button", startDiagLabel, true).Clicked() {
+			a.exportDiag(now)
+		}
 	})
 }
+
+// startDiagLabel is what the starting page's button to the diagnostics
+// says.
+const startDiagLabel = "导出诊断包"
 
 // loginView is the window before anyone logged in on this computer: the
 // mark and one button (§3 M1: 首次打开时只有一个"登录"按钮). The button

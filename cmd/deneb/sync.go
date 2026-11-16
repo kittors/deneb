@@ -36,8 +36,12 @@ func (a *app) sync(c *ui.Context) {
 	if c != nil {
 		a.clock = c.Now()
 	}
-	// While the engine is changed for the one shipped, the picture stays.
-	base := a.holdThroughSwap(a.store.Snapshot())
+	// While the engine is changed for the one shipped, the picture stays;
+	// how long the control server has been out of reach with no view to
+	// show counts all the same.
+	raw := a.store.Snapshot()
+	a.noteWait(raw)
+	base := a.holdThroughSwap(raw)
 	if dl := a.deleting; dl != nil && base != nil && !base.LoggedIn && a.base != nil && a.base.LoggedIn {
 		// The server logs this computer out as it deletes the account: the
 		// page stays as it was, names and all, while the window fades to

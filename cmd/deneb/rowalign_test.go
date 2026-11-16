@@ -503,6 +503,38 @@ func (l *laid) endBox(last bool) *laid {
 	return l.innerEndBox(last)
 }
 
+// pillWords is how far words at a pill's round end keep from it: their
+// corners then clear its curve about as far as a ball's nested there do.
+const pillWords = 16
+
+// endWords is the words that show first at l's start (or its end, last),
+// looked into what is not painted as innerEndBox does; nil when a box, a
+// mark or a picture shows first there.
+func (l *laid) endWords(last bool) *laid {
+	for i := range l.children {
+		k := l.children[i]
+		if last {
+			k = l.children[len(l.children)-1-i]
+		}
+		if k.absolute {
+			continue
+		}
+		if _, ok := k.ink(); !ok {
+			continue
+		}
+		switch {
+		case !k.shown:
+			return nil
+		case k.kind == 1:
+			return k
+		case k.kind != 0 || k.painted:
+			return nil
+		}
+		return k.endWords(last)
+	}
+	return nil
+}
+
 // innerEndBox is endBox of the first (or last) of those inside l that shows.
 func (l *laid) innerEndBox(last bool) *laid {
 	for i := range l.children {
@@ -629,6 +661,21 @@ func spacingOff(root *laid, w, h float32) []offCenter {
 					bad = append(bad, fmt.Sprintf("a pill's %s holds %q %g from it, %g from the top, %g from the bottom", side, firstWords(box.words(), 16), end, top, bottom))
 				}
 			}
+			// Words at a round end of a pill as high as a panel (the tray,
+			// the toast; not a button) keep 16 from it.
+			for _, last := range []bool{false, true} {
+				wd := e.endWords(last)
+				if wd == nil || e.rect.H < 40 {
+					continue
+				}
+				end, side := wd.rect.X-e.rect.X, "start"
+				if last {
+					end, side = e.rect.X+e.rect.W-(wd.rect.X+wd.rect.W), "end"
+				}
+				if end < pillWords-0.5 {
+					bad = append(bad, fmt.Sprintf("a pill's %s has words %q %g from it, not %d", side, firstWords(wd.words(), 16), end, pillWords))
+				}
+			}
 		}
 		if len(bad) > 0 {
 			out = append(out, offCenter{row: firstWords(e.words(), 60), parts: bad})
@@ -715,10 +762,21 @@ func TestLayoutRules(t *testing.T) {
 	}
 	all := map[string]*seen{}
 	var order []string
+	// DENEB_LAYOUT_ONLY names the states to look at, as DENEB_ALIGN_ONLY
+	// does for the stills; all by default.
+	want := map[string]bool{}
+	for _, k := range strings.Split(os.Getenv("DENEB_LAYOUT_ONLY"), ",") {
+		if k != "" {
+			want[k] = true
+		}
+	}
 	for _, size := range [][2]float32{{980, 640}, {1180, 740}, {1440, 900}} {
 		w, h := size[0], size[1]
 		at := fmt.Sprintf("%.0f×%.0f", w, h)
 		for _, st := range alignStates {
+			if len(want) > 0 && !want[st.name] {
+				continue
+			}
 			r := alignRig(t, st.first, w, h)
 			if !st.open(r, h) {
 				t.Errorf("%s %s: could not get there: %q", at, st.name, r.tt.Texts())
@@ -882,6 +940,27 @@ var alignStates = []struct {
 		return r.openAt(r.device("mac")) && r.openWords("更多") && r.openWords("导出诊断包")
 	}},
 	{"没联网", -1, func(r *m3rig, h float32) bool { return r.after("nonet") }},
+	// The starting page with no view to show, the control server out of
+	// reach (engine-restart-offline.md §2.3): before 10 s; past them, with
+	// devices connected by the network map kept, and with none; and this
+	// computer without a network.
+	{"启动·正在连接", -1, func(r *m3rig, h float32) bool {
+		r.d.Simulate("control-out")
+		r.run(2 * time.Second)
+		return r.tt.HasText("正在连接 Deneb…")
+	}},
+	{"启动·连不上·有连着的设备", -1, func(r *m3rig, h float32) bool { return r.waitOut("control-out") }},
+	{"启动·连不上·没有连着的设备", -1, func(r *m3rig, h float32) bool { return r.waitOut("control-out-alone") }},
+	{"启动·没联网", -1, func(r *m3rig, h float32) bool { return r.waitOut("control-out", "nonet") }},
+	// The diagnostics package put together from there: the toast, with no
+	// tile at its start, its words at the round end.
+	{"启动·导出诊断包", -1, func(r *m3rig, h float32) bool {
+		if !r.waitOut("control-out") || !r.openWords(startDiagLabel) {
+			return false
+		}
+		r.run(1500 * time.Millisecond)
+		return r.tt.HasText("诊断包存到了「下载」")
+	}},
 	{"连不上 Deneb", -1, func(r *m3rig, h float32) bool { return r.after("engine-away") }},
 	{"中转站连不上", -1, func(r *m3rig, h float32) bool { return r.after("relay-down") }},
 	{"提醒", -1, func(r *m3rig, h float32) bool { return r.after("notice") }},
@@ -907,6 +986,16 @@ func (r *m3rig) after(event string) bool {
 	r.d.Simulate(event)
 	r.run(1500 * time.Millisecond)
 	return true
+}
+
+// waitOut has the demo do the events, and waits past the starting page's
+// patience, till its line says why it still waits.
+func (r *m3rig) waitOut(events ...string) bool {
+	for _, e := range events {
+		r.d.Simulate(e)
+	}
+	r.run(startingPatience + 800*time.Millisecond)
+	return r.tt.HasText(startNoControl) || r.tt.HasText(startNoNetwork)
 }
 
 // openAt clicks where to says and lets what it opens come in.

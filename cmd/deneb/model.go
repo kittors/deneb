@@ -465,6 +465,13 @@ type app struct {
 	loggingIn bool   // the login page is open in the browser
 	loginErr  string // why the login did not start
 	engineErr string // why this computer's engine could not be started
+	// waitSince is when this computer's engine began to answer without the
+	// person's view and without the control server, as the store has it
+	// (a picture held through an engine change aside); zero while not. The
+	// starting page says so from startingPatience on (startingView).
+	// startWords is that page's line, as it changes.
+	waitSince  time.Time
+	startWords swapper
 
 	// swap: the engine is being changed for the one shipped (engineswap.go).
 	swap *engineSwap

@@ -40,6 +40,11 @@ func (a *app) view(c *ui.Context) {
 	a.checkOnboard()
 	a.tickAdapter(c)
 	p := colors(c)
+	starting := a.starting()
+	if !starting {
+		// The starting page, shown anew, comes with its line as it is then.
+		a.startWords = swapper{}
+	}
 	if o := a.onboard; o != nil && o.leaving.IsZero() {
 		// The first time's steps, the whole window (DESIGN §7.3).
 		a.onboardView(c, p)
@@ -47,7 +52,7 @@ func (a *app) view(c *ui.Context) {
 		return
 	}
 	switch {
-	case !a.snap.Engine && a.snap.Version == 0, a.snap.LoggedIn && !a.snap.Loaded:
+	case starting:
 		a.startingView(c, p)
 		a.updateOutsideSidebar(c, p)
 		return

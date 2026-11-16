@@ -29,7 +29,9 @@ func (a *app) notify(c *ui.Context, d *device, text string, undo func()) {
 	right := a.bottomRight(a.ch)
 	tw := toastWidth(text, undo != nil)
 	box := ui.Rect{X: (a.cw-right)/2 - tw/2, Y: a.ch - toastBottom(true) - toastHeight, W: tw, H: toastHeight}
-	n.top = a.covers(box, d)
+	// The starting page has no canvas: the devices the window last drew
+	// are not there to cover, and the toast keeps to the bottom.
+	n.top = !a.starting() && a.covers(box, d)
 	if n.top && a.selected != "" && !a.busy() && a.cardAt.W > 0 {
 		// The card shows from the canvas's top right: up there the toast
 		// keeps to the room beside it.
@@ -678,7 +680,8 @@ func (a *app) toastView(c *ui.Context, p *palette, w, h float32, now time.Time) 
 	right := a.bottomRight(h)
 	// Both places are built in every frame, so that a toast comes in and
 	// goes out where it shows: Enter and Exit play in a parent that stays.
-	above := !a.myDevicesOpen && (a.trayShows() || a.trayUp)
+	// (My Devices and the starting page have no tray.)
+	above := !a.myDevicesOpen && !a.starting() && (a.trayShows() || a.trayUp)
 	// Where a toast showed in the frame before: one coming up in a place
 	// shows its notice at once, nothing before it to fade out.
 	was := a.toastWas
@@ -767,7 +770,7 @@ func (a *app) toastView(c *ui.Context, p *palette, w, h float32, now time.Time) 
 					if show.undo != nil {
 						right = 8
 					}
-					body := ui.Row(c.Key("toast-body")).Width(need).Gap(12).Padding(0, right, 0, 0).AlignItems(ui.Center).Shrink(0).
+					body := ui.Row(c.Key("toast-body")).Width(need).Gap(12).Padding(0, right, 0, toastLead(show)).AlignItems(ui.Center).Shrink(0).
 						Opacity(alpha).IgnoreInput(show != tn)
 					body.Children(func() {
 						if show.dev != nil {
@@ -830,7 +833,18 @@ func toastWide(c *ui.Context, n *notice) float32 {
 		lw, _ := c.MeasureText(0, ui.Span{Text: label, Size: 13, Weight: 600})
 		w, parts, right = w+lw+24, parts+1, 8
 	}
-	return w + float32(parts-1)*12 + right
+	return w + float32(parts-1)*12 + right + toastLead(n)
+}
+
+// toastLead is the room before what the toast says of n, past the 8 the
+// pill keeps: none before a tile or an orb, which nests in the round end;
+// 8 before words, which keep 16 from it, as at the other end and as the
+// tray's do (DESIGN §3.9).
+func toastLead(n *notice) float32 {
+	if n.dev == nil && !n.orb {
+		return 8
+	}
+	return 0
 }
 
 // ---- Card -------------------------------------------------------------------------------

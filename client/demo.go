@@ -255,6 +255,9 @@ const demoInviteLAN model.LANID = "boardgame"
 //   - "engine-away", "engine-loading", "engine-new": the engine changed for
 //     the one shipped, in its three steps; "nonet-back" ends it.
 //     "engine-up": it answers with all it has, as to a window just opened.
+//   - "control-out", "control-out-alone": it answers without the person's
+//     view, the control server out of reach, with devices connected by the
+//     network map it kept, or none; "control-back": the server answers.
 func (d *Demo) Simulate(event string) {
 	now := time.Now()
 	d.update(func(s *model.Snapshot) *model.Snapshot {
@@ -324,6 +327,19 @@ func (d *Demo) Simulate(event string) {
 			// The engine answers with all it has, as to a window just opened
 			// (design/plan/m7/engine-restart-offline.md §3).
 			n.Engine, n.Loaded = true, true
+		case "control-out":
+			// The engine answers without the person's view, the control
+			// server out of reach: the first time after an update from a
+			// version that kept no view (engine-restart-offline.md §2.3). The
+			// devices it connected by the network map it kept still work.
+			n.Engine, n.Loaded, n.Control = true, false, false
+		case "control-out-alone":
+			// The same on a computer just logged in, with no network map yet:
+			// nothing connected.
+			n.Engine, n.Loaded, n.Control = true, false, false
+			n.Paths = map[model.DeviceID]model.Path{}
+		case "control-back":
+			n.Engine, n.Loaded, n.Control = true, true, true
 		case "engine-new":
 			n.Engine, n.Loaded = true, true
 			for id := range d.netPaths {
