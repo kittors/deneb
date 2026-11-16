@@ -103,6 +103,10 @@ type RelayInfo struct {
 	// this run, not counting it: 0 for one that runs on, and for one just
 	// started. Past a few, its card says it keeps failing.
 	Restarts int `json:"restarts,omitempty"`
+	// Tunnel is the host name of the relay's Cloudflare tunnel, if it has
+	// one (-tunnel-host), alone: the control server puts it in the network
+	// map for a public relay (Relay.Tunnel), and for no other.
+	Tunnel string `json:"tunnel,omitempty"`
 }
 
 // How a relay program runs (RelayInfo.Install).

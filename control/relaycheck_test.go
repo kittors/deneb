@@ -695,6 +695,40 @@ func TestSeenSkipped(t *testing.T) {
 	}
 }
 
+// TestRelayTunnelPublicOnly: the Cloudflare tunnel a relay says it has
+// goes into the network map for a public relay only, as a host name alone;
+// a sync changes it.
+func TestRelayTunnelPublicOnly(t *testing.T) {
+	w := newCheckWorld(t, nil)
+	s := w.s
+	s.cfg.Pin = testPin
+	if err := s.opsSetOperator(nil, w.me, true); err != nil {
+		t.Fatal(err)
+	}
+	pubInfo := proto.RelayInfo{IPv4: netip.MustParseAddr("198.51.100.31"), DERPPort: 47445, STUNPort: 47478,
+		Pin: "sha256:" + strings.Repeat("ab", 32), Tunnel: "relay.deneb.app"}
+	pub := w.mac.must(proto.OpRelayJoin, proto.OpArgs{Public: true, Name: "香港"}).Result.RelayJoin
+	_, regPub := joinRegister(t, s, pub.Code, pubInfo)
+	own := w.mac.must(proto.OpRelayJoin, proto.OpArgs{Name: "家里"}).Result.RelayJoin
+	_, regOwn := joinRegister(t, s, own.Code, proto.RelayInfo{IPv4: netip.MustParseAddr("198.51.100.32"), DERPPort: 47445, STUNPort: 47478,
+		Pin: "sha256:" + strings.Repeat("cd", 32), Tunnel: "home.deneb.app"})
+	tunnelOf := func(id proto.RelayID) string { return s.state.Load().w.relays[id].Tunnel }
+	if got, own := tunnelOf(regPub.Relay), tunnelOf(regOwn.Relay); got != "relay.deneb.app" || own != "" {
+		t.Fatalf("the public relay's tunnel %q, the own one's %q", got, own)
+	}
+	relay := &testRelay{t: t, url: s.cfg.PublicURL, secret: regPub.Secret}
+	for _, c := range []struct{ said, want string }{
+		{"https://relay.deneb.app", ""}, {"relay.deneb.app:443", ""}, {"hk.relay.deneb.app", "hk.relay.deneb.app"}, {"", ""},
+	} {
+		info := pubInfo
+		info.Tunnel = c.said
+		relay.sync(proto.RelaySyncRequest{Info: &info})
+		if got := tunnelOf(regPub.Relay); got != c.want {
+			t.Fatalf("it said %q: the network map has %q", c.said, got)
+		}
+	}
+}
+
 // TestPublicRelayUnreachableAlert: a public relay the checks cannot reach
 // is an alert for the operators.
 func TestPublicRelayUnreachableAlert(t *testing.T) {

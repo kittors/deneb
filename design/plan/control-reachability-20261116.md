@@ -356,3 +356,23 @@ hk-155 这个 IP 从国内直连被挡了 TCP，控制服务器本身没事。�
    - 用启动时带的测试开关（像 `DENEB_UPDATE_SOURCE` 那样）让"香港"的直连故意连不上，看经 Cloudflare 能不能用，不动这台 Mac 的网络；
    - 同一轮测入口切换，和引擎换版时窗口不闪（m7/engine-restart-offline.md 的 C）。
 6. 发 0.1.9。
+
+### 10.7 控制线做好的（服务器这一半，本机测过，没上线）
+
+- **网络图**：`proto.Relay.Tunnel`（提交 e6d23a4），只填域名，不带 `https://`、端口和路径。`github.com/coder/websocket` 改成直接依赖。
+- **中转站报给控制服务器**：`proto.RelayInfo.Tunnel`，就是 `-tunnel-host`。控制服务器把它记在中转站的情况里，只给公共中转站写进网络图；"我的服务器"的照样记下，但不写进去。报来的不是纯域名就丢掉。
+- **中转站程序**：
+  - `-tunnel-listen` 只能是回环地址，`-tunnel-host` 只能是纯域名，两个要一起给，不然不启动。端口被占也不启动，和 `-listen` 一样。
+  - 隧道口只认 `/derp` 上子协议为 `derp` 的 WebSocket：不是本机来的、或者没有 `CF-Connecting-IP`，回 403；不是这种 WebSocket，回 426；别的路径，回 404。
+  - 进来的交给同一个 derpserver，和直连一样包上计流量、能被踢的那层；准入和日志用 `CF-Connecting-IP` 当设备的地址。
+  - 处理函数在可以引用的小包 `cmd/deneb-relay/tunnel` 里（`tunnel.Handler`；`tunnel.ServerAccept` 直接接一个 derpserver，给测试用），引擎线的测试可以直接用。
+- **部署**：
+  - `deploy/tunnel/deploy.sh`：hk-155 上跑 cloudflared，钉死 `2026.11.0`，主机网络、只往外连，0.5 CPU、128 MB。令牌在 `/opt/deneb-tunnel/token`（只有令牌一行），脚本只把它设成 0600、属镜像的用户（65532），以只读方式挂进容器，由 cloudflared 用 `--token-file` 自己读。脚本不读、不打印令牌，也不把它放到命令行上。部署前后各打印一遍容器和监听端口。
+  - `deploy/relay/deploy.sh`：`TUNNEL_LISTEN`、`TUNNEL_HOST`，默认关。
+  - `deploy/control/deploy-hk155.sh`：`TUNNEL=yes` 时加 `-tunnel-listen 127.0.0.1:47450`。
+  - 端口被别的程序占着就停；是自己的、已经开着这个口的容器占着，照常部署。
+- **测试**（都加 `-race` 跑过）：
+  - `tunnel` 包：两个设备经隧道口的 WebSocket 互相发包；准入看到的是各自的 `CF-Connecting-IP`（IPv4、IPv6 各一个）；各种被拒的情况；两个参数的检查。
+  - 中转站：`TestPublicRelayTunnel`，用真的控制服务器：网络图里有 `Tunnel`，两台登录的设备经隧道口互相发包，准入看到的是 `CF-Connecting-IP`，流量也算进去了，没有这个头回 403；`TestTunnelFlags`，不是回环、只给一个、不是纯域名，都不启动。
+  - 控制服务器：`TestRelayTunnelPublicOnly`，只有公共中转站写 `Tunnel`；同步时报来的不是纯域名就丢掉，换了新域名就跟着更新。
+  - 部署脚本：在本机用假的 ssh、scp、docker、ss 跑过 16 项：开不开隧道的参数，参数不对时退出、不连服务器，端口被占时停下，cloudflared 钉死版本、令牌不进命令行，前后都打印。

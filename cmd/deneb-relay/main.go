@@ -44,6 +44,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kittors/deneb/cmd/deneb-relay/tunnel"
 	"github.com/kittors/deneb/proto"
 	"tailscale.com/derp/derpserver"
 )
@@ -73,6 +74,11 @@ type config struct {
 	firewall     string
 	firewallOpen bool
 	restarts     int
+	// tunnelListen and tunnelHost are a Cloudflare tunnel's way in
+	// (cmd/deneb-relay/tunnel): the loopback port cloudflared brings
+	// WebSockets to, and the tunnel's host name, which goes to the control
+	// server (proto.RelayInfo.Tunnel). Both or neither.
+	tunnelListen, tunnelHost string
 }
 
 // commands are deneb-relay's commands; with none, it runs the relay.
@@ -123,6 +129,8 @@ func cmdRun(args []string) int {
 	fs.StringVar(&ipv6, "ipv6", "", "the IPv6 address devices reach it at (default: a public one on its interfaces)")
 	fs.UintVar(&derpPort, "derp-port", 0, "the TCP port devices reach DERP at, if not -listen's (a port mapping)")
 	fs.UintVar(&stunPort, "stun-port", 0, "the UDP port devices reach STUN at, if not -stun's")
+	fs.StringVar(&cfg.tunnelListen, "tunnel-listen", "", "a loopback address, as 127.0.0.1:47451, for a Cloudflare tunnel's cloudflared on this machine: plain HTTP, DERP over WebSocket at /derp, each device from its CF-Connecting-IP; with -tunnel-host")
+	fs.StringVar(&cfg.tunnelHost, "tunnel-host", "", "the tunnel's host name, as relay.deneb.app: where devices that cannot reach -listen come in (a public relay's devices hear it from the control server)")
 	fs.DurationVar(&cfg.syncEvery, "sync", time.Minute, "how often to sync with the control server")
 	fs.BoolVar(&healthcheck, "healthcheck", false, "check that the relay with this -data answers, and exit: for Docker's HEALTHCHECK")
 	fs.StringVar(&logPath, "log", "", "write the log to this file, kept under 30 MB (where no journal takes it)")
@@ -267,6 +275,17 @@ type listening func(derp net.Addr, stun net.Addr, r *relay)
 func run(ctx context.Context, cfg config, logf func(string, ...any), ready listening) error {
 	ctx, stop := context.WithCancel(ctx)
 	defer stop()
+	if (cfg.tunnelListen == "") != (cfg.tunnelHost == "") {
+		return errors.New("-tunnel-listen and -tunnel-host go together")
+	}
+	if cfg.tunnelListen != "" {
+		if err := tunnel.CheckListen(cfg.tunnelListen); err != nil {
+			return err
+		}
+		if err := tunnel.CheckHost(cfg.tunnelHost); err != nil {
+			return err
+		}
+	}
 	if err := os.MkdirAll(cfg.data, 0o700); err != nil {
 		return err
 	}
@@ -275,6 +294,15 @@ func run(ctx context.Context, cfg config, logf func(string, ...any), ready liste
 		return err
 	}
 	defer ln.Close()
+	// The tunnel's port, taken now: a port in use stops the relay before it
+	// registers, as -listen's does.
+	var tl net.Listener
+	if cfg.tunnelListen != "" {
+		if tl, err = net.Listen("tcp", cfg.tunnelListen); err != nil {
+			return fmt.Errorf("-tunnel-listen: %w", err)
+		}
+		defer tl.Close()
+	}
 	// Where -healthcheck finds it, whatever -listen said.
 	if err := writeFile(cfg.data, listenFile, []byte(ln.Addr().String())); err != nil {
 		return err
@@ -288,7 +316,7 @@ func run(ctx context.Context, cfg config, logf func(string, ...any), ready liste
 		defer stun.close()
 	}
 	info := proto.RelayInfo{HostName: cfg.host, IPv4: cfg.ipv4, IPv6: cfg.ipv6, DERPPort: cfg.derpPort, STUNPort: cfg.stunPort, Version: version(),
-		Install: cfg.install, Firewall: cfg.firewall, FirewallOpen: cfg.firewallOpen, Restarts: cfg.restarts}
+		Install: cfg.install, Firewall: cfg.firewall, FirewallOpen: cfg.firewallOpen, Restarts: cfg.restarts, Tunnel: cfg.tunnelHost}
 	if cfg.findAddrs {
 		v4, v6, local := findAddrs()
 		if !cfg.ipv4.IsValid() {
@@ -348,7 +376,7 @@ func run(ctx context.Context, cfg config, logf func(string, ...any), ready liste
 		ErrorLog:     log.New(logWriter(logf), "http: ", 0),
 	}
 	defer srv.Close()
-	errc := make(chan error, 3)
+	errc := make(chan error, 4)
 	go func() { errc <- srv.ServeTLS(ln, "", "") }()
 
 	ctl, err := newControlClient(cfg.control, cfg.controlPin)
@@ -396,6 +424,23 @@ func run(ctx context.Context, cfg config, logf func(string, ...any), ready liste
 
 	handler = r.handler()
 	close(up)
+	// The Cloudflare tunnel's way in: the same DERP server, devices from
+	// their CF-Connecting-IP.
+	if tl != nil {
+		ts := &http.Server{
+			Handler:           tunnel.Handler(r.acceptTunnel, logf),
+			ReadHeaderTimeout: 10 * time.Second,
+			ErrorLog:          log.New(logWriter(logf), "tunnel: ", 0),
+		}
+		defer ts.Close()
+		r.tunnel = tl.Addr()
+		go func() {
+			if err := ts.Serve(tl); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errc <- fmt.Errorf("tunnel: %w", err)
+			}
+		}()
+		logf("tunnel %s: cloudflared brings its devices to %s", cfg.tunnelHost, tl.Addr())
+	}
 	// Its own goroutines end before run returns, first of all that it
 	// closes: a relay Deneb no longer uses stops asking the control server,
 	// takes its router's forwarding back (keep) and stops watching its

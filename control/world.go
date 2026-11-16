@@ -585,6 +585,11 @@ func loadWorld(q querier, network proto.Network, publicURL string, now time.Time
 			}
 			rl.IPv6 = a
 		}
+		// A public relay's Cloudflare tunnel goes to the devices, for when its
+		// own address cannot be reached; anyone else's relay keeps its own.
+		if rl.Source == proto.RelayPublic {
+			rl.Tunnel = m.Facts.Tunnel
+		}
 		w.relays[rl.ID] = &rl
 		w.relayPos[rl.ID] = dpos
 		if dpos >= 0 {

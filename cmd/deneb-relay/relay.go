@@ -12,6 +12,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"runtime/debug"
 	"slices"
@@ -48,6 +49,9 @@ type relay struct {
 	total   atomic.Int64 // bytes carried, in and out, since the start
 	meter   *healthMeter
 	syncNow chan struct{} // a watch saw a change
+	// tunnel is where the Cloudflare tunnel's port listens, if it does
+	// (-tunnel-listen); set before run reports the relay ready.
+	tunnel net.Addr
 }
 
 // newRelay makes the relay; serve starts it.
@@ -109,10 +113,7 @@ func (r *relay) serveDERP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
-	c := &clientConn{Conn: nc, r: r}
-	r.mu.Lock()
-	r.conns[c] = true
-	r.mu.Unlock()
+	c := r.track(nc)
 	// The request's context ends with this handler; Accept gets a new
 	// one, carrying the connection.
 	ctx := context.WithValue(context.Background(), connKey{}, c)
@@ -133,6 +134,26 @@ func (r *relay) serveDERP(w http.ResponseWriter, req *http.Request) {
 	}()
 }
 
+// track wraps a client's connection, to count its bytes and close it, and
+// keeps it among the relay's.
+func (r *relay) track(nc net.Conn) *clientConn {
+	c := &clientConn{Conn: nc, r: r}
+	r.mu.Lock()
+	r.conns[c] = true
+	r.mu.Unlock()
+	return c
+}
+
+// acceptTunnel serves a device that came through the Cloudflare tunnel
+// (tunnel.Handler), from remoteAddr, its CF-Connecting-IP: as serveDERP
+// serves one that came directly, counted, asked about and closed alike.
+// It returns when the connection ends, which ends the WebSocket.
+func (r *relay) acceptTunnel(ctx context.Context, nc net.Conn, remoteAddr string) {
+	c := r.track(nc)
+	ctx = context.WithValue(ctx, connKey{}, c)
+	r.derp.Accept(ctx, c, bufio.NewReadWriter(bufio.NewReaderSize(c, 1<<10), nil), remoteAddr)
+}
+
 // clientConn is one client's connection: what it sent and received, and
 // which node key it said it was.
 type clientConn struct {
@@ -144,8 +165,9 @@ type clientConn struct {
 
 	mu       sync.Mutex
 	node     proto.NodePublic
-	keyed    bool // its admission request went out
-	refused  bool // the server said no
+	source   netip.Addr // the address its admission request said, and the log
+	keyed    bool       // its admission request went out
+	refused  bool       // the server said no
 	closed   bool
 	reported [2]int64 // sent and received that syncs took already
 }
@@ -218,7 +240,7 @@ func (admitTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	var ar proto.RelayAdmitRequest
 	if err := json.Unmarshal(body, &ar); err == nil {
 		c.mu.Lock()
-		c.node, c.keyed = ar.NodePublic, true
+		c.node, c.source, c.keyed = ar.NodePublic, ar.Source, true
 		c.mu.Unlock()
 	}
 	out, err := r.ctl.request(req.Context(), proto.PathRelayAdmit, body)

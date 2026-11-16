@@ -64,12 +64,20 @@ type relayFacts struct {
 	// FromSource: it gave no address, and the one its requests come from
 	// is taken; a sync from another moves it there.
 	FromSource bool `json:"fromSource,omitempty"`
+	// Tunnel is its Cloudflare tunnel's host name, if it has one: a public
+	// relay's goes into the network map (proto.Relay.Tunnel; world.go),
+	// another's nowhere.
+	Tunnel string `json:"tunnel,omitempty"`
 }
 
 // factsOf takes what a relay says of the machine, cleaned up.
 func factsOf(in proto.RelayInfo) relayFacts {
 	f := relayFacts{Version: clip(in.Version, 64), Region: clip(in.Region, 64), Install: clip(in.Install, 32),
 		Firewall: clip(in.Firewall, 32), FirewallOpen: in.FirewallOpen, Restarts: min(max(in.Restarts, 0), 1000)}
+	// A host name alone, as relay.deneb.app: devices dial wss://<it>/derp.
+	if t := in.Tunnel; len(t) <= 253 && strings.Contains(t, ".") && hostNameRE.MatchString(t) {
+		f.Tunnel = t
+	}
 	for _, a := range in.Local {
 		if a.IsValid() && !a.IsLoopback() && !a.IsUnspecified() && len(f.Local) < 16 && !slices.Contains(f.Local, a.Unmap()) {
 			f.Local = append(f.Local, a.Unmap())
