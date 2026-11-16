@@ -131,6 +131,15 @@ func (c *Client) maybeProbe() {
 	}()
 }
 
+// NetworkChanged is told of a new network (the engine's netChanged): the
+// entrances before the one in use are tried again at once, not in
+// probeEvery, to be on a CDN, which sees what it carries, no longer than
+// it has to be.
+func (c *Client) NetworkChanged() {
+	c.probed.Store(0)
+	c.maybeProbe()
+}
+
 // Through is link, from the server, by the entrance in use when its origin
 // is one of the entrances: a login link the server writes with its own
 // address works by the way in that works.

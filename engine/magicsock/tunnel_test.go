@@ -3,6 +3,7 @@ package magicsock
 import (
 	"context"
 	"crypto/x509"
+	"errors"
 	"io"
 	"log"
 	"net"
@@ -11,6 +12,7 @@ import (
 	"net/netip"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -207,6 +209,116 @@ func TestRelayTunnelAndBack(t *testing.T) {
 	if err := c.SetRelayDirectOff("nosuch", true); err == nil {
 		t.Error("a relay with no tunnel turned off")
 	}
+}
+
+// TestRelayNoNetworkStaysDirect: neither the own address nor the tunnel
+// gets through, as with no network at all (the lid closed, the Wi-Fi
+// changing): the relay is not moved to the tunnel, nor remembered there;
+// when the network is back, it comes up by its own address (§10.4 甲).
+func TestRelayNoNetworkStaysDirect(t *testing.T) {
+	s := derpserver.New(key.NewNode(), func(string, ...any) {})
+	defer s.Close()
+	dial, pool := fakeCloudflare(t, s)
+	port, pin := pinnedRelay(t, s)
+	var down atomic.Bool
+	down.Store(true)
+	c, err := New(key.NewNode(), [32]byte{7}, Options{Logf: func(string, ...any) {}, RelayRoots: pool})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.tunnelDial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if down.Load() {
+			return nil, errors.New("no network")
+		}
+		return dial(ctx, network, addr)
+	}
+	c.mu.Lock()
+	c.directOff["hk"] = true // the own address does not get through either
+	c.mu.Unlock()
+	r := tunnelRelay(port, pin)
+	c.SetRelays([]proto.Relay{r}, []RelayList{{Scope: "lan/a", Relays: []proto.RelayID{r.ID}}}, "")
+	waitFor(t, "the relay on record as failed", func() bool {
+		for _, f := range c.FailedRelays() {
+			if f.Relay == "hk" {
+				return true
+			}
+		}
+		return false
+	})
+	c.mu.Lock()
+	remembered := len(c.viaTunnel)
+	c.mu.Unlock()
+	for _, rs := range c.Relays() {
+		if rs.Via == "tunnel" {
+			t.Error("moved to the tunnel with no network")
+		}
+	}
+	if remembered != 0 {
+		t.Error("the tunnel remembered with no network")
+	}
+
+	// The network back: the own address first.
+	down.Store(false)
+	c.mu.Lock()
+	delete(c.directOff, "hk")
+	c.relayFail["hk"].until = time.Now().Add(-time.Second)
+	c.mu.Unlock()
+	c.rechooseRelays()
+	relayBy(t, c, "hk", "direct")
+}
+
+// TestRelayTunnelTriesDirectOnSchedule: the own address blocked, the relay
+// goes by the tunnel; unblocked, with nothing said, it is back on the own
+// address once tunnelProbeEvery (shortened here) is up.
+func TestRelayTunnelTriesDirectOnSchedule(t *testing.T) {
+	old := tunnelProbeEvery
+	tunnelProbeEvery = 300 * time.Millisecond
+	t.Cleanup(func() { tunnelProbeEvery = old })
+	s := derpserver.New(key.NewNode(), func(string, ...any) {})
+	defer s.Close()
+	dial, pool := fakeCloudflare(t, s)
+	port, pin := pinnedRelay(t, s)
+	c := tunnelConn(t, tunnelRelay(port, pin), dial, pool)
+	relayBy(t, c, "hk", "direct")
+	if err := c.SetRelayDirectOff("hk", true); err != nil {
+		t.Fatal(err)
+	}
+	relayBy(t, c, "hk", "tunnel")
+	c.mu.Lock()
+	delete(c.directOff, "hk") // unblocked, nothing woken
+	c.mu.Unlock()
+	relayBy(t, c, "hk", "direct")
+}
+
+// TestRelayBackOnNetworkChange: on the tunnel with the own address
+// blocked, the network changes (NetworkChanged, from the engine's
+// netChanged) and the address gets through there: back to it at once,
+// not after tunnelProbeEvery.
+func TestRelayBackOnNetworkChange(t *testing.T) {
+	old := tunnelProbeEvery
+	tunnelProbeEvery = time.Hour
+	t.Cleanup(func() { tunnelProbeEvery = old })
+	s := derpserver.New(key.NewNode(), func(string, ...any) {})
+	defer s.Close()
+	dial, pool := fakeCloudflare(t, s)
+	port, pin := pinnedRelay(t, s)
+	c := tunnelConn(t, tunnelRelay(port, pin), dial, pool)
+	if err := c.SetRelayDirectOff("hk", true); err != nil {
+		t.Fatal(err)
+	}
+	relayBy(t, c, "hk", "tunnel")
+	c.mu.Lock()
+	delete(c.directOff, "hk")
+	c.mu.Unlock()
+	time.Sleep(300 * time.Millisecond)
+	for _, rs := range c.Relays() {
+		if rs.Via != "tunnel" {
+			t.Fatalf("back to %q before the network changed", rs.Via)
+		}
+	}
+	c.NetworkChanged()
+	relayBy(t, c, "hk", "direct")
 }
 
 // TestTunnelCarriesPackets: two devices through the tunnel, each to the

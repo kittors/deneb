@@ -238,8 +238,14 @@ func (p *twoWays) Recv() (derp.ReceivedMessage, error) {
 		if p.isClosed() || !p.directFailed.Load() || p.tunnel == nil {
 			return nil, err
 		}
-		// The own address did not get through: the tunnel, at once, so
-		// that the relay does not count as lost.
+		// The own address did not get through. The tunnel is the way only
+		// once it does: connected, the DERP handshake done. Not either is no
+		// network at all, not a blocked address: the own address stays the
+		// way, and is tried first again (§10.4 甲: through Cloudflare only
+		// what is blocked).
+		if _, terr := p.tunnel.connected(); terr != nil {
+			return nil, err
+		}
 		p.use(true)
 		p.logf("[relay] %s: its own address does not get through (%v); by its tunnel", p.name, err)
 	}

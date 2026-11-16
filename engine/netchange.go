@@ -256,6 +256,10 @@ func (e *Engine) netChanged(reason string) {
 		}
 	}
 	e.ms.ResetPaths(reason)
+	// What went by Cloudflare for a blocked address tries the address
+	// again at once: on the new network it may get through
+	// (design/plan/control-reachability-20261116.md §9.3, §10.4).
+	e.ms.NetworkChanged()
 	e.mu.Lock()
 	cc := e.cc
 	e.mu.Unlock()
@@ -263,6 +267,7 @@ func (e *Engine) netChanged(reason string) {
 		// Connections made on the old network may be dead without knowing
 		// it: the stream, reports and ops all go on new ones.
 		cc.ResetConnections()
+		cc.NetworkChanged()
 	}
 	e.kickControl()
 	e.requestReport()

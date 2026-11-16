@@ -151,6 +151,59 @@ func TestEntrances(t *testing.T) {
 	}
 }
 
+// TestEntrancesBackOnNetworkChange: on the second entrance, the first
+// blocked; the network changes (NetworkChanged, from the engine's
+// netChanged) and the first gets through there: taken back at once, not
+// after probeEvery.
+func TestEntrancesBackOnNetworkChange(t *testing.T) {
+	oldProbe := probeEvery
+	probeEvery = time.Hour
+	t.Cleanup(func() { probeEvery = oldProbe })
+	pong := http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) { rw.Write([]byte("pong")) })
+	srv := httptest.NewUnstartedServer(pong)
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	pin := proto.Fingerprint(srv.Certificate())
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := ln.Addr().String() // its own address; dialed to srv once unblocked
+	ln.Close()
+	c, err := New(Options{Entrances: []proto.ControlEntrance{{URL: "https://" + first, Pin: pin}, {URL: srv.URL, Pin: pin}},
+		Machine: proto.NewMachineKey(), Logf: t.Logf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var blocked atomic.Bool
+	blocked.Store(true)
+	c.dial = func(ctx context.Context, network, addr, _ string) (net.Conn, error) {
+		if addr == first {
+			if blocked.Load() {
+				return nil, errors.New("blocked")
+			}
+			addr = srv.Listener.Addr().String()
+		}
+		return (&net.Dialer{}).DialContext(ctx, network, addr)
+	}
+	if err := ping(c); err != nil || c.URL() != srv.URL {
+		t.Fatalf("ping: %v, by %s; want the second", err, c.URL())
+	}
+	blocked.Store(false)
+	time.Sleep(200 * time.Millisecond)
+	if c.URL() != srv.URL {
+		t.Fatalf("back to %s before the network changed", c.URL())
+	}
+	c.NetworkChanged()
+	for deadline := time.Now().Add(5 * time.Second); c.URL() != "https://"+first && time.Now().Before(deadline); {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if c.URL() != "https://"+first {
+		t.Errorf("after the network changed, still by %s", c.URL())
+	}
+}
+
 // TestEntranceChecks: a CDN's entrance, with no pin, is checked by its name
 // against the roots; one named by its address cannot be.
 func TestEntranceChecks(t *testing.T) {

@@ -984,6 +984,27 @@ func (c *Conn) tunnelDialer() func(ctx context.Context, network, addr string) (n
 	}
 }
 
+// NetworkChanged is told of a new network (the engine's netChanged: an
+// interface or address changed, or the computer woke): a public relay on
+// its tunnel tries its own address again at once, and one not connected
+// now starts by it, so that Cloudflare carries no more than is blocked
+// (design/plan/control-reachability-20261116.md §10.4).
+func (c *Conn) NetworkChanged() {
+	c.mu.Lock()
+	var ways []*twoWays
+	for id := range c.viaTunnel {
+		if rc := c.relays[id]; rc != nil && rc.ways != nil {
+			ways = append(ways, rc.ways)
+		} else {
+			delete(c.viaTunnel, id)
+		}
+	}
+	c.mu.Unlock()
+	for _, w := range ways {
+		w.probeNow()
+	}
+}
+
 // SetRelayDirectOff turns a public relay's own address off (or on again)
 // for a test on a real machine: its connections go by the tunnel, as when
 // the address is blocked (deneb debug relay-direct). Not saved: a restart
