@@ -132,7 +132,8 @@ func (e *engine) login(email string) {
 	if _, err := e.call("POST", proto.PathLogin, e.loginRequest(), &st); err != nil {
 		e.t.Fatal(err)
 	}
-	if st.LoggedIn || !strings.Contains(st.LoginURL, "/login?c=") {
+	// With no Web version, the browser's link is the same one.
+	if st.LoggedIn || !strings.Contains(st.LoginURL, "/login?c=") || st.BrowserURL != st.LoginURL && !strings.Contains(st.BrowserURL, proto.PathDeviceLogin+"?c=") {
 		e.t.Fatalf("login: %+v", st)
 	}
 	done := make(chan proto.LoginState)

@@ -224,7 +224,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request, c *caller) 
 }
 
 func (s *Server) loginState(pl *pendingLogin) proto.LoginState {
-	return proto.LoginState{LoginURL: s.cfg.PublicURL + "/login?c=" + pl.code, ExpiresAt: pl.expires.UTC()}
+	return proto.LoginState{LoginURL: s.cfg.PublicURL + "/login?c=" + pl.code, BrowserURL: s.browserLoginURL(pl.code), ExpiresAt: pl.expires.UTC()}
 }
 
 // loginWait is how long POST /device/v1/login/wait holds on.
@@ -415,6 +415,18 @@ func guessKind(os proto.OS, hostname string) proto.DeviceKind {
 		return proto.KindPhone
 	}
 	return proto.KindOther
+}
+
+// browserLoginURL is the link a device's person opens to log it in, in a
+// browser (LoginState.BrowserURL): under the Web version's address if
+// there is one, which has a real certificate and can be reached where this
+// server's own address cannot (proto.PathDeviceLogin); else this server's
+// own login page. LoginURL keeps naming this server, for the window.
+func (s *Server) browserLoginURL(code string) string {
+	if s.cfg.WebURL != "" {
+		return s.cfg.WebURL + proto.PathDeviceLogin + "?c=" + code
+	}
+	return s.cfg.PublicURL + "/login?c=" + code
 }
 
 func remoteIP(r *http.Request) string {

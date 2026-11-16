@@ -346,6 +346,9 @@ docker exec deneb-control deneb-control device-delete -device <上一步里 dene
 2. **转发的机器被人拿下**：它看得到设备的地址、连了多久、传了多少，看不到内容，因为 TLS 一直到控制服务器才解开，设备核对的还是控制服务器的指纹。它能做的最多是不转、晚转，设备会换下一个入口。
 3. **拿转发当跳板**：`deneb-front` 只连部署时写好的那一个地址（控制服务器的 `-front-listen`），不是谁都能用的代理。它同时最多 4096 个连接；一边断了，另一边最多再留 30 秒。控制服务器的限流照样按设备的真实地址算。
 4. **Cloudflare 看得到内容**：走这条路时，TLS 在 Cloudflare 解开。所以设备最后才走它，PRIVACY.md 写明了它看得到什么。
+5. **浏览器登录页挂到网页版下**（`/device-login`）：
+   - 表单的跨站检查，只把网页版的来源（`-web-url`）当成可信的，别的站来的照旧回 403；
+   - 设备地址照旧取 nginx 给的 `X-Real-IP`，只认网页后台那台的。
 
 **测试**：`control/front` 的 `TestHeader`（v2、v1、LOCAL 和各种坏头）、`TestListener`（经转发的 TLS 和 HTTP/2，设备地址来自头；没有头、不是转发的机器都关掉）、`TestTunnelHandler`；`cmd/deneb-front` 的 `TestPass`。本机端到端：经过 `deneb-front` 拿到的公钥指纹和直连一样；不带 PROXY 头直连转发口被拒；隧道口没有 `CF-Connecting-IP` 回 403。
 

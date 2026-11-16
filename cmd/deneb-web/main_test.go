@@ -39,6 +39,14 @@ func upstream(t *testing.T) *httptest.Server {
 		}
 		_, _ = io.WriteString(w, `{"me":"`+c.Value+`"}`)
 	})
+	// The device login pages (proto.PathDeviceLogin), as the control server
+	// has them: what came, as it came.
+	mux.HandleFunc("GET "+proto.PathDeviceLogin, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "page "+r.URL.RawQuery)
+	})
+	mux.HandleFunc("POST "+proto.PathDeviceLogin+"/email", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "email "+r.PostFormValue("email")+" "+r.Header.Get("Origin"))
+	})
 	mux.HandleFunc("GET /api/v1/stream", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, "{\"version\":1}\n")
 		w.(http.Flusher).Flush()
@@ -61,6 +69,41 @@ func appDir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return d
+}
+
+// TestDeviceLoginPassedOn: a device's login pages, under the Web version's
+// address, are the control server's: the page and its posts go there as
+// they came, Origin and all, and the app does not answer them.
+func TestDeviceLoginPassedOn(t *testing.T) {
+	up := upstream(t)
+	u, _ := url.Parse(up.URL)
+	p, err := newProxy(u, proto.Fingerprint(up.Certificate()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	web := httptest.NewServer(newServer(appDir(t), p))
+	defer web.Close()
+	resp, err := http.Get(web.URL + proto.PathDeviceLogin + "?c=ABC123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(b) != "page c=ABC123" {
+		t.Fatalf("the page: %q", b)
+	}
+	req, _ := http.NewRequest("POST", web.URL+proto.PathDeviceLogin+"/email", strings.NewReader("c=ABC123&email=kittors%40deneb.test"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", web.URL)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(b) != "email kittors@deneb.test "+web.URL {
+		t.Fatalf("the post: %q", b)
+	}
 }
 
 func TestProxyPinsTheKey(t *testing.T) {

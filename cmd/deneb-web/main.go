@@ -29,6 +29,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/kittors/deneb/proto"
 )
 
 func main() {
@@ -91,6 +93,10 @@ func apiHandler(control, pin string, mock bool) (http.Handler, error) {
 func newServer(static string, api http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/api/", api)
+	// A device logged in in a browser: the control server's own pages, here
+	// under a real certificate (proto.PathDeviceLogin).
+	mux.Handle(proto.PathDeviceLogin, api)
+	mux.Handle(proto.PathDeviceLogin+"/", api)
 	mux.Handle("/", gzipped(sitePages(static, appFiles(static))))
 	return headers(mux)
 }

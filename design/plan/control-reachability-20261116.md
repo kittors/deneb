@@ -236,7 +236,10 @@ hk-155 这个 IP 从国内直连被挡了 TCP，控制服务器本身没事。�
 
 每一步都要用户点头，由主会话安排。
 
-1. **控制服务器换版**：hk-155 上的控制服务器加 `-front-listen :47444 -front-from <hk-spare 的地址>`。不改防火墙。
+1. **先换网页版，再换控制服务器**：
+   - 网页版（hk-spare 上的 deneb-web）先换到带 `/device-login` 的版本（§9.5）；
+   - 再换 hk-155 上的控制服务器，加 `-front-listen :47444 -front-from <hk-spare 的地址>`，不改防火墙。
+   - 顺序不能反：新的控制服务器发出的浏览器登录链接指向网页版的 `/device-login`，网页版还是旧的就打不开。
 2. **hk-spare 起转发**：写好 `deploy/front/front.hk-spare.env`（`LISTEN=:47443`、`DENEB_FRONT_TO=<hk-155 的地址>:47444`，不进仓库），运行 `HOST=hk-spare deploy/front/deploy.sh`。hk-spare 上 47443 端口空着（只读看过）。
 3. **从家里直连验证**：经 hk-spare 的 47443 拿到的指纹和控制服务器的一样，`/healthz` 回 200。
 4. **Cloudflare**：
@@ -247,3 +250,21 @@ hk-155 这个 IP 从国内直连被挡了 TCP，控制服务器本身没事。�
 5. **发新版**：引擎线做 §9.3，新版放到下载站。设备一天内会看到更新提示，点了更新就恢复。
 
 第 1—3 步大约半天，第 4 步要用户在 Cloudflare 后台操作一次，第 5 步看引擎线。
+
+### 9.5 在浏览器里登录设备的页面，挂到网页版下（引擎线 11-16 提的）
+
+- **原来的问题**：设备在浏览器里登录（比如服务器上的 `deneb login`）时，链接是控制服务器自己的 `/login?c=`，按 `PublicURL` 写，指向 hk-155。
+  - 被挡的用户打不开。
+  - 控制服务器用的是自签证书，直连的用户也会看到"证书不受信任"。
+  - 设备端把链接改成正在用的入口，能解决打不开，解决不了证书：经 hk-spare 转发，还是同一张自签证书。
+- **`LoginURL` 不能改**：桌面端窗口里的邮箱登录（`client/signin.go`）从 `LoginURL` 里取地址，只认控制服务器的各个入口，按指纹往那里交表单。`LoginURL` 换成网页版的地址，窗口就认不出，只能退回浏览器。所以 `LoginURL` 仍指向控制服务器，设备端照旧把它改成正在用的入口。
+- **改成另给一个 `BrowserURL`**：登录状态里新加一个字段，专门给浏览器用。设了 `-web-url` 时，它指向网页版的 `/device-login?c=`：网页版有正式证书，放在 hk-spare 上，被挡的用户也打得开。没设时，它和 `LoginURL` 一样。旧的设备不认识它，照旧用 `LoginURL`。
+  - deneb-web 把 `/device-login`（打开页面，以及下面的 `/email`、`/code` 两个表单）原样转给控制服务器，页面还是控制服务器的那几页。
+  - 表单交到页面所在的路径下。
+  - 跨站检查把网页版的来源当成可信的。
+- **旧链接照旧能用**：控制服务器自己地址上的 `/login?c=` 不变。
+- **设备端要做的（引擎线、客户端线）**：要把人送去浏览器的地方改用 `BrowserURL`，没有它再用 `LoginURL`。包括 `deneb login` 打印的链接、窗口里"在浏览器里登录"的按钮。引擎要把这个字段带到本机接口的状态里。
+- **测试**：
+  - `control` 的 `TestDeviceLoginUnderWeb`：`LoginURL` 仍指向控制服务器，`BrowserURL` 在网页版下，两个是同一个登录码；网页版下的页面表单交到 `/device-login/…`；网页版来源的表单收，别的站来的回 403；控制服务器自己地址上的页面照旧交到 `/login/…`。
+  - 没设网页版时，`BrowserURL` 和 `LoginURL` 一样（`server_test.go` 的登录）。
+  - `cmd/deneb-web` 的 `TestDeviceLoginPassedOn`：页面和表单连同 Origin 原样转给控制服务器。

@@ -65,6 +65,59 @@ func startLogin(t *testing.T, e *engine) string {
 
 func codeOf(link string) string { return link[strings.Index(link, "c=")+2:] }
 
+// TestDeviceLoginUnderWeb: with a Web version, a device's login has a link
+// for the browser under its address (a real certificate, reachable where
+// this server's own address is not), and the pages there post under it;
+// deneb-web passes them on, so the posts come from the Web version's
+// origin. LoginURL still names this server, where the window's sign-in
+// posts by the server's pin, and its pages still work.
+func TestDeviceLoginUnderWeb(t *testing.T) {
+	const web = "https://web.example.com"
+	ts := httptest.NewUnstartedServer(nil)
+	s, err := New(Config{DataDir: t.TempDir(), PublicURL: "http://" + ts.Listener.Addr().String(), WebURL: web,
+		Dev: true, Seed: DevSeed(), Logf: func(string, ...any) {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts.Config.Handler = s.Handler()
+	ts.Start()
+	t.Cleanup(func() { ts.CloseClientConnections(); ts.Close(); s.Close() })
+
+	mac := newEngine(t, ts.URL, "kittors-MacBook-Pro.local", proto.MacOS)
+	mac.auth()
+	var st proto.LoginState
+	if _, err := mac.call("POST", proto.PathLogin, mac.loginRequest(), &st); err != nil {
+		t.Fatal(err)
+	}
+	c := codeOf(st.LoginURL)
+	if st.LoginURL != ts.URL+"/login?c="+c || st.BrowserURL != web+proto.PathDeviceLogin+"?c="+c {
+		t.Fatalf("the links: %q for the window, %q for the browser", st.LoginURL, st.BrowserURL)
+	}
+	b := newBrowser(t)
+	// As deneb-web passes it on: the path and query as they are.
+	under := ts.URL + proto.PathDeviceLogin
+	if _, page := b.get(under + "?c=" + c); !strings.Contains(page, "kittors-MacBook-Pro") || !strings.Contains(page, `action="`+proto.PathDeviceLogin+`/email"`) {
+		t.Fatalf("the page under the Web version:\n%s", page)
+	}
+	// The browser's post, from the Web version's page: its origin is the
+	// Web version's, and an old browser sends no Sec-Fetch-Site.
+	if _, page := b.post(under+"/email", url.Values{"c": {c}, "email": {"kittors@deneb.test"}}, "Origin", web); !strings.Contains(page, `name="code"`) ||
+		!strings.Contains(page, `action="`+proto.PathDeviceLogin+`/code"`) {
+		t.Fatalf("the code step under the Web version:\n%s", page)
+	}
+	if status, _ := b.post(under+"/code", url.Values{"c": {c}, "email": {"kittors@deneb.test"}, "code": {DevCode}}, "Origin", "https://evil.example"); status != http.StatusForbidden {
+		t.Fatalf("a post from another site got %d", status)
+	}
+	if _, page := b.post(under+"/code", url.Values{"c": {c}, "email": {"kittors@deneb.test"}, "code": {DevCode}}, "Origin", web); !strings.Contains(page, "登录好了") {
+		t.Fatalf("done under the Web version:\n%s", page)
+	}
+	// The pages on this server's own address post where they are.
+	desk := newEngine(t, ts.URL, "DESKTOP-JIE", proto.Windows)
+	if _, page := b.get(ts.URL + "/login?c=" + codeOf(startLogin(t, desk))); !strings.Contains(page, `action="/login/email"`) {
+		t.Fatalf("the page on this server's own address:\n%s", page)
+	}
+}
+
 func TestLoginPages(t *testing.T) {
 	s, ts := newTestServer(t, "")
 	mac := newEngine(t, ts.URL, "kittors-MacBook-Pro.local", proto.MacOS)

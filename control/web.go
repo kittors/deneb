@@ -21,11 +21,21 @@ func (s *Server) webRoutes(m *http.ServeMux) {
 	// The forms post only from these pages: the check refuses cross-site
 	// posts, so another site cannot submit them in someone's browser.
 	cop := http.NewCrossOriginProtection()
+	if s.cfg.WebURL != "" {
+		// The same pages under the Web version's address
+		// (proto.PathDeviceLogin), which deneb-web passes on here.
+		if err := cop.AddTrustedOrigin(s.cfg.WebURL); err != nil {
+			s.logf("login pages: %s is no origin: %v", s.cfg.WebURL, err)
+		}
+	}
 	post := func(h http.HandlerFunc) http.Handler { return cop.Handler(h) }
 	m.HandleFunc("GET /{$}", s.handleLoginPage)
 	m.HandleFunc("GET /login", s.handleLoginPage)
 	m.Handle("POST /login/email", post(s.handleLoginEmail))
 	m.Handle("POST /login/code", post(s.handleLoginCode))
+	m.HandleFunc("GET "+proto.PathDeviceLogin, s.handleLoginPage)
+	m.Handle("POST "+proto.PathDeviceLogin+"/email", post(s.handleLoginEmail))
+	m.Handle("POST "+proto.PathDeviceLogin+"/code", post(s.handleLoginCode))
 	m.HandleFunc("GET "+proto.InvitePath+"{token}", s.handleInvitePage)
 }
 
@@ -58,6 +68,17 @@ type loginPage struct {
 	Error  string
 	Dev    bool
 	Done   string // the done step's sentence
+	// Base is where the forms post: /login on this server's own address,
+	// proto.PathDeviceLogin under the Web version's.
+	Base string
+}
+
+// Action is where a form for step (email, code) posts.
+func (p loginPage) Action(step string) string {
+	if p.Base == "" {
+		return "/login/" + step
+	}
+	return p.Base + "/" + step
 }
 
 type pageDevice struct {
@@ -108,6 +129,9 @@ func shortCode(c string) string {
 // pendingFor finds the login a page is about, and fills the page for it.
 func (s *Server) pendingFor(r *http.Request, code string, page *loginPage) *pendingLogin {
 	page.Dev = s.cfg.Dev
+	if r.URL.Path == proto.PathDeviceLogin || strings.HasPrefix(r.URL.Path, proto.PathDeviceLogin+"/") {
+		page.Base = proto.PathDeviceLogin
+	}
 	if code == "" {
 		page.Step = "none"
 		return nil
@@ -367,7 +391,7 @@ var loginTmpl = template.Must(template.New("login").Parse(pageHead + `
 <h1>登录 Deneb</h1>
 <p>填这台设备主人的邮箱，登录后它就记在这个人名下。</p>
 {{template "device" .}}
-<form method="post" action="/login/email">
+<form method="post" action="{{.Action "email"}}">
 <input type="hidden" name="c" value="{{.Code}}">
 <label for="email">邮箱</label>
 <input id="email" name="email" type="email" value="{{.Email}}" autocomplete="email" required autofocus>
@@ -378,7 +402,7 @@ var loginTmpl = template.Must(template.New("login").Parse(pageHead + `
 <h1>输入验证码</h1>
 <p>{{.Sent}}</p>
 {{template "device" .}}
-<form method="post" action="/login/code">
+<form method="post" action="{{.Action "code"}}">
 <input type="hidden" name="c" value="{{.Code}}">
 <input type="hidden" name="email" value="{{.Email}}">
 <label for="code">验证码</label>
@@ -386,7 +410,7 @@ var loginTmpl = template.Must(template.New("login").Parse(pageHead + `
 {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
 <button class="button" type="submit">登录</button>
 </form>
-<form method="post" action="/login/email" class="hint">
+<form method="post" action="{{.Action "email"}}" class="hint">
 <input type="hidden" name="c" value="{{.Code}}">
 <input type="hidden" name="email" value="{{.Email}}">
 没收到？过一分钟可以 <button class="link" type="submit">重新发</button>；一直收不到，可能是这个邮箱还没有开通。

@@ -27,6 +27,14 @@ const (
 	PathWebLoginLink     = "/api/v1/login/link"      // POST WebLoginLinkRequest → WebLoginResult, step "done"; sets the cookie
 )
 
+// PathDeviceLogin is where a device is logged in in a browser, under the
+// Web version's address: the control server's own login pages (/login),
+// which deneb-web passes on. The Web version has a real certificate, and
+// can be reached where the control server's own address cannot
+// (design/plan/control-reachability-20261116.md). GET ?c=<code>, then
+// POST /email and /code under it.
+const PathDeviceLogin = "/device-login"
+
 // WebLoginLinkRequest names a login link by its token: what follows the #
 // of LoginLinkURL.
 type WebLoginLinkRequest struct {

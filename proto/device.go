@@ -121,8 +121,15 @@ type LoginState struct {
 	LoggedIn bool `json:"loggedIn"`
 	// LoginURL is set while no one is: open it in a browser, on any device.
 	// It stays the same until ExpiresAt, so asking again gives the same one.
+	// It names the control server itself: the window's sign-in posts its
+	// pages there, checking the server's pin (client/signin.go).
 	LoginURL  string    `json:"loginURL,omitempty"`
 	ExpiresAt time.Time `json:"expiresAt,omitzero"`
+	// BrowserURL is the same login for a person's browser: under the Web
+	// version's address, with a real certificate and reachable where the
+	// control server's own address is not (PathDeviceLogin); LoginURL when
+	// there is no Web version. Older servers leave it out: use LoginURL.
+	BrowserURL string `json:"browserURL,omitempty"`
 	// Device and Person are set once someone is.
 	Device DeviceID `json:"device,omitempty"`
 	Person PersonID `json:"person,omitempty"`
