@@ -29,6 +29,18 @@
         "/tmp/deneb-control-preview"
       ],
       "port": 47090
+    },
+    {
+      "name": "deneb-web-mock",
+      "runtimeExecutable": "go",
+      "runtimeArgs": [
+        "run",
+        "./cmd/deneb-web",
+        "-mock",
+        "-listen",
+        "127.0.0.1:47622"
+      ],
+      "port": 47622
     }
   ]
 }

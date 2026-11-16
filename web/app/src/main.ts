@@ -9,7 +9,7 @@ import { deletingAccount } from './account.ts';
 import type { StreamState } from './api.ts';
 import type { DeviceView, LANView, PersonID, UserView } from './model.ts';
 import { listedLANs, sharedOnly } from './model.ts';
-import { current, go, onRoute, parse } from './router.ts';
+import { appHome, current, go, onRoute, parse } from './router.ts';
 import type { Route } from './router.ts';
 import { mountJoin, mountLogin, mountLoginLink } from './join.ts';
 import { detectPlatform, downloadCard, esc, phoneDock, pickExample, spaced } from './download.ts';
@@ -108,12 +108,12 @@ async function session(): Promise<UserView | null> {
 
 // safeNext is where a login goes on to (DESIGN §14.14): a page of the app's
 // own, never the login page itself, an invite (which has its own way in) or
-// another site.
+// another site; by default the app's way in, not the website's home.
 export function safeNext(next?: string): string {
-  if (!next || !next.startsWith('/') || next.startsWith('//')) return '/';
+  if (!next || !next.startsWith('/') || next.startsWith('//')) return appHome;
   const q = next.indexOf('?');
   const page = parse(q < 0 ? next : next.slice(0, q), q < 0 ? '' : next.slice(q)).page;
-  return page === 'login' || page === 'loginLink' || page === 'join' || page === 'notFound' ? '/' : next;
+  return page === 'login' || page === 'loginLink' || page === 'join' || page === 'notFound' || next === '/' ? appHome : next;
 }
 
 // toLogin sends a visit without a session to the login page, to come back
@@ -124,7 +124,7 @@ function toLogin(path: string): void {
   const here = current().page;
   if (here === 'login' || here === 'loginLink' || here === 'join') return;
   const back = safeNext(path);
-  go(back === '/' ? '/login' : '/login?next=' + encodeURIComponent(back), true);
+  go(back === appHome ? '/login' : '/login?next=' + encodeURIComponent(back), true);
 }
 
 whenLoggedOut(() => {
@@ -210,7 +210,7 @@ async function render(r: Route): Promise<void> {
           session: () => session().then((v) => (v ? (v.people.find((p) => p.id === v.me)?.email ?? '') : null)),
           enter: () => {
             signedIn = true;
-            go('/', true);
+            go(appHome, true);
           },
           onDone: async (_me, mail) => {
             email = mail;
@@ -218,7 +218,7 @@ async function render(r: Route): Promise<void> {
             await session().catch(() => null);
             return () => {
               signedIn = true;
-              go('/', true);
+              go(appHome, true);
             };
           },
         }),
@@ -247,8 +247,8 @@ async function render(r: Route): Promise<void> {
   }
   // The deployment's console, its public relays among it, is its operators'
   // only: for anyone else there is no such page (DESIGN §14.15).
-  if ((r.page === 'console' || r.page === 'ops') && !v.operator) return mount(() => message('没有这个页面', '回到首页看看'));
-  if (r.page === 'notFound') return mount(() => message('没有这个页面', '回到首页看看'));
+  if ((r.page === 'console' || r.page === 'ops') && !v.operator) return mount(() => message('没有这个页面', '地址可能写错了，或者这一页已经不在了', true));
+  if (r.page === 'notFound') return mount(() => message('没有这个页面', '地址可能写错了，或者这一页已经不在了', true));
   // The canvas pages come with pages.ts; wait for it rather than flash the
   // stand-in first.
   await pagesReady;
@@ -257,10 +257,13 @@ async function render(r: Route): Promise<void> {
   mount(() => (page ? page(root, ctx, r) : standIn(r)));
 }
 
-function message(title: string, sub: string): () => void {
+// message is a page that only says something; home adds the way back to the
+// website's home, a page of its own (not one of the app's).
+function message(title: string, sub: string, home = false): () => void {
   const el = document.createElement('div');
   el.className = 'join-page';
-  el.innerHTML = `<main class="join-card"><div class="jc-in"><h1 class="jc-title">${esc(title)}</h1><p class="jc-sub">${esc(sub)}</p></div></main>`;
+  const back = home ? `<div class="jc-foot"><a class="btn primary" href="/">回到首页</a></div>` : '';
+  el.innerHTML = `<main class="join-card"><div class="jc-in"><h1 class="jc-title">${esc(title)}</h1><p class="jc-sub">${esc(sub)}</p>${back}</div></main>`;
   root.replaceChildren(el);
   return () => el.remove();
 }

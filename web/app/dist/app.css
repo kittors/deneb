@@ -1934,6 +1934,19 @@ body {
 .win.full .side .brand {
   margin: 12px 8px 15px;
 }
+/* The star and "Deneb", a link to the website's home: its light, as a
+   sidebar row's, round the words, which stay where they were. */
+.win.full .side a.brand {
+  margin: var(--space-4) 0 var(--space-8);
+  padding: var(--space-8);
+  border-radius: var(--radius-12);
+  text-decoration: none;
+  cursor: pointer;
+  transition: background var(--motion-fade) ease-out;
+}
+.win.full .side a.brand:hover {
+  background: var(--well-2);
+}
 .win.full .side .gap {
   height: 11px;
 }

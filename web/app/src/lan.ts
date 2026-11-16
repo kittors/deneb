@@ -18,6 +18,7 @@ import { ApiError } from './api.ts';
 import { downloadCard, pickExample } from './download.ts';
 import { phoneLan } from './phone.ts';
 import type { Ctx } from './main.ts';
+import { appHome } from './router.ts';
 import type { Route } from './router.ts';
 import type { LANView, DeviceView, ServiceState } from './model.ts';
 
@@ -942,7 +943,7 @@ export function lanPage(root: HTMLElement, ctx: Ctx, route: Route): () => void {
     follow(nv);
     v = nv;
     lan = nv.lans.find((l) => l.id === lanID);
-    if (!lan) return void ctx.go('/', true);
+    if (!lan) return void ctx.go(appHome, true);
     // Waiting again (or still): the page of waiting.
     if (lan.pending) return void ctx.go('/lan/' + encodeURIComponent(lanID), true);
     freed(nv);
@@ -1025,7 +1026,7 @@ function waiting(app: ReturnType<typeof frame>, ctx: Ctx, lanID: string): () => 
     follow(nv);
     v = nv;
     const l = nv.lans.find((x) => x.id === lanID);
-    if (!l) ctx.go('/', true);
+    if (!l) ctx.go(appHome, true);
     else if (!l.pending) ctx.go('/lan/' + encodeURIComponent(lanID), true);
   });
   return () => {

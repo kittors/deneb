@@ -7,10 +7,9 @@
 //	deneb-web -mock          # an in-memory world instead, for development
 //
 // The browser talks to deneb-web only. /api/ goes to the control server over
-// TLS trusted by its pinned key (as devices trust it); / for whoever is not
-// signed in, /download and /docs are the website (site.go); everything else
-// is the app, with index.html for any path the app routes itself
-// (/i/<token>, /lan/…).
+// TLS trusted by its pinned key (as devices trust it); /, /download and
+// /docs are the website (site.go); everything else is the app, with
+// index.html for any path the app routes itself (/i/<token>, /lan/…).
 package main
 
 import (

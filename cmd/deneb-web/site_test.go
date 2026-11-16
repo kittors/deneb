@@ -49,8 +49,9 @@ func fetch(t *testing.T, url string, signedIn bool) (int, string, http.Header) {
 	return resp.StatusCode, string(b), resp.Header
 }
 
-// The site's pages for whoever is not signed in; / stays the app for whoever
-// is, and the site's pages know them; the rest is the app's, as before.
+// The site's pages for everyone, / too (design/plan/m7/site-entry.md): signed
+// in, the pages know it, and their top bar offers the app; /lan, the app's
+// way in, and the rest are the app's, as before.
 func TestSitePages(t *testing.T) {
 	web := httptest.NewServer(newServer(siteDir(t), newMock().handler()))
 	defer web.Close()
@@ -61,7 +62,9 @@ func TestSitePages(t *testing.T) {
 		title    string
 	}{
 		{"/", false, 200, "home"},
-		{"/", true, 200, "app"},
+		{"/", true, 200, "home"},
+		{"/lan", true, 200, "app"},
+		{"/lan", false, 200, "app"},
 		{"/download", false, 200, "download"},
 		{"/download", true, 200, "download"},
 		{"/download/", false, 200, "download"},

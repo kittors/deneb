@@ -48,7 +48,9 @@ const type = async (b, sel, s) => {
 };
 const go = async (b, path) => b.S('Page.navigate', { url: base + path });
 const post = (path, body) => fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify(body) });
-const onFirstPage = `location.pathname === '/' && !!document.querySelector('.welcome')`;
+// The first page is the app's way in (/lan), not the website's home (/):
+// design/plan/m7/site-entry.md.
+const onFirstPage = `location.pathname === '/lan' && !!document.querySelector('.welcome')`;
 
 // The link the server last wrote into its log for email (its mail, not
 // sent): the line after the code's. Not the one in skip.

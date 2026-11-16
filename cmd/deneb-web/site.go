@@ -1,10 +1,11 @@
 package main
 
-// The website (DESIGN.md §14.16): the home page for whoever is not signed
-// in, the download page and the docs, built with the app into <static>/site
-// (node web/app/build.mjs). Signed in, as the session cookie says, / stays
-// the app, which checks the session itself and goes to its login when it is
-// over; the site's own pages then offer the app in their top bar.
+// The website (DESIGN.md §14.16): the home page, the download page and the
+// docs, built with the app into <static>/site (node web/app/build.mjs). The
+// home page is / for everyone (design/plan/m7/site-entry.md): signed in, as
+// the session cookie says, the site's pages are marked so, and their top
+// bar offers the app (/lan) in place of the login; the app checks the
+// session itself and goes to its login when it is over.
 
 import (
 	"bytes"
@@ -29,9 +30,6 @@ func sitePages(dir string, app http.Handler) http.Handler {
 		signedIn := err == nil
 		var page string
 		switch p := path.Clean("/" + r.URL.Path); {
-		case p == "/" && signedIn:
-			app.ServeHTTP(w, r)
-			return
 		case p == "/":
 			page = "index.html"
 		case p == "/download":

@@ -120,6 +120,19 @@ export function frame(root             , ctx     , sel        )      {
     };
     app.win.classList.add('full');
     app.win.dataset.k = 'win';
+    // The star and "Deneb" over the sidebar go back to the website's home,
+    // a page of its own: a link, which the browser opens whole
+    // (design/plan/m7/site-entry.md).
+    const brand = app.win.querySelector('.side .brand')                      ;
+    if (brand) {
+      const a = document.createElement('a');
+      a.className = 'brand';
+      a.href = '/';
+      a.title = 'Deneb 首页';
+      a.setAttribute('aria-label', 'Deneb 首页');
+      a.innerHTML = brand.innerHTML;
+      brand.replaceWith(a);
+    }
     app.fit();
     // The header's button: an invite link for the LAN on screen.
     app.inviteBtn = app.win.querySelector('.head .right .btn');

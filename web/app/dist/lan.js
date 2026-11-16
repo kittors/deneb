@@ -18,6 +18,7 @@ import { ApiError } from './api.js';
 import { downloadCard, pickExample } from './download.js';
 import { phoneLan } from './phone.js';
                                      
+import { appHome } from './router.js';
                                          
                                                                     
 
@@ -942,7 +943,7 @@ export function lanPage(root             , ctx     , route       )             {
     follow(nv);
     v = nv;
     lan = nv.lans.find((l) => l.id === lanID);
-    if (!lan) return void ctx.go('/', true);
+    if (!lan) return void ctx.go(appHome, true);
     // Waiting again (or still): the page of waiting.
     if (lan.pending) return void ctx.go('/lan/' + encodeURIComponent(lanID), true);
     freed(nv);
@@ -1025,7 +1026,7 @@ function waiting(app                          , ctx     , lanID        )        
     follow(nv);
     v = nv;
     const l = nv.lans.find((x) => x.id === lanID);
-    if (!l) ctx.go('/', true);
+    if (!l) ctx.go(appHome, true);
     else if (!l.pending) ctx.go('/lan/' + encodeURIComponent(lanID), true);
   });
   return () => {

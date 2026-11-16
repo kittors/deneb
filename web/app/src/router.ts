@@ -3,7 +3,8 @@
 //	/i/<token>, /join/<token>  an invite link (the server's links are /i/)
 //	/login                     log in
 //	/login/link#<token>        the link in the code's mail (login-link.md)
-//	/                          home: the first LAN, or log in
+//	/lan                       the app's way in (appHome): the first LAN,
+//	                           共享给我, or the first page
 //	/lan/<id>                  a LAN, without "this computer" (§14.4)
 //	/share/<lan>               scene 4's console: the studio's devices to members
 //	/mine                      my devices, wherever they are
@@ -25,6 +26,11 @@ export type Route =
   | { page: 'ops' }
   | { page: 'console'; part: 'overview' | 'people' | 'devices' | 'log' }
   | { page: 'notFound'; path: string };
+
+// / is the website's home, for everyone (deneb-web answers it with the
+// site, design/plan/m7/site-entry.md); the app's own way in is appHome. The
+// app routes / as home only where no site is built.
+export const appHome = '/lan';
 
 export function parse(path: string, search = ''): Route {
   const parts = path.split('/').filter(Boolean).map((p) => decodeURIComponent(p));
