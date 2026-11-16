@@ -51,6 +51,16 @@ if [ -f "$WEB_SITE" ]; then
 		WEB_FLAGS="$WEB_FLAGS -relay-download https://$WEB_HOST/download/relay/"
 	fi
 fi
+# The entrance through deneb-front on the Web version's machine
+# (design/plan/control-reachability-20261116.md §9.4): a port of its own,
+# taking connections only from that machine, whose PROXY header says
+# whom each one is from. FRONT=no deploys without it; FRONT_FROM defaults
+# to the machine -trust-proxy names, where deneb-web and deneb-front run.
+FRONT_PORT=${FRONT_PORT:-47444}
+FRONT_FLAGS=
+if [ "${FRONT:-yes}" = yes ] && [ -n "$WEB_FLAGS" ]; then
+	FRONT_FLAGS="-front-listen :$FRONT_PORT -front-from ${FRONT_FROM:-$WEB_PROXY_IP}"
+fi
 # Sign-up: open on hk-155 since 2026-11-12 (the user: "都可以"), with the
 # login codes mailed through Cloudflare (data/mail.json): an email with no
 # account gets a code too, and its account is made when the code checks
@@ -63,8 +73,14 @@ ARCHES=amd64 deploy/control/build.sh
 
 # The port must be free, unless our own container is the one holding it.
 ssh "$HOST" "
-	if [ -z \"\$(docker ps -q --filter name=^$NAME\$)\" ] && [ -n \"\$(ss -ltnH 'sport = :$PORT')\" ]; then
+	ours=\$(docker ps -q --filter name=^$NAME\$)
+	busy() { [ -n \"\$(ss -ltnH \"sport = :\$1\")\" ]; }
+	if [ -z \"\$ours\" ] && busy $PORT; then
 		echo 'port $PORT is taken on $HOST:'; ss -ltnpH 'sport = :$PORT'; exit 1
+	fi
+	# The front's port too, unless the running server is the one on it.
+	if [ -n '$FRONT_FLAGS' ] && ! { [ -n \"\$ours\" ] && docker inspect -f '{{join .Args \" \"}}' $NAME | grep -q -- -front-listen; } && busy $FRONT_PORT; then
+		echo 'port $FRONT_PORT is taken on $HOST:'; ss -ltnpH 'sport = :$FRONT_PORT'; exit 1
 	fi
 	mkdir -p $REMOTE/image/bin/amd64 $REMOTE/image/skel $REMOTE/data"
 scp -q deploy/control/bin/amd64/deneb-control "$HOST:$REMOTE/image/bin/amd64/deneb-control"
@@ -119,7 +135,7 @@ ssh "$HOST" "
 		--log-opt max-size=10m --log-opt max-file=3 \
 		-v $REMOTE/data:/data \
 		-v /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro \
-		$TAG -listen :$PORT -data /data -seed /data/seed.json -public-url $PUBLIC_URL $WEB_FLAGS $SIGNUP_FLAGS
+		$TAG -listen :$PORT -data /data -seed /data/seed.json -public-url $PUBLIC_URL $WEB_FLAGS $FRONT_FLAGS $SIGNUP_FLAGS
 	sleep 3
 	docker ps --filter name=^$NAME\$ --format '{{.Names}} {{.Status}}'
 	docker logs --tail 5 $NAME
