@@ -32,8 +32,9 @@ var (
 	pinnedAvoidFor  = 10 * time.Minute
 )
 
-// handshakeTimeout is how long a TLS handshake may take, either way.
-const handshakeTimeout = 10 * time.Second
+// handshakeTimeout is how long a TLS handshake may take, either way: past
+// it, the next entrance is tried (entrances.go).
+var handshakeTimeout = 10 * time.Second
 
 // errSlow: the pinned way was not through its handshake when the routing
 // table's was.
@@ -55,13 +56,28 @@ func dialDefault(ctx context.Context, network, addr, ifname string) (net.Conn, e
 	return d.DialContext(ctx, network, addr)
 }
 
-// connect opens a connection to the control server, through its TLS
-// handshake when it is https: the pinned way while that works, otherwise
-// the routing table.
+// connect opens a connection to the entrance at addr, through its TLS
+// handshake when it is https; one that does not get through is a dialError
+// (send tries the next entrance).
 func (c *Client) connect(ctx context.Context, network, addr string) (net.Conn, error) {
+	e := c.entranceFor(addr)
+	if e == nil {
+		return nil, dialError{fmt.Errorf("%s is none of the control server's entrances", addr)}
+	}
+	conn, err := c.connectTo(ctx, network, e)
+	if err != nil {
+		return nil, dialError{err}
+	}
+	return conn, nil
+}
+
+// connectTo opens a connection to e: the pinned way while that works,
+// otherwise the routing table.
+func (c *Client) connectTo(ctx context.Context, network string, e *entrance) (net.Conn, error) {
+	addr := e.addr
 	ifname := *c.bindIf.Load()
 	if ifname == "" || c.pinnedAvoided() {
-		return c.open(ctx, network, addr, "")
+		return c.open(ctx, network, e, "")
 	}
 	type result struct {
 		conn   net.Conn
@@ -72,7 +88,7 @@ func (c *Client) connect(ctx context.Context, network, addr string) (net.Conn, e
 	defer cancel()
 	results := make(chan result, 2)
 	try := func(ifname string) {
-		conn, err := c.open(ctx, network, addr, ifname)
+		conn, err := c.open(ctx, network, e, ifname)
 		results <- result{conn, err, ifname != ""}
 	}
 	go try(ifname)
@@ -119,14 +135,15 @@ func (c *Client) connect(ctx context.Context, network, addr string) (net.Conn, e
 			}
 		}
 		if left == 0 {
-			return nil, fmt.Errorf("through %s: %w; by the routing table: %w", ifname, pinnedErr, routeErr)
+			return nil, fmt.Errorf("%s through %s: %w; by the routing table: %w", addr, ifname, pinnedErr, routeErr)
 		}
 	}
 }
 
-// open dials one way and does the TLS handshake. A connection pinned to an
-// interface is watched until the server answers on it.
-func (c *Client) open(ctx context.Context, network, addr, ifname string) (net.Conn, error) {
+// open dials e one way and does the TLS handshake. A connection pinned to
+// an interface is watched until the server answers on it.
+func (c *Client) open(ctx context.Context, network string, e *entrance, ifname string) (net.Conn, error) {
+	addr := e.addr
 	conn, err := c.dial(ctx, network, addr, ifname)
 	if err != nil {
 		return nil, err
@@ -136,7 +153,7 @@ func (c *Client) open(ctx context.Context, network, addr, ifname string) (net.Co
 		w = &watchedConn{Conn: conn, c: c, ifname: ifname}
 		conn = w
 	}
-	if c.tlsCfg == nil {
+	if e.tls == nil {
 		if w != nil {
 			w.handshook.Store(true)
 		}
@@ -144,7 +161,7 @@ func (c *Client) open(ctx context.Context, network, addr, ifname string) (net.Co
 	}
 	// As net/http would: the host for SNI (none for an address), and h2
 	// offered, which the transport hands to http2 (New).
-	cfg := c.tlsCfg.Clone()
+	cfg := c.tlsFor(e)
 	if host, _, err := net.SplitHostPort(addr); err == nil {
 		cfg.ServerName = host
 	}

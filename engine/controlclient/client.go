@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,17 +33,23 @@ import (
 
 // Client is safe for concurrent use.
 type Client struct {
-	base    *url.URL
+	// ents are the ways to the server, cur the one in use (entrances.go).
+	ents    []*entrance
+	cur     atomic.Int32
+	probed  atomic.Int64 // when the ones before cur were last tried (Unix nanoseconds)
+	probing atomic.Bool
+	roots   *x509.CertPool // for an entrance without a pin; nil: the system's
 	machine proto.MachinePrivate
 	conns   atomic.Pointer[conns] // replaced whole when the network changes
 	newTr   func() *http.Transport
 	logf    func(format string, args ...any)
 	bindIf  atomic.Pointer[string] // interface dials are pinned to; "" for none
-	tlsCfg  *tls.Config            // the pinned server's; nil for plain http
 	dial    dialFunc               // one connection, either way (paths.go)
 	// avoidPinned is until when new connections go by the routing table
 	// (Unix nanoseconds): the pinned way gave no answer (paths.go).
 	avoidPinned atomic.Int64
+	onEntrance  func(url string)
+	onBack      func()
 
 	mu      sync.Mutex
 	token   string
@@ -72,60 +79,84 @@ type Options struct {
 	// only the proxy gets out (paths.go).
 	BindInterface string
 	Logf          func(format string, args ...any)
+	// Entrances are several ways to the same server, tried in order
+	// (entrances.go); given, URL and Pin are not used. One without a pin is
+	// checked by the system's roots and its name.
+	Entrances []proto.ControlEntrance
+	// Prefer is the entrance to start with: the one that worked last.
+	Prefer string
+	// OnEntrance is told the entrance in use when it changes, to keep it.
+	OnEntrance func(url string)
+	// OnBack is told when one before the entrance in use gets through
+	// again: requests that stay open (the stream) start again, by it.
+	OnBack func()
 }
 
 // New returns a client; it does not connect yet.
 func New(o Options) (*Client, error) {
-	u, err := url.Parse(strings.TrimRight(o.URL, "/"))
-	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-		return nil, fmt.Errorf("control server %q: want https://host:port", o.URL)
-	}
 	logf := o.Logf
 	if logf == nil {
 		logf = log.Printf
 	}
-	c := &Client{base: u, machine: o.Machine, logf: logf, dial: dialDefault}
-	c.SetBindInterface(o.BindInterface)
-	var tlsCfg *tls.Config
-	if u.Scheme == "https" {
-		if o.Pin == "" {
-			return nil, errors.New("an https control server needs its pin (sha256:...)")
+	c := &Client{machine: o.Machine, logf: logf, dial: dialDefault, onEntrance: o.OnEntrance, onBack: o.OnBack}
+	ways, several := o.Entrances, len(o.Entrances) > 0
+	if !several {
+		ways = []proto.ControlEntrance{{URL: o.URL, Pin: o.Pin}}
+	}
+	for _, w := range ways {
+		u, err := url.Parse(strings.TrimRight(w.URL, "/"))
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+			return nil, fmt.Errorf("control server %q: want https://host:port", w.URL)
 		}
-		cfg, err := proto.PinnedTLSConfig(o.Pin)
+		e, err := newEntrance(u.String())
 		if err != nil {
 			return nil, err
 		}
-		tlsCfg = cfg
-	} else if !o.PlainHTTPAnywhere && !isLoopback(u.Hostname()) {
-		return nil, fmt.Errorf("control server %s: plain http only for this machine; use https and its pin", u.Redacted())
-	} else if !isLocalDev(u.Hostname()) {
-		// Plain http is for the development server only. Anything else
-		// would let a network in between rewrite the network map.
-		log.Printf("[control] WARNING: %s is plain http; only use this for development", u.Redacted())
+		switch {
+		case u.Scheme == "https" && w.Pin != "":
+			if e.tls, err = proto.PinnedTLSConfig(w.Pin); err != nil {
+				return nil, err
+			}
+			e.pinned = true
+		case u.Scheme == "https" && several && net.ParseIP(u.Hostname()) == nil:
+			// A CDN's entrance, which ends the TLS itself: its certificate,
+			// by the system's roots and the name.
+			e.tls = &tls.Config{MinVersion: tls.VersionTLS12}
+		case u.Scheme == "https":
+			return nil, errors.New("an https control server needs its pin (sha256:...)")
+		case !o.PlainHTTPAnywhere && !isLoopback(u.Hostname()):
+			return nil, fmt.Errorf("control server %s: plain http only for this machine; use https and its pin", u.Redacted())
+		case !isLocalDev(u.Hostname()):
+			// Plain http is for the development server only. Anything else
+			// would let a network in between rewrite the network map.
+			log.Printf("[control] WARNING: %s is plain http; only use this for development", u.Redacted())
+		}
+		if e.url == strings.TrimRight(o.Prefer, "/") {
+			c.cur.Store(int32(len(c.ents)))
+		}
+		c.ents = append(c.ents, e)
 	}
-	c.tlsCfg = tlsCfg
+	c.SetBindInterface(o.BindInterface)
 	c.newTr = func() *http.Transport {
+		// connect does the handshake too: a pinned connection that is
+		// through TCP but never through TLS gives way to the routing table
+		// (paths.go), and one entrance that does not get through to the
+		// next (send).
 		tr := &http.Transport{
 			Proxy:           nil, // never through a system proxy: the pin is checked end to end
 			MaxIdleConns:    4,
 			IdleConnTimeout: 90 * time.Second,
+			DialContext:     c.connect,
+			DialTLSContext:  c.connect,
 		}
-		if tlsCfg == nil {
-			tr.DialContext = c.connect
+		// One HTTP/2 connection carries the stream and every request. When
+		// it dies quietly (the network under it changed and nothing told
+		// us), pings find out within 20 s instead of each request timing
+		// out on it for good.
+		if h2, err := http2.ConfigureTransports(tr); err == nil {
+			h2.ReadIdleTimeout, h2.PingTimeout = 15*time.Second, 5*time.Second
 		} else {
-			// connect does the handshake too: a pinned connection that is
-			// through TCP but never through TLS gives way to the routing
-			// table (paths.go).
-			tr.DialTLSContext = c.connect
-			// One HTTP/2 connection carries the stream and every request.
-			// When it dies quietly (the network under it changed and
-			// nothing told us), pings find out within 20 s instead of
-			// each request timing out on it for good.
-			if h2, err := http2.ConfigureTransports(tr); err == nil {
-				h2.ReadIdleTimeout, h2.PingTimeout = 15*time.Second, 5*time.Second
-			} else {
-				tr.ForceAttemptHTTP2 = true
-			}
+			tr.ForceAttemptHTTP2 = true
 		}
 		return tr
 	}
@@ -186,8 +217,8 @@ func isLocalDev(host string) bool {
 	return ip != nil && (ip.IsLoopback() || ip.IsPrivate())
 }
 
-// URL is the control server's base URL.
-func (c *Client) URL() string { return c.base.String() }
+// URL is the control server's base URL: the entrance in use.
+func (c *Client) URL() string { return c.ents[c.cur.Load()].url }
 
 // Error is a refusal from the control server, or a transport failure
 // (Offline set) when it could not be reached at all.
@@ -273,39 +304,56 @@ func (c *Client) call(ctx context.Context, hc *http.Client, method, path string,
 	}
 }
 
+// send does one request, by the entrance in use; when its connection does
+// not get through, by the others in turn (entrances.go).
 func (c *Client) send(ctx context.Context, hc *http.Client, method, path string, body any, auth bool) (*http.Response, error) {
-	var rd io.Reader
+	var b []byte
 	if body != nil {
-		b, err := json.Marshal(body)
-		if err != nil {
+		var err error
+		if b, err = json.Marshal(body); err != nil {
 			return nil, err
 		}
-		rd = bytes.NewReader(b)
 	}
-	// The response beginning shows the way the connection went works
-	// (paths.go).
-	req, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, answerTrace()), method, c.base.String()+path, rd)
-	if err != nil {
-		return nil, err
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
+	var tok string
 	if auth {
-		tok, err := c.bearer(ctx)
+		var err error
+		if tok, err = c.bearer(ctx); err != nil {
+			return nil, err
+		}
+	}
+	var lastErr error
+	for _, i := range c.order() {
+		var rd io.Reader
+		if b != nil {
+			rd = bytes.NewReader(b)
+		}
+		// The response beginning shows the way the connection went works
+		// (paths.go).
+		req, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, answerTrace()), method, c.ents[i].url+path, rd)
 		if err != nil {
 			return nil, err
 		}
-		req.Header.Set("Authorization", "Bearer "+tok)
-	}
-	resp, err := hc.Do(req)
-	if err != nil {
+		if b != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		if auth {
+			req.Header.Set("Authorization", "Bearer "+tok)
+		}
+		resp, err := hc.Do(req)
+		if err == nil {
+			c.moved(i)
+			c.maybeProbe()
+			return resp, nil
+		}
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, &Error{Offline: true, Err: err}
+		lastErr = err
+		if !errors.As(err, new(dialError)) {
+			break // it may have reached the server: not sent again
+		}
 	}
-	return resp, nil
+	return nil, &Error{Offline: true, Err: lastErr}
 }
 
 func decode(resp *http.Response, out any) error {
