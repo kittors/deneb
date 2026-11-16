@@ -203,25 +203,32 @@ func watched(conn net.Conn) *watchedConn {
 // answerTrace marks the connection a request goes on as answered when the
 // server's response begins (send): its way works. Not anything read before:
 // TLS 1.3 sends its session tickets right after the handshake, on a way
-// that may carry nothing more.
-func answerTrace() *httptrace.ClientTrace {
+// that may carry nothing more. used is the connection the request went on,
+// if it got one: a request that fails with no answer counts against its
+// way there and then (send), not when http2 gets round to closing it,
+// after the caller has heard of the failure and maybe tried again.
+func answerTrace() (trace *httptrace.ClientTrace, used func() net.Conn) {
 	var mu sync.Mutex
 	var conn net.Conn
 	return &httptrace.ClientTrace{
-		GotConn: func(info httptrace.GotConnInfo) {
+			GotConn: func(info httptrace.GotConnInfo) {
+				mu.Lock()
+				conn = info.Conn
+				mu.Unlock()
+			},
+			GotFirstResponseByte: func() {
+				mu.Lock()
+				w := watched(conn)
+				mu.Unlock()
+				if w != nil {
+					w.answered.Store(true)
+				}
+			},
+		}, func() net.Conn {
 			mu.Lock()
-			conn = info.Conn
-			mu.Unlock()
-		},
-		GotFirstResponseByte: func() {
-			mu.Lock()
-			w := watched(conn)
-			mu.Unlock()
-			if w != nil {
-				w.answered.Store(true)
-			}
-		},
-	}
+			defer mu.Unlock()
+			return conn
+		}
 }
 
 // watchedConn is a connection pinned to an interface. It works once the

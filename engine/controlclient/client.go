@@ -327,9 +327,10 @@ func (c *Client) send(ctx context.Context, hc *http.Client, method, path string,
 		if b != nil {
 			rd = bytes.NewReader(b)
 		}
-		// The response beginning shows the way the connection went works
-		// (paths.go).
-		req, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, answerTrace()), method, c.ents[i].url+path, rd)
+		// The response beginning shows the way the connection went works;
+		// failing before it, that it does not (paths.go).
+		trace, used := answerTrace()
+		req, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, trace), method, c.ents[i].url+path, rd)
 		if err != nil {
 			return nil, err
 		}
@@ -347,6 +348,11 @@ func (c *Client) send(ctx context.Context, hc *http.Client, method, path string,
 		}
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
+		}
+		if w := watched(used()); w != nil {
+			// No answer on a pinned connection: the next one goes by the
+			// routing table, however soon the caller tries again.
+			w.unanswered(err)
 		}
 		lastErr = err
 		if !errors.As(err, new(dialError)) {
