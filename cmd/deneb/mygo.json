@@ -1,7 +1,7 @@
 {
   "name": "Deneb",
   "identifier": "dev.deneb.app",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "copyright": "Copyright (c) 2026 kittors",
   "out": "build",
   "urlSchemes": [
