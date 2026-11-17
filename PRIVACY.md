@@ -1,275 +1,257 @@
-# Deneb 隐私说明（草稿）
+# Deneb Privacy Notice
 
-> 这份说明用大白话讲 Deneb 记了你的什么、谁看得到、存多久、怎么删。每一条都对着仓库里的代码写的，Deneb 是开源的，你可以自己去核对。还是草稿，没有定稿。
+> This notice explains in plain words what Deneb records about you, who can see it, how long it is kept and how you can delete it. Each point is written against the code in this repository. Deneb is open source, so you can check any of it yourself.
 
-## 先说最要紧的
+## The short version
 
-- **你的设备之间传的东西，Deneb 看不到。**
-  - 设备之间的流量用 WireGuard 端到端加密。能直连就直连，不经过我们的服务器。
-  - 连不上时经中转站转一下，中转站转的也是加密过的包，它解不开。
-- **服务器记的，是让你的设备找得到彼此、让你管得了它们所要的东西**：你的邮箱、你的设备叫什么、在哪个地址上、你组了哪些局域网、给谁开了什么。
-- **管服务器的人看得到服务器上的这些记录**，但看不到你传的内容，也拿不到你设备上的私钥。
+- **Deneb cannot see what your devices send each other.**
+  - Traffic between devices is end-to-end encrypted with WireGuard. When two devices can connect directly, they do, and the traffic does not pass through Deneb's servers.
+  - When they cannot, a relay passes the traffic along. A relay only forwards encrypted packets and cannot decrypt them.
+- **The control server keeps what it needs so that your devices can find each other and you can manage them**: your email address, what your devices are called and at which addresses they can be reached, which LANs you have set up, and what you have opened to whom.
+- **The people who run the server can see these records**, but not what you send, and they cannot get the private keys on your devices.
 
-## 1. 谁在运营，数据放在哪
+## 1. Who runs Deneb and where the data is
 
-- Deneb 默认连的控制服务器和公共中转站，由项目作者运营，在**香港**的云服务器上。下面说的"运营方"指的就是项目作者。
-- Deneb 也可以自己部署。自己部署的话，数据都在你自己的机器上，运营方就是你自己。
-- 还有两样会经手你的一点信息，用哪家还没定：
-  - 发验证码邮件的邮件服务：它看得到你的邮箱、验证码和登录链接；
-  - 运营方接收报警的群机器人：报警里没有个人信息，见第 2 节。
+- The control server and the public relays that Deneb connects to by default are run by the project's author, on cloud servers in **Hong Kong**. "The operator" below means the project's author.
+- You can also run Deneb yourself. Then all the data stays on your own machines, and you are the operator.
+- Two other services handle a little of your information:
+  - Resend, the email service that sends sign-in codes: it sees your email address, the code and the sign-in link.
+  - A group-chat bot on which the operator will receive alerts. None is chosen yet, and for now alerts are only written to the server's log. Alerts contain no personal information (section 2).
 
-## 2. 控制服务器记了什么
+## 2. What the control server records
 
-### 你的账号
+### Your account
 
-- 邮箱；
-- 名字：显示的名字、头像里的那个字，还有一个短名，拼在设备的网络名字里；
-- 什么时候开通的；
-- 运营方给的设置：你是不是部署管理员，位置上限是不是单独调过。
+- Your email address;
+- Your name: the name others see, the letter in your avatar, and a short name that goes into your devices' network names;
+- When the account was created;
+- Settings the operator gave you: whether you are an admin of the deployment, and whether your seat limit was changed for you.
 
-### 你的设备
+### Your devices
 
-- 你给它起的名字，系统里的电脑名（主机名），它是什么设备，什么系统，Deneb 引擎的版本，引擎支持哪些新功能；
-- 你给它换的头像（如果换过）：选好的图片先在你的电脑上裁成 128×128 的 PNG，去掉照片里的拍摄信息再上传；能看到这台设备的人（同一个局域网的人、分享给的人）都看得到。换回设备图标、删掉设备时一起删；
-- 设备的三把**公钥**。私钥只在你的设备上，服务器没有；
-- Deneb 分给它的地址，一个 IPv4、一个 IPv6；
-- **它报上来的地址和端口**：外网的地址，还有它在本地网络里的地址（比如家里路由器分的那个）。为了让设备之间能直连，要拿这些去"打洞"。设备登出、登录过期以后就清掉（第 7 节）；
-- 它连着哪些中转站，试过但连不上哪些（连不上的原因：连不通、超时、证书不对、被拒），你在这台设备上暂停了哪些局域网。连不上的中转站，它的主人在中转站的卡片上看得到是自己的哪台设备连不上（只看得到自己的设备）；
-- 什么时候登录的，登录什么时候到期，最后什么时候在线，登出了没有。
+- The name you gave it, the computer's name in the system (host name), what kind of device it is, its operating system, the version of its Deneb engine, and which newer features the engine supports;
+- The picture you set for it, if you set one. The picture you pick is first cropped on your computer to a 128 × 128 PNG with its photo metadata removed, and then uploaded. Everyone who can see the device (people in the same LAN, people you shared it with) can see the picture. It is deleted when you go back to the device icon or delete the device;
+- The device's three **public keys**. The private keys stay on the device; the server does not have them;
+- The addresses Deneb gave it: one IPv4 and one IPv6;
+- **The addresses and ports it reports**: its public address, and its address on your local network (such as the one your home router gave it). Devices use these to connect to each other directly through routers ("hole punching"). They are cleared when the device signs out or its sign-in expires (section 7);
+- Which relays it is connected to, which relays it tried and could not reach (and why: no connection, timed out, wrong certificate, refused), and which LANs you paused on this device. When a device cannot reach a relay, the relay's owner sees on the relay's card which of their own devices cannot reach it (only their own devices);
+- When it signed in, when the sign-in expires, when it was last online, and whether it has signed out.
 
-### 设备监控
+### Device monitoring
 
-- 引擎每15秒读取处理器型号、逻辑核心数、CPU使用率、系统与架构、物理内存总量/可用量、本地固定文件系统总量/可用量、运行时间和引擎版本，并通过已认证连接上报。
-- 不读取进程列表、文件内容、磁盘序列号或网络盘。磁盘字段仅含卷/挂载名称和容量，不上报用户目录文件。
-- 控制服务器只在内存保留每台设备最新一份，最长24小时，重启即清空，不写入数据库、日志或备份。读取时重新校验拥有者；同局域网成员和共享接收方拿不到这些数据。服务器运营方技术上可以访问服务器内存。
-- 客户端仅在“我的设备”页面可见时每15秒获取，离开页面或隐藏窗口停止请求。设备离线或样本超过45秒标成上次采样，未采集的指标留空，不表示0。
-- 延迟来自本机引擎到该设备的实际路径RTT，不是设备自己上报的延迟；没有共同网络或尚未测得时明确显示状态。
+- Every 15 seconds the engine reads the processor model, the number of logical cores, CPU usage, the operating system and architecture, total and available physical memory, total and available space on local fixed disks, uptime and the engine version, and reports them over its authenticated connection.
+- It does not read the list of processes, the contents of files, disk serial numbers or network drives. For disks, only the name of each volume or mount point and its space are reported, nothing about the files in your folders.
+- The control server keeps only the latest report of each device, in memory, for at most 24 hours. A restart clears it, and it is never written to the database, the logs or the backups. Each time the data is read, the server checks again that the device belongs to the person asking; people in the same LAN and people a device is shared with cannot get it. The operator can technically read the server's memory.
+- The app fetches the data every 15 seconds, and only while the My devices page is visible; it stops when you leave the page or hide the window. When a device is offline or its report is more than 45 seconds old, the app marks the figures as the last sample. Figures that were not collected stay blank, which does not mean 0.
+- Latency is the round-trip time your own engine measures over the actual path to that device, not a figure the device reports. When there is no shared network, or nothing has been measured yet, the app says so.
 
-### 你组的网
+### The networks you set up
 
-- **局域网**：名字，谁建的，有哪些人、什么时候加入的，有哪些设备，"新设备要同意""新成员要同意"两个开关。
-- **邀请**：谁发的，点名发给谁，用了没有、过期没有。邀请链接本身也存着，因为成员要能再看到它。
-- **分享**：哪台设备分给了谁，开了哪些服务，什么时候分的，收回、不要了也记着。
-- **服务**：你在设备上设的服务（远程桌面、共享文件夹这类：名字和端口），以及它对哪个局域网、哪个分享开着。
-- **拒绝名单**：你在哪台设备上拒绝了谁。
-- **你自己的中转站（"我的服务器"）**：名字、地址、端口、证书指纹、限速、分配比例、同时最多几台，踢了谁、谁踢的、什么时候、什么时候撤销。
-  - 安装时它还报了这台机器的一些情况：程序的版本，装法（系统服务、用户服务、Docker……），网卡上的地址（包括局域网地址），路由器自动映射端口的结果（路由器报的外网地址），认出的系统防火墙和端口有没有放行，最近一小时启动了几次。用来判断从外网能不能连上，连不上时说清原因和办法；只有你和服务器看得到。
-  - 从外网检查的结果（从控制服务器、从运营方的另一台机器，各自连没连上）放在服务器内存里，不写进数据库；什么时候最近一次变成能用记在数据库里。
-  - 在 Deneb 里删掉、在服务器上卸载、或者在别处重新安装以后，原来那份程序的密钥（只存哈希）再留 30 天，好让那份程序知道该停了。
-- **中转站流量**：每台设备每天经每个中转站收发了多少字节。只记多少，不记它和谁通信。
+- **LANs**: the name, who created it, its members and when they joined, its devices, and the two switches for approving new devices and new members.
+- **Invitations**: who sent it, whom it was addressed to, whether it has been used and whether it has expired. The invitation link itself is kept too, because members need to be able to see it again.
+- **Shares**: which device was shared with whom, which services are open to them, when it was shared, and also when it was taken back or given up.
+- **Services**: the services you set up on a device (such as Remote Desktop or a shared folder: a name and a port), and which LANs and shares each one is open to.
+- **Refusals**: whom you turned away, and on which device.
+- **Your own relays ("My servers")**: the name, address, port, certificate fingerprint, speed limit, allocation share and the most devices at once; and who was kicked off, by whom, when, and when that was undone.
+  - When it is installed, a relay also reports some facts about its machine: the program's version; how it was installed (system service, user service, Docker, and so on); the addresses on its network interfaces, local ones included; the result of the router's automatic port mapping (the public address the router reports); which system firewall it found and whether the ports are open; and how many times it started in the last hour. These are used to tell whether it can be reached from the internet, and if it cannot, why and what to do. Only you and the server can see them.
+  - The results of checking it from the internet (from the control server and from another of the operator's machines, whether each could reach it) are kept in the server's memory, not in the database. When it last became usable is recorded in the database.
+  - After you delete it in Deneb, uninstall it from its server or install it again somewhere else, the old copy's key (only its hash is stored) is kept for 30 more days, so that the old copy learns it should stop.
+- **Relay traffic**: how many bytes each device sent and received through each relay each day. Only the amount, not whom the device talked to.
 
-### 登录
+### Signing in
 
-- **验证码**：
-  - 正常账号每次登录发一个新的 6 位码，只放在服务器内存里，10 分钟内有效，用一次就作废。
-  - 在网页上登录时，邮件里还有一个登录链接，和验证码一样 10 分钟有效；用了其中一样，另一样就作废。服务器只在内存里存这条链接的哈希，日志里不记它。
-  - 测试账号（`.test` 这类专门测试用的邮箱）的码是固定的，写在服务器的配置文件里，不发邮件。
-  - 发验证码的邮件服务还没接上，所以眼下只有测试账号登得上。
-- **正在登录的设备**：它的电脑名、系统、从哪个地址发起的，放在内存里，最多一小时。
-- **网页登录**：只存会话令牌的哈希（存不了原文，也就冒充不了你）、开始和到期的时间（30 天）、登录时的地址。
-- **设备的令牌**：不存。服务器签名发给设备，用的时候再验签名。
+- **Sign-in codes**:
+  - For a normal account, each sign-in sends a new 6-digit code. The code is kept only in the server's memory, is valid for 10 minutes and works once.
+  - When you sign in on the web, the email also has a sign-in link, valid for 10 minutes like the code. Once you use one of them, the other stops working. The server keeps only a hash of the link, in memory, and does not write the link to the log.
+  - Test accounts (addresses on domains meant for testing, such as `.test`) have fixed codes, written in the server's settings file, and are sent no email.
+- **Devices signing in**: the computer's name, its operating system and the address the sign-in came from, kept in memory for at most an hour.
+- **Web sign-ins**: only a hash of the session token (the token cannot be recovered from the hash, so the hash cannot be used to pose as you), when the sign-in started and when it expires (30 days), and the address you signed in from.
+- **Device tokens**: not stored. The server signs them and gives them to the device, and checks the signature when they are used.
 
-### 日志
+### Logs
 
-服务器的日志用来查问题。它写进服务器自己的文件，一天一个，留 30 天，只有服务器自己读得了。里面有：
+The server's log is for finding problems. It is written to the server's own files, one a day, kept 30 days and readable only by the server. It contains:
 
-- 登录、要验证码时的邮箱和来源地址。还没开通的邮箱不记原文，只记域名和一段短哈希，比如 `"…@example.com" #3fa2c1d07b9e`：
-  - 这样还看得出有人在乱试：同一个邮箱在短时间里被反复要码，或者同一个地址在试很多邮箱；
-  - 但看不出是哪个邮箱。算哈希用的钥匙每次服务器启动时随机生成，只在内存里，重启以后同一个邮箱的哈希也就变了。
-- 设备上线、下线，以及设备名、主人的邮箱、引擎版本；
-- 每次操作的种类和是哪台设备发起的，比如"建了一个局域网"，不记操作的具体内容；
-- 中转站拒绝某台设备时，那台设备的来源地址；
-- 每天的清理（第 7 节）删了几样，只记个数；
-- 注销账号时，账号的编号；邮箱按没开通的邮箱那样遮盖；
-- 报警（见下面的"监控"）。
+- The email address and the source address when someone signs in or asks for a code. An email address without an account is not written as it is, only its domain and a short hash, such as `"…@example.com" #3fa2c1d07b9e`:
+  - This still shows when someone is trying addresses at random: the same address asking for codes again and again within a short time, or one source address trying many addresses.
+  - But it does not show which address it was. The key for the hash is made at random each time the server starts and is kept only in memory, so after a restart the same address gets a different hash.
+- Devices coming online and going offline, with the device's name, its owner's email address and its engine version;
+- The kind of each action and which device made it, such as "created a LAN", but not what the action contained;
+- The source address of a device that a relay turned away;
+- How many items the daily cleanup (section 7) deleted; only the counts;
+- When an account is deleted, the account's number, with the email address masked like one without an account;
+- Alerts (see "Monitoring" below).
 
-不进日志的：验证码、令牌、密钥、邀请链接里的令牌，以及你传的任何内容。登录链接只记最前面 4 位。
+Not in the log: codes, tokens, keys, the token in an invitation link, or anything you send. Of a sign-in link, only the first 4 characters are written.
 
-部署管理员在网页运营后台上能看今天和昨天的日志，所以登录邮箱和来源地址他们看得到。给他们看之前，设备报上来的地址和端口、令牌、验证码先遮掉。更早的日志只能到服务器上用命令看。
+Admins of the deployment can read today's and yesterday's log in the web admin console, so they see the email addresses and source addresses of sign-ins. Before the log is shown to them, the addresses and ports that devices report, tokens and codes are masked. Older logs can only be read with commands on the server.
 
-服务器容器自己的日志（Docker 记的）只剩服务器开始写文件以前的几行和崩溃时的输出，按大小滚动，最多 30 MB。每次升级时把它另存一份，另存的也只留 30 天。
+The server container's own log (kept by Docker) only has the few lines from before the server starts writing its files, and what a crash prints. It rolls over by size, 30 MB at most. Each upgrade saves a copy of it, and saved copies are also kept only 30 days.
 
-### 运营记录
+### Admin records
 
-- 部署管理员做的每个改动都记一条：什么时候、谁、对谁、做了什么、结果。比如"kittors 替 Leo（leo@example.com）注销了账号""kittors 删了阿杰的「旧 NAS」"。
-- 改动包括：替人注销账号、删设备、让设备重新登录、让人在浏览器里退出、调位置上限、设和撤部署管理员、批准测试设备登录，以及公共中转站上的踢人、调份额、加一台。网页运营后台、公共中转站那一页、服务器上的管理命令做的，都记。
-- 只记做了什么，不记他们打开过谁的卡片、看过什么。
-- 留 1 年，到期清掉。账号注销以后，记录里还留着他的名字和邮箱，直到那一条到期。
-- 服务器日志里也同时写一行。
+- Every change an admin makes is recorded: when, who, to whom, what, and the result. For example, "kittors deleted the account of Leo (leo@example.com) for him", or "kittors deleted Jay's “Old NAS”".
+- The changes recorded are: deleting someone's account for them, deleting devices, making a device sign in again, signing someone out in their browsers, changing seat limits, making and removing admins, approving sign-ins of test devices, and, on the public relays, kicking devices off, changing allocation shares and adding a relay. Changes made in the web admin console, on the public relays page and with the commands on the server are all recorded.
+- Only the changes are recorded, not whose cards an admin opened or what they looked at.
+- Records are kept 1 year, then deleted. After an account is deleted, the records still show its name and email address until each record expires.
+- A line is also written to the server's log.
 
-### 备份
+### Backups
 
-- 每天一份数据库备份：最近 7 天每天一份，再往前每周留一份，留 8 周。放在同一台服务器上，只有服务器自己读得了；备份里不放签名用的密钥。
-- 每次升级服务器以前，还会把整个数据目录拷一份（不带日志和每天的备份），留最近 10 份，最多两个月。
+- One database backup a day: one for each of the last 7 days, and before that one a week, kept 8 weeks. They are on the same server and readable only by the server. The signing keys are not in the backups.
+- Before each upgrade of the server, the whole data folder is also copied (without the logs and the daily backups). The last 10 copies are kept, for two months at most.
 
-### 监控
+### Monitoring
 
-- 服务器每分钟查一遍自己：公共中转站在不在线、满没满，备份新不新，磁盘和内存够不够，在线设备是不是一下子少了很多。
-- 另一台机器上的"看门狗"每分钟探一次服务器和中转站。
-- "我的服务器"中转站装上以后、它请求时、换了地址时、以后每 10 分钟，控制服务器从外面连它一次：TCP 做一次 TLS 握手并核对证书，UDP 发一个 STUN 请求，不经它转发任何东西。另一台机器上的看门狗也照样连一次，它拿到的只有中转站的地址、端口和证书指纹。只去连公网地址，不碰私网地址。
-- 有问题就报警：现在只记在日志里，以后发到运营方选的群机器人。报警里只有中转站的名字、设备的个数、备份文件名这类，没有人名、邮箱、地址。最近 200 条报警留在服务器内存里。
+- Every minute the server checks itself: whether the public relays are online and whether they are full, whether the backups are recent, whether there is enough disk space and memory, and whether many devices went offline at once.
+- A watchdog on another machine checks the server and the relays every minute.
+- The control server connects to each of your own relays from the internet: after it is installed, when it asks, when its address changes, and every 10 minutes. Over TCP it makes one TLS handshake and checks the certificate; over UDP it sends one STUN request. Nothing is passed through the relay. The watchdog on the other machine does the same, and all it gets is the relay's address, port and certificate fingerprint. Only public addresses are contacted, never private ones.
+- When something is wrong, an alert is raised. For now it is only written to the log; later it will go to a group-chat bot the operator picks. An alert only has things like a relay's name, a number of devices or a backup's file name, and no names of people, email addresses or IP addresses. The last 200 alerts are kept in the server's memory.
 
-## 3. 别人看得到你的什么
+## 3. What other people can see about you
 
-- **跟你在同一个局域网里的人**：
-  - 看得到你：显示名、头像里的字、短名；
-  - 看得到你的设备：名字、种类、系统、Deneb 地址、在不在线、最后什么时候在线，以及你开给这个局域网的服务；
-  - 对方的设备为了跟你直连，会拿到你的设备报上来的外网地址、本地网络地址和端口。
-  - **看不到你的邮箱**，邮箱只有你自己看得到。
-- **你把设备分给的人**：看得到这台设备和你开给对方的服务，看不到你别的设备。
-- **拿到邀请链接的人**：打开就看得到局域网的名字、谁邀请的、已经在里面的人的名字、有几台设备。看不到邮箱。
-- **"我的服务器"中转站的主人**：看得到哪些设备、哪些人在经它连，各用了多少流量；看得到自己的哪些设备连不上它；看不到内容。
-- **部署管理员**（运营页）：看得到公共中转站这个月流量最多的 5 个人的名字和流量，不写这些人和谁连。
+- **People in the same LAN as you**:
+  - They see you: your display name, the letter in your avatar and your short name.
+  - They see your devices: name, kind, operating system, Deneb address, whether it is online, when it was last online, and the services you opened to this LAN.
+  - Their devices get the public address, local address and ports your devices report, so that they can connect to yours directly.
+  - **They do not see your email address.** Only you see it.
+- **People you shared a device with**: they see that device and the services you opened to them, not your other devices.
+- **Anyone with an invitation link**: when they open it, they see the LAN's name, who invited them, the names of the people already in it and how many devices it has. They do not see email addresses.
+- **The owner of a relay under "My servers"**: sees which devices and people connect through it and how much traffic each one used, and which of the owner's own devices cannot reach it. Not the content.
+- **Admins of the deployment** (on the operations page): see the names and traffic of the 5 people who used the public relays most this month, but not whom those people connected with.
 
-## 4. 中转站看得到什么
+## 4. What a relay can see
 
-- 它转的包都是加密的，解不开。
-- 它看得到：
-  - 连上来的地址和端口；
-  - 设备的公钥；
-  - 什么时候连的，转了多少字节。
+- The packets it forwards are encrypted. It cannot decrypt them.
+- It sees:
+  - the address and port that connected to it;
+  - the device's public key;
+  - when the device connected, and how many bytes it forwarded.
 
-  出错时，它的日志里会有对方的地址和公钥的一小段。日志按大小滚动，最多 30 MB（每份 10 MB，留 3 份）。"我的服务器"中转站要用新的一行安装命令装才有这个上限，以前装的要重装一次。
-- 它每分钟把每台设备收发的字节数报给控制服务器，服务器按天记账（第 2 节）。
-- 设备会向中转站问"我在外网的地址是什么"（STUN），中转站因此看得到你的外网地址。
-- 公共中转站在香港，由运营方运营。"我的服务器"中转站由它的主人运营，在主人自己的机器上。
+  When something goes wrong, its log has the other side's address and a short part of its public key. The log rolls over by size, 30 MB at most (10 MB a file, 3 files). A relay under "My servers" only has this limit if it was installed with the current one-line install command; one installed earlier has to be installed again.
+- Every minute it reports to the control server how many bytes each device sent and received, and the server adds them up by day (section 2).
+- Devices ask a relay "what is my public address?" (STUN), so the relay sees your public address.
+- The public relays are in Hong Kong and run by the operator. A relay under "My servers" is run by its owner, on the owner's own machine.
 
-## 5. 你的设备上留了什么
+## 5. What stays on your device
 
-- **引擎的文件夹**：
-  - 位置：
-    - macOS：`~/Library/Application Support/Deneb/engine`；
-    - Windows：`%LOCALAPPDATA%\Deneb`，装成系统服务的在 `%ProgramData%\Deneb`；
-    - Linux：`~/.local/share/deneb`，系统服务的在 `/var/lib/deneb`。
+- **The engine's folder**:
+  - Where it is:
+    - macOS: `~/Library/Application Support/Deneb/engine`; for the system service, `/Library/Application Support/Deneb/engine`;
+    - Windows: `%LOCALAPPDATA%\Deneb`; for the system service, `%ProgramData%\Deneb`;
+    - Linux: `~/.local/share/deneb`; for the system service, `/var/lib/deneb`.
 
-    只有你自己（和这台电脑的管理员）读得了。
-  - `state.json`：这台设备的私钥，连哪个服务器，登录了没有，设备和账号的编号，暂停了哪些局域网。
-  - `netmap.json`：最近一份网络图，里面有同一个局域网里别人设备的名字和地址。
-  - `denebd.log`：引擎的日志，有地址、端口、连接，以及出过的问题，不记你传的内容。
-    - Windows 的系统服务：每次启动时，日志超过 10 MB 就换一个新的，旧的留一份。
-    - Linux 的系统服务：写进系统日志（journald），留多久按系统的设置。
-    - 由 Deneb 窗口拉起来的引擎：超过 10 MB 就换一个新的，旧的留一份；启动时和运行中都会换。
-- **Deneb 窗口自己**只存：设备在画布上的位置、"第一次的引导做过了"这类小标记。
-- **诊断包**：
-  - 只有你点"导出诊断包"、或者在命令行里执行 `deneb diag` 时才生成。窗口里导出的存到"下载"文件夹；命令行默认存在当前文件夹，也可以用 `-o` 指定。
-  - 它**不会自己发出去**，发不发、发给谁由你决定。
-  - 里面有：引擎的版本和设置，窗口里看到的状态（设备、局域网、问题），到每台设备走的路、快慢，中转站的连接，最近一份网络图，内核模式下 Deneb 在系统里设的网卡和路由，日志的最后一段，引擎在忙什么。
-  - 里面没有：任何私钥（公钥也只留最后 4 位）、登录和邀请链接、账号里的人和邀请、你传的内容。
-  - 发给别人之前想一想：网络图里有同一个局域网里别人设备的名字和地址。
+    Only your own user account (for a system service, only the system) and the computer's administrators can read it.
+  - `state.json`: this device's private keys, which server it connects to, whether it is signed in, the numbers of the device and the account, and which LANs are paused.
+  - `netmap.json`: the latest network map, which has the names and addresses of other people's devices in the same LANs.
+  - `denebd.log`: the engine's log, with addresses, ports, connections and the problems it ran into. It does not record what you send.
+    - Windows system service: at each start, a log over 10 MB is replaced by a new one, and one old file is kept.
+    - macOS system service: written to the folder above. It is not rolled over by size.
+    - Linux system service: written to the system log (journald), kept as long as the system's settings say.
+    - An engine started by the Deneb window: a log over 10 MB is replaced by a new one, and one old file is kept, both at start and while it runs.
+- **The Deneb window itself** only keeps where devices sit on the canvas, and small marks such as "the first-run guide is done".
+- **Diagnostics bundles**:
+  - One is made only when you export it in the app, or run `deneb diag` on the command line. The app saves it to your Downloads folder; the command saves it to the current folder, or where `-o` says.
+  - It is **never sent anywhere by itself**. Whether to send it, and to whom, is up to you.
+  - It contains: the engine's version and settings; the state shown in the window (devices, LANs, problems); the path to each device and how fast it is; the relay connections; the latest network map; in kernel mode, the network interface and routes Deneb set up in the system; the end of the log; and what the engine is busy with.
+  - It does not contain: any private key (public keys are cut to their last 4 characters), sign-in or invitation links, the people and invitations in your account, or anything you send.
+  - Think before you send it to someone: the network map has the names and addresses of other people's devices in the same LANs.
 
-## 6. 会连到哪些别的地方
+## 6. Other places Deneb connects to
 
-- **检查更新**：
-  - 现在的版本**不会自己检查更新**：发布的配置里还没设更新的来源，开发版和 Linux 的 `.deb` 包也一直不查。
-  - 以后打开的话：每天查一次，去发布页（打算放在 GitHub）下载这个平台的更新清单。请求里只带 `User-Agent: mygo-updater`，没有你的账号和设备信息。不过 GitHub 看得到你的 IP 地址。
-  - 你在更新窗口里的选择（自动检查、跳过的版本、上次什么时候查的）存在本机的 `updater.json`。
-- **验证码邮件**：经运营方选的邮件服务发出，它看得到你的邮箱、验证码和登录链接。邮件里的小星图标随信附带，打开邮件不会去别的网站取图。测试账号不发邮件。
-- **报警**：以后发到运营方选的群机器人（现在只记日志），里面没有个人信息。
-- **网页版**：
-  - 用运营方域名下的一个子域名，证书是正式的。网页放在运营方的另一台服务器上，也在香港。
-  - 浏览器连的是那台服务器上的 nginx，它转给同一台机器上的网页后台，网页后台再经加密连接转给控制服务器（按控制服务器的指纹认它，和设备一样）。
-  - 那台服务器也由运营方管，网页上的请求在它那里是解开的，和控制服务器一样。
-  - 在浏览器里登录一台设备的页面（`/device-login`）也走这里：网页后台把它原样转给控制服务器，经手的是你填的邮箱和验证码，和网页版自己的登录一样。
-  - nginx 不记访问日志，因为路径里有邀请码；错误日志只记它自己处理不了的问题。
-  - 网页只连这台服务器，不从别的网站加载任何东西，没有外部字体，也没有统计。
+- **Checking for updates**:
+  - Release builds of the app check for updates in the background once a day, on the operator's download site, which is on the same server as the web app (below). They fetch this platform's update list and, when there is a new version, its package. The requests carry no account or device information, but the site sees your IP address. It keeps no access log.
+  - Development builds never check, and neither does the Linux `.deb` package, which is updated by a newer `.deb`.
+  - Your choices about updates (whether to check automatically, skipped versions, when it last checked) are kept on this computer in `updater.json`.
+  - A relay under "My servers" that was installed from a release checks the same site for a newer relay 10 minutes after it starts and then about every 6 hours, and updates itself. Its requests carry only the relay's version, and the site sees the IP address of the relay's machine.
+- **Sign-in emails**: sent through Resend, the email service the operator uses. It sees your email address, the code and the sign-in link, and handles them under its own privacy policy. The small star icon in the email is attached to the message, so opening the email does not fetch images from other sites. Test accounts are sent no email.
+- **Alerts**: later they will go to a group-chat bot the operator picks (for now they are only written to the log). They contain no personal information.
+- **The web app**:
+  - It uses a subdomain of the operator's domain, with a publicly trusted certificate. It runs on another of the operator's servers, also in Hong Kong.
+  - Your browser connects to nginx on that server. nginx passes the requests to the web backend on the same machine, and the backend passes them over an encrypted connection to the control server, which it recognizes by its fingerprint, as devices do.
+  - That server is also run by the operator, and requests from the web app are decrypted there, as they are on the control server.
+  - The page for signing a device in through a browser (`/device-login`) goes the same way. The web backend passes it to the control server unchanged, and handles the email address and code you enter, as with the web app's own sign-in.
+  - nginx keeps no access log, because invitation codes appear in paths. Its error log only has the problems it cannot handle itself.
+  - The web pages only connect to this server and load nothing from other sites: no outside fonts and no analytics.
+- **How devices reach the control server**: current versions try three ways in, in order, and move to the next one only when the one before fails.
+  - The control server's own address, as before.
+  - A forwarder on another of the operator's servers (the one with the download site). It only passes the encrypted connection on to the control server as it is: the encryption ends at the control server, and the device still checks the control server's fingerprint. This server sees your IP address, how long you stay connected and how much is sent, but not the content. It does not record your IP address.
+  - Cloudflare, used only when both of the above fail. On this path the encryption ends at Cloudflare, so Cloudflare sees what passes between the device and the control server: your email address, device names, the networks you set up and the credentials used to sign in. It handles them under its own privacy policy. The control server takes these connections through a Cloudflare tunnel, without opening more ports to the internet, and gets your IP address from the `CF-Connecting-IP` header that Cloudflare adds.
+- **Public relays through Cloudflare**: when a current version cannot connect to a public relay directly, it connects through a Cloudflare tunnel.
+  - Cloudflare cannot see the content: what passes through a relay is packets the devices encrypted, and the keys are only on the devices at both ends.
+  - It sees your device's IP address, when it connects, whom it sends to (only devices' public keys, not names) and how much it sends. On a direct connection, only the relay, that is the operator, sees these.
+  - The relay gets your IP address from the `CF-Connecting-IP` header that Cloudflare adds, so its admission checks and its log see the same as on a direct connection.
 
-- **连控制服务器走哪条路**：新版的设备按顺序试三个入口，前一个连不上才换下一个。
-  - 控制服务器自己的地址：和以前一样。
-  - 运营方另一台服务器（下载站那台）上的转发：它只把加密的连接原样转给控制服务器，加密一直到控制服务器才解开，设备照样核对控制服务器的指纹。这台服务器看得到你的 IP 地址、连了多久、传了多少，看不到内容；它不记你的 IP 地址。
-  - Cloudflare：前两个都连不上时才走。走这条路时，加密在 Cloudflare 那里解开，它看得到设备和控制服务器之间的内容：你的邮箱、设备名、组的网和登录用的凭证，并按它自己的隐私政策处理。控制服务器经 Cloudflare 的隧道接它的连接，不对外多开端口，从 Cloudflare 给的 `CF-Connecting-IP` 里拿你的 IP 地址。
-- **公共中转站经 Cloudflare**：新版的设备直连公共中转站连不上时，经 Cloudflare 的隧道连它。
-  - Cloudflare 看不到内容：中转站里转的是设备之间加密好的包，钥匙只在两端的设备上。
-  - 它看得到：你的设备的 IP 地址，什么时候连，发给谁（只是设备的公钥，不是名字），传了多少。直连时，这些只有中转站，也就是运营方看得到。
-  - 中转站从 Cloudflare 给的 `CF-Connecting-IP` 里拿你的 IP 地址，准入和日志看到的和直连时一样。
+## 7. How long things are kept
 
-## 7. 存多久
-
-| 什么 | 存多久 |
+| What | How long |
 | --- | --- |
-| 账号 | 直到注销（第 8 节） |
-| 设备 | 直到被删掉：主人删的，注销账号时一起删的，或者别人在同一台电脑上登录、旧的那台被换掉。登出了、登录过期了（180 天没回来）的设备也留着，这样同一个人再登录时地址不变；但它报上来的地址和端口，登出时马上清掉，登录过期的在每天清理时清掉 |
-| 设备的 Deneb 地址 | 设备删掉以后，过 30 天才会分给别人 |
-| 局域网、成员、服务、拒绝名单 | 直到被删掉、退出或者关掉 |
-| 分享 | 收回了、不要了的，记录再留 30 天，然后删掉。刚收回、还能撤销的那几秒不删 |
-| 邀请 | 用过的再留 30 天；过期的、撤回的，到期以后再留 30 天；然后删掉。局域网删了就跟着删 |
-| 中转站流量 | 按天记，留这个月和前两个月，更早的删掉；中转站删了就跟着删 |
-| 踢人记录 | 还在生效的一直留着；撤销了的再留 30 天，然后删掉（卡片上也只显示最近 30 天里撤销的）。中转站删了，或者被踢的那台设备删了，就跟着删 |
-| 中转站报的机器情况 | 跟着中转站，删掉就没了；每次报新的就换掉旧的 |
-| 从外网检查中转站的结果 | 服务器内存里，最近一次的；重启就没了 |
-| 删掉、卸载的中转站的密钥哈希 | 30 天，到期清掉 |
-| 设备连不上哪些中转站 | 跟着设备，每次上报换掉旧的；连上了就去掉 |
-| 验证码 | 内存里 10 分钟，用过就作废 |
-| 正在登录的设备 | 内存里最多一小时 |
-| 网页登录 | 30 天，到期就删；退出登录马上删 |
-| 服务器日志 | 一天一个文件，留 30 天。容器自己的日志按大小滚动（每份 10 MB，留 3 份）；升级时另存的旧日志也只留 30 天 |
-| 备份 | 每天一份，留 7 天；再往前每周一份，留 8 周。升级前的整份拷贝（不带日志和每天的备份）留最近 10 份，最多两个月。删掉的东西，在备份里还会留到那份备份被换掉为止，最长两个月左右 |
-| 报警 | 服务器内存里最近 200 条 |
-| 运营记录 | 1 年，到期清掉；注销了的人在记录里的名字和邮箱，也留到那一条到期 |
+| Account | Until it is deleted (section 8) |
+| Device | Until it is deleted: by its owner, together with the account, or when someone signs in on the same computer and the new device replaces the old one. Devices that signed out, or whose sign-in expired (not back for 180 days), are kept too, so that the same person gets the same address when signing in again. But the addresses and ports a device reported are cleared at once when it signs out, and at the daily cleanup when its sign-in has expired |
+| A device's Deneb address | Not given to anyone else until 30 days after the device is deleted |
+| LANs, members, services, refusals | Until they are deleted, left or turned off |
+| Shares | Once taken back or given up, the record is kept 30 more days, then deleted. A share just taken back is not deleted during the few seconds it can still be undone |
+| Invitations | Used ones are kept 30 more days; expired or withdrawn ones, 30 days past their end; then they are deleted. They are deleted with their LAN |
+| Relay traffic | By day, for this month and the two before; older days are deleted. Deleted with the relay |
+| Kicks | Kept while in effect; once undone, kept 30 more days, then deleted (the relay's card also only shows those undone in the last 30 days). Deleted with the relay, or with the kicked device |
+| Machine facts a relay reports | As long as the relay; each new report replaces the old one |
+| Results of checking a relay from the internet | The latest only, in the server's memory; gone after a restart |
+| Key hashes of deleted or uninstalled relays | 30 days, then deleted |
+| Relays a device cannot reach | With the device; each report replaces the old one, and a relay is removed once the device reaches it |
+| Sign-in codes | 10 minutes in memory; void once used |
+| Devices signing in | At most an hour, in memory |
+| Web sign-ins | 30 days, then deleted; deleted at once when you sign out |
+| Server logs | A file a day, kept 30 days. The container's own log rolls over by size (10 MB a file, 3 files); old logs saved at upgrades are also kept only 30 days |
+| Backups | One a day, kept 7 days; before that one a week, kept 8 weeks. Copies of the whole data folder taken before upgrades (without the logs and the daily backups): the last 10, for two months at most. Something you delete stays in backups until those backups are replaced, about two months at most |
+| Alerts | The last 200, in the server's memory |
+| Admin records | 1 year, then deleted. The names and email addresses of deleted accounts in them stay until each record expires |
 
-"再留 30 天""留三个月"的这些，服务器每天清理一次，跟每天的备份一起跑，日志里只记删了几样。
+The items kept "30 more days" or for three months are cleaned up once a day by the server, together with the daily backup. The log only records how many items were deleted.
 
-## 8. 你能怎么删
+## 8. How you can delete things
 
-- **注销账号**：账号和名下的东西一起删掉：
-  - 你的设备，在线的马上登出；
-  - 你在各个局域网里的位置，以及只有你在里面的、你建的局域网；
-  - 给出和收到的分享，发出的、发给你的、你用过的邀请，服务，拒绝名单；
-  - 你自己的中转站；
-  - 浏览器里的登录。
+- **Delete your account**: deletes the account and everything under it:
+  - your devices; the ones online are signed out at once;
+  - your place in each LAN, and the LANs you created that only you are in;
+  - the shares you gave and received; the invitations you sent, received or used; services; refusals;
+  - your own relays;
+  - your sign-ins in browsers.
 
-  还有两种情况：
-  - 你建的局域网里还有别人：要先选，转给最早加入的成员，还是整个删掉。
-  - 你的中转站正被别人用着：照样删掉，他们会改走公共中转站。装在你自己机器上的中转站容器，要你自己去停掉。
+  Two more cases:
+  - A LAN you created still has other people in it: you first choose whether to hand it over to the member who joined first, or to delete it altogether.
+  - Your relay is being used by others: it is deleted all the same, and they move to the public relays. A relay container installed on your own machine has to be stopped by you.
 
-  服务器已经支持（`account.delete`），窗口的账号卡片和网页里都有入口，跟着下一版客户端和网页上线；在那之前，可以联系运营方代删。测试账号（写在服务器配置里的）注销不了，因为服务器每次启动都会把它建回来。
+  Delete account is on the account card, in the app and on the web. You can also ask the operator to do it for you. Test accounts (the ones in the server's settings) cannot be deleted, because the server creates them again each time it starts.
 
-  运营方替你注销以后，会给你的邮箱发一封信："应你的要求，你的 Deneb 账号注销了"。信里不写是哪位部署管理员操作的；这件事记进运营记录。
-- **删除设备**：设备的主人能删自己的设备，在线的会马上被登出。它在各个局域网里的位置、分享、服务、拒绝名单、踢人记录一起删掉。窗口和网页里的设备卡片上都有按钮，跟着下一版客户端和网页上线。
-- **登出**：登出以后，这台设备就不在任何人的网络图里了，它报上来的地址和端口马上清掉。服务器还留着这台设备，好让你再登录时地址不变。要彻底删掉，就删除设备。
-- **其他**：
-  - 退出局域网；你是拥有者的话，可以删掉整个局域网；
-  - 收回分享；
-  - 删掉你自己的中转站；
-  - 在网页上退出登录。
-- 删掉的东西，在备份里还会留到那份备份被换掉为止，最长两个月左右；以前记进日志的，最多再留 30 天（第 7 节）。
+  When the operator deletes your account at your request, an email is sent to your address saying that it was deleted at your request. The email does not say which admin did it; that goes into the admin records.
+- **Delete a device**: the owner of a device can delete it; if it is online, it is signed out at once. Its place in each LAN, its shares, services, refusals and kicks are deleted with it. Delete device is in My devices, in the app and on the web.
+- **Sign out**: after a device signs out, it is no longer in anyone's network map, and the addresses and ports it reported are cleared at once. The server keeps the device, so that it gets the same address when you sign in again. To remove it completely, delete the device.
+- **Other things you can do**:
+  - leave a LAN; if you own it, delete the whole LAN;
+  - take back a share;
+  - delete your own relay;
+  - sign out on the web.
+- What you delete stays in backups until those backups are replaced, about two months at most. What was already written to the log stays up to 30 more days (section 7).
 
-## 9. 运营方看得到什么
+## 9. What the operator can see
 
-- 运营方管着服务器，技术上看得到服务器上的全部记录和日志，就是第 2 节列的那些：邮箱、设备名、地址、局域网、分享……
-- 运营方平时用的管理命令列得出：设备和它们的状态，谁在浏览器里登录着，报警，备份，日志的最后一段。运营页上能看公共中转站的负载，以及流量最多的 5 个人。
-- **网页运营后台**：只给部署管理员。能看到的就是管理命令列得出的这些，搬到了网页上：
-  - 人：名字、邮箱、什么时候开通、几台设备、在不在线、位置用了几个和上限、在几个浏览器里登录着、在几个局域网里、自己建了几个、自己有几台中转站；
-  - 设备：名字、种类、系统、引擎版本、在不在线、登录什么时候到期、Deneb 分的地址、主人；
-  - 等着批准登录的测试设备，报警，备份，今天和昨天的服务器日志（遮掉的见第 2 节"日志"），运营记录；
-  - 公共中转站的负载，以及流量最多的 5 个人。
-- 网页运营后台看不到：
-  - 设备报上来的外网地址、本地地址和端口；
-  - 私钥、令牌、验证码；
-  - 谁和谁连、他们之间传了多少（公共中转站页上只有流量最多的 5 个人这个月一共用了多少）；
-  - 局域网里有谁、开了什么服务、分给了谁。局域网只给个数。
+- The operator runs the servers and can technically see all the records and logs on them, which are the ones listed in section 2: email addresses, device names, addresses, LANs, shares and so on.
+- The admin commands the operator uses day to day list devices and their state, who is signed in in a browser, alerts, backups and the end of the log. The operations page shows the load on the public relays and the 5 people who used them most.
+- **The web admin console** is only for admins of the deployment. It shows on the web what the admin commands list:
+  - People: name, email address, when they joined, how many devices they have, whether they are online, how many seats they use and their limit, how many browsers they are signed in on, how many LANs they are in, how many they created, and how many relays they own;
+  - Devices: name, kind, operating system, engine version, whether it is online, when its sign-in expires, the address Deneb gave it, and its owner;
+  - Test devices waiting for sign-in approval, alerts, backups, today's and yesterday's server log (masked as described under "Logs" in section 2), and the admin records;
+  - The load on the public relays, and the 5 people who used them most.
+- The web admin console does not show:
+  - the public addresses, local addresses and ports that devices report;
+  - private keys, tokens or codes;
+  - who connects with whom, or how much passes between them (the public relays page only shows how much in total each of the 5 heaviest users used this month);
+  - who is in a LAN, which services are open or what is shared with whom. For LANs it only shows how many there are.
 
-  唯一的例外：替人注销账号的卡片上，为了问"转给谁"，会出现他建的、里面还有别人的局域网的名字，和最早加入的那个人的名字。后台只有这一处出现局域网和成员的名字。
-- 有人要求时，运营方能替他注销账号（网页运营后台或者管理命令），规则和自己注销一样；注销以后给本人发信（第 8 节）。部署管理员做的每个改动都记进运营记录（第 2 节）。
-- 测试账号的验证码写在服务器的配置文件里，运营方知道。
-- 运营方看不到：
-  - 你设备之间传的内容（端到端加密，服务器不经手，中转站解不开）；
-  - 你设备上的私钥；
-  - 你网页登录的会话令牌（服务器只存哈希）。
-
-## 要用户定的（草稿，定稿时删掉这一节）
-
-1. **日志留多久**：用户定了。服务器日志留 30 天，另存的旧日志也是；没开通的邮箱只记域名和短哈希，来源地址照记。11-12 已上线。
-2. **注销账号**：用户 11-12 看过设计，都按推荐定，在接线。服务器这一半 11-12 已上线（`account.delete`）；备份不单独改，到期自然删掉，最长两个月左右。界面由客户端线照 `design/plan/m7/account-delete.md` 来。
-3. **"一直留着"的定期清**：用户定了。用过、过期、撤回的邀请，收回、不要了的分享，撤销了的踢人记录，30 天后删；中转站流量留三个月；登出、登录过期的设备清掉报上来的地址。11-12 已上线。
-4. **删除设备在界面上的入口**：用户 11-12 看过设计，都按推荐定，在接线。服务器已经支持了（`device.delete`）。
-5. **在网页后台、客户端里放这份说明的链接**：用户 11-12 看过设计，都按推荐定，在接线。
-6. **要不要英文版**：用户定了，先不做。
-7. **邮件服务和报警的群机器人用哪家**：它们会经手邮箱、验证码、报警内容，数据会不会出香港，看选哪家。
-8. **自动更新开不开**：用户定了，打开，清单和安装包放 GitHub Releases。发布脚本做好了；私钥由用户自己生成，放进 GitHub 的 Actions 密钥和密码管理器（11-12 用户定了），等用户动手。
-9. **窗口拉起的引擎，日志不会自己变小**：用户定了，三个平台都改了，超过 10 MB 就换，旧的留一份。Windows 上的测试在 GitHub 的 Windows 机器上跑过了。
-10. **"我的服务器"中转站的日志上限**：用户定了。一行安装命令给容器的日志设了上限，每份 10 MB，留 3 份。11-12 已上线；以前装的要按新命令重装才有。
-11. **正式的隐私政策要不要请律师看。**
-
----
-
-这是说明，不是法律文本。正式的隐私政策要不要请律师看，由用户定。
+  The one exception is the card for deleting someone's account. To ask whom to hand them over to, it shows the names of the LANs that person created that still have other people in them, and the name of the member who joined each one first. This is the only place in the console where names of LANs and members appear.
+- When someone asks, the operator can delete their account for them (in the web admin console or with the admin commands), under the same rules as deleting it yourself; afterwards an email is sent to that person (section 8). Every change an admin makes goes into the admin records (section 2).
+- The operator knows the codes of test accounts, which are in the server's settings file.
+- The operator cannot see:
+  - what your devices send each other (it is end-to-end encrypted; the servers do not handle it, and relays cannot decrypt it);
+  - the private keys on your devices;
+  - the session tokens of your web sign-ins (the server only keeps their hashes).
