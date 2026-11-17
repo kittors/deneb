@@ -204,6 +204,65 @@ func TestEntrancesBackOnNetworkChange(t *testing.T) {
 	}
 }
 
+// TestEntranceSwitch: the test switch for a real machine (deneb debug
+// control-entrance). The entrance in use turned off: the stream is told to
+// start again, and the next request goes by the next. Turned on again: back
+// to it at once. A place past the list is refused.
+func TestEntranceSwitch(t *testing.T) {
+	oldProbe := probeEvery
+	probeEvery = time.Hour
+	t.Cleanup(func() { probeEvery = oldProbe })
+	pong := http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) { rw.Write([]byte("pong")) })
+	start := func() *httptest.Server {
+		s := httptest.NewUnstartedServer(pong)
+		s.EnableHTTP2 = true
+		s.StartTLS()
+		t.Cleanup(s.Close)
+		return s
+	}
+	a, b := start(), start()
+	var kicked atomic.Int32
+	c, err := New(Options{Entrances: []proto.ControlEntrance{
+		{URL: a.URL, Pin: proto.Fingerprint(a.Certificate())},
+		{URL: b.URL, Pin: proto.Fingerprint(b.Certificate())},
+	}, Machine: proto.NewMachineKey(), Logf: t.Logf, OnBack: func() { kicked.Add(1) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ping(c); err != nil || c.URL() != a.URL {
+		t.Fatalf("ping: %v by %s; want the first", err, c.URL())
+	}
+
+	if err := c.SetEntranceOff(1, true); err != nil {
+		t.Fatal(err)
+	}
+	if kicked.Load() == 0 {
+		t.Error("the stream not told to start again")
+	}
+	if err := ping(c); err != nil || c.URL() != b.URL {
+		t.Fatalf("the first off: %v by %s; want the second", err, c.URL())
+	}
+	if got := c.Entrances(); !got[0].Off || got[0].InUse || !got[1].InUse || got[1].Off || !got[0].Pinned {
+		t.Errorf("listed %+v", got)
+	}
+
+	if err := c.SetEntranceOff(1, false); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); c.URL() != a.URL && time.Now().Before(deadline); {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if c.URL() != a.URL {
+		t.Errorf("the first on again: still by %s", c.URL())
+	}
+
+	for _, n := range []int{0, 3, -1} {
+		if err := c.SetEntranceOff(n, true); err == nil {
+			t.Errorf("entrance %d of 2 turned off", n)
+		}
+	}
+}
+
 // TestEntranceChecks: a CDN's entrance, with no pin, is checked by its name
 // against the roots; one named by its address cannot be.
 func TestEntranceChecks(t *testing.T) {

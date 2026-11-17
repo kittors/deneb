@@ -179,7 +179,8 @@ type Engine struct {
 	ccGen         int // which control loop is the current one
 	ccCancel      context.CancelFunc
 	loginURL      string
-	browserURL    string // the same login for a person's browser (proto.LoginState.BrowserURL)
+	browserURL    string          // the same login for a person's browser (proto.LoginState.BrowserURL)
+	ctlOff        map[string]bool // control entrances a test turned off, by URL (SetControlEntranceOff)
 	controlUp     bool
 	problems      map[string]apitype.Problem
 	socksOn       bool

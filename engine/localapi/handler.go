@@ -49,6 +49,11 @@ type Backend interface {
 	// SetRelayDirectOff turns a public relay's own address off or on, for
 	// a test on a real machine (apitype.RelayDirectRequest).
 	SetRelayDirectOff(ctx context.Context, relay string, off bool) error
+	// ControlEntrances and SetControlEntranceOff list the control server's
+	// ways in and turn one off or on, for a test on a real machine
+	// (apitype.ControlEntranceRequest).
+	ControlEntrances(ctx context.Context) ([]apitype.ControlEntrance, error)
+	SetControlEntranceOff(ctx context.Context, n int, off bool) error
 	// Diagnostics writes a zip for a bug report: state, paths, counters
 	// and the log; no keys, no traffic (M6 i7).
 	Diagnostics(ctx context.Context, w io.Writer) error
@@ -217,6 +222,25 @@ func Handler(b Backend, extra http.Handler) http.Handler {
 			return
 		}
 		if err := b.SetRelayDirectOff(r.Context(), req.Relay, req.Off); err != nil {
+			WriteError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("GET /v1/debug/control-entrance", func(w http.ResponseWriter, r *http.Request) {
+		ents, err := b.ControlEntrances(r.Context())
+		if err != nil {
+			WriteError(w, err)
+			return
+		}
+		writeJSON(w, ents)
+	})
+	mux.HandleFunc("POST /v1/debug/control-entrance", func(w http.ResponseWriter, r *http.Request) {
+		var req apitype.ControlEntranceRequest
+		if !readJSON(w, r, &req) {
+			return
+		}
+		if err := b.SetControlEntranceOff(r.Context(), req.N, req.Off); err != nil {
 			WriteError(w, err)
 			return
 		}

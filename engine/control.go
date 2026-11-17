@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"runtime"
 	"slices"
 	"strings"
@@ -26,14 +27,78 @@ func (e *Engine) newControlClientLocked() (*controlclient.Client, error) {
 		Logf:          e.logf,
 		// A release build talks plain http to this machine only.
 		PlainHTTPAnywhere: TestBuild,
+		OnBack:            e.kickControl,
 	}
 	if e.ownControlLocked() {
 		// Deneb's own server: all its ways in, the last that got through
 		// first (design/plan/control-reachability-20261116.md §9.3).
 		o.Entrances, o.Prefer = e.opts.ControlEntrances, e.st.ControlVia
-		o.OnEntrance, o.OnBack = e.keepEntrance, e.kickControl
+		o.OnEntrance = e.keepEntrance
 	}
-	return controlclient.New(o)
+	cc, err := controlclient.New(o)
+	if err != nil {
+		return nil, err
+	}
+	// The entrances a test turned off stay off for the new client.
+	for i, s := range cc.Entrances() {
+		if e.ctlOff[s.URL] {
+			cc.SetEntranceOff(i+1, true)
+		}
+	}
+	return cc, nil
+}
+
+// ControlEntrances lists the ways to the control server, for a test on a
+// real machine (deneb debug control-entrance).
+func (e *Engine) ControlEntrances(ctx context.Context) ([]apitype.ControlEntrance, error) {
+	e.mu.Lock()
+	cc := e.cc
+	e.mu.Unlock()
+	if cc == nil {
+		return nil, &apitype.Error{Code: apitype.ErrInvalid, Message: "还没有连控制服务器。"}
+	}
+	var out []apitype.ControlEntrance
+	for i, s := range cc.Entrances() {
+		out = append(out, apitype.ControlEntrance{N: i + 1, URL: s.URL, Pinned: s.Pinned, InUse: s.InUse, Off: s.Off})
+	}
+	return out, nil
+}
+
+// SetControlEntranceOff turns the control server's entrance n (from 1, in
+// the list's order) off for a test on a real machine, as if it did not get
+// through, or on again: the engine goes by the next, or back. Not saved: a
+// restart turns them all on again
+// (design/plan/control-reachability-20261116.md §10.6).
+func (e *Engine) SetControlEntranceOff(ctx context.Context, n int, off bool) error {
+	e.mu.Lock()
+	cc := e.cc
+	e.mu.Unlock()
+	if cc == nil {
+		return &apitype.Error{Code: apitype.ErrInvalid, Message: "还没有连控制服务器。"}
+	}
+	ents := cc.Entrances()
+	if n < 1 || n > len(ents) {
+		return &apitype.Error{Code: apitype.ErrInvalid, Message: fmt.Sprintf("没有第 %d 个入口：一共 %d 个。", n, len(ents))}
+	}
+	e.mu.Lock()
+	if off {
+		if e.ctlOff == nil {
+			e.ctlOff = map[string]bool{}
+		}
+		e.ctlOff[ents[n-1].URL] = true
+	} else {
+		delete(e.ctlOff, ents[n-1].URL)
+	}
+	e.mu.Unlock()
+	if err := cc.SetEntranceOff(n, off); err != nil {
+		return &apitype.Error{Code: apitype.ErrInvalid, Message: err.Error()}
+	}
+	state := "on again"
+	if off {
+		state = "off, for a test"
+	}
+	e.logf("[control] entrance %d (%s) %s (deneb debug control-entrance)", n, ents[n-1].URL, state)
+	return nil
 }
 
 // ownControlLocked: the server given or saved is Deneb's own, which has

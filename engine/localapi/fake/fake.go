@@ -262,6 +262,14 @@ func (b backend) SetRelayDirectOff(ctx context.Context, relay string, off bool) 
 	return &apitype.Error{Code: apitype.ErrInvalid, Message: "假引擎没有中转站"}
 }
 
+func (b backend) ControlEntrances(ctx context.Context) ([]apitype.ControlEntrance, error) {
+	return nil, &apitype.Error{Code: apitype.ErrInvalid, Message: "假引擎不连控制服务器"}
+}
+
+func (b backend) SetControlEntranceOff(ctx context.Context, n int, off bool) error {
+	return &apitype.Error{Code: apitype.ErrInvalid, Message: "假引擎不连控制服务器"}
+}
+
 // Diagnostics: a zip with one note, for the window's export to have
 // something to save.
 func (b backend) Diagnostics(ctx context.Context, w io.Writer) error {

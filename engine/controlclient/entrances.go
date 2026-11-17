@@ -4,8 +4,11 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
+	"fmt"
 	"net"
 	"net/url"
+	"sync/atomic"
 	"time"
 )
 
@@ -27,7 +30,53 @@ type entrance struct {
 	url    string // https://host[:port]
 	addr   string // host:port, as dialed
 	tls    *tls.Config
-	pinned bool // the TLS reaches the server, and its key is checked; else the system's roots and the name
+	pinned bool        // the TLS reaches the server, and its key is checked; else the system's roots and the name
+	off    atomic.Bool // a test turned it off (SetEntranceOff): it does not get through
+}
+
+// errEntranceOff: a test turned the entrance off.
+var errEntranceOff = errors.New("this entrance is turned off for a test (deneb debug control-entrance)")
+
+// EntranceState is one way in, as `deneb debug control-entrance` lists it.
+type EntranceState struct {
+	URL    string
+	Pinned bool
+	InUse  bool
+	Off    bool
+}
+
+// Entrances are the ways in, in the list's order.
+func (c *Client) Entrances() []EntranceState {
+	cur := int(c.cur.Load())
+	out := make([]EntranceState, len(c.ents))
+	for i, e := range c.ents {
+		out[i] = EntranceState{URL: e.url, Pinned: e.pinned, InUse: i == cur, Off: e.off.Load()}
+	}
+	return out
+}
+
+// SetEntranceOff turns entrance n (from 1, in the list's order) off for a
+// test on a real machine, as if it did not get through, or on again; not
+// saved. Off, the one in use gives way at once: requests go to the next
+// that gets through, and the ones that stay open (the stream) start again
+// there (OnBack). On, the ones before the one in use are tried again at
+// once, as after a network change.
+func (c *Client) SetEntranceOff(n int, off bool) error {
+	if n < 1 || n > len(c.ents) {
+		return fmt.Errorf("没有第 %d 个入口：一共 %d 个", n, len(c.ents))
+	}
+	c.ents[n-1].off.Store(off)
+	if !off {
+		c.NetworkChanged()
+		return nil
+	}
+	if int(c.cur.Load()) == n-1 {
+		c.ResetConnections()
+		if c.onBack != nil {
+			c.onBack()
+		}
+	}
+	return nil
 }
 
 // dialError is a connection that did not get through to the server: the

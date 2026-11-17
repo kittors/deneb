@@ -161,8 +161,26 @@ type Relay struct {
 // were blocked, to watch the relay go by its tunnel. Not saved: a restart
 // turns it on again (deneb debug relay-direct).
 type RelayDirectRequest struct {
-	Relay string `json:"relay"` // its ID or name
+	Relay string `json:"relay"` // its ID, or its name when no other relay has it
 	Off   bool   `json:"off"`
+}
+
+// ControlEntrance is one of the control server's ways in, as GET
+// /v1/debug/control-entrance lists them for a test on a real machine.
+type ControlEntrance struct {
+	N      int    `json:"n"` // its place in the list, from 1
+	URL    string `json:"url"`
+	Pinned bool   `json:"pinned"` // its key checked; else the system's roots and its name
+	InUse  bool   `json:"inUse"`
+	Off    bool   `json:"off"`
+}
+
+// ControlEntranceRequest is POST /v1/debug/control-entrance: entrance N
+// turned off, as if it did not get through, or on again. Not saved: a
+// restart turns it on again (deneb debug control-entrance).
+type ControlEntranceRequest struct {
+	N   int  `json:"n"`
+	Off bool `json:"off"`
 }
 
 // PathKind is how this computer reaches one peer right now.

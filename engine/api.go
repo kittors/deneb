@@ -49,16 +49,25 @@ func (e *Engine) UpdateEngine(ctx context.Context, path string) apitype.UpdateRe
 func (e *Engine) SetRelayDirectOff(ctx context.Context, relay string, off bool) error {
 	e.mu.Lock()
 	var id proto.RelayID
+	var named []string // relays of that name: one is it, more is a question
 	if e.nm != nil {
 		for _, r := range e.nm.Relays {
-			if string(r.ID) == relay || r.Name == relay {
+			switch {
+			case string(r.ID) == relay:
 				id = r.ID
-				break
+			case r.Name == relay:
+				named = append(named, string(r.ID))
 			}
 		}
 	}
 	e.mu.Unlock()
-	if id == "" {
+	switch {
+	case id != "":
+	case len(named) == 1:
+		id = proto.RelayID(named[0])
+	case len(named) > 1:
+		return &apitype.Error{Code: apitype.ErrAmbiguous, Message: fmt.Sprintf("有 %d 个中转站叫“%s”：%s，请用 ID。", len(named), relay, strings.Join(named, "、"))}
+	default:
 		return &apitype.Error{Code: apitype.ErrNotFound, Message: fmt.Sprintf("网络图里没有中转站 %q。", relay)}
 	}
 	if err := e.ms.SetRelayDirectOff(id, off); err != nil {

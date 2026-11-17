@@ -301,6 +301,18 @@ func (c *Client) SetRelayDirectOff(ctx context.Context, relay string, off bool) 
 	return c.do(ctx, "POST", "/v1/debug/relay-direct", apitype.RelayDirectRequest{Relay: relay, Off: off}, nil)
 }
 
+// ControlEntrances lists the control server's ways in, and
+// SetControlEntranceOff turns entrance n (from 1) off or on, for a test on
+// a real machine (apitype.ControlEntranceRequest).
+func (c *Client) ControlEntrances(ctx context.Context) ([]apitype.ControlEntrance, error) {
+	var ents []apitype.ControlEntrance
+	return ents, c.do(ctx, "GET", "/v1/debug/control-entrance", nil, &ents)
+}
+
+func (c *Client) SetControlEntranceOff(ctx context.Context, n int, off bool) error {
+	return c.do(ctx, "POST", "/v1/debug/control-entrance", apitype.ControlEntranceRequest{N: n, Off: off}, nil)
+}
+
 func (c *Client) login(ctx context.Context, controlURL string) (*apitype.LoginResponse, error) {
 	var res apitype.LoginResponse
 	if err := c.do(ctx, "POST", "/v1/login", apitype.LoginRequest{ControlURL: controlURL}, &res); err != nil {

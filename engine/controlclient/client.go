@@ -87,8 +87,9 @@ type Options struct {
 	Prefer string
 	// OnEntrance is told the entrance in use when it changes, to keep it.
 	OnEntrance func(url string)
-	// OnBack is told when one before the entrance in use gets through
-	// again: requests that stay open (the stream) start again, by it.
+	// OnBack is told when the way requests that stay open (the stream) go
+	// changes under them: one before the entrance in use gets through
+	// again, or a test turned the one in use off. They start again.
 	OnBack func()
 }
 

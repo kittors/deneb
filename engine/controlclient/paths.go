@@ -64,6 +64,9 @@ func (c *Client) connect(ctx context.Context, network, addr string) (net.Conn, e
 	if e == nil {
 		return nil, dialError{fmt.Errorf("%s is none of the control server's entrances", addr)}
 	}
+	if e.off.Load() {
+		return nil, dialError{errEntranceOff}
+	}
 	conn, err := c.connectTo(ctx, network, e)
 	if err != nil {
 		return nil, dialError{err}

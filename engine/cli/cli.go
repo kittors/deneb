@@ -316,6 +316,9 @@ func (c *cmd) status(ctx context.Context, args []string) error {
 		if r.Home {
 			home = "（常驻）"
 		}
+		if r.Via == "tunnel" {
+			state += "，经 Cloudflare"
+		}
 		fmt.Fprintf(c.out, "中转站：%s%s，%s\n", r.Name, home, state)
 	}
 	for _, p := range st.Engine.Problems {
@@ -897,6 +900,45 @@ func (c *cmd) debug(ctx context.Context, args []string) error {
 	var out json.RawMessage
 	var err error
 	switch args[0] {
+	case "control-entrance":
+		// control-entrance [<序号> off|on]：真机测试时让控制服务器的一个入口
+		// 当作连不上（引擎就换下一个），或者恢复；不带参数列出入口。发行版
+		// 也有，只在内存里，引擎一重启就恢复。
+		if len(args) == 1 {
+			ents, err := c.lc.ControlEntrances(ctx)
+			if err != nil {
+				return err
+			}
+			if len(ents) == 1 {
+				fmt.Fprintln(c.out, "只有一个入口。")
+			}
+			for _, e := range ents {
+				how := "按系统根证书核对"
+				if e.Pinned {
+					how = "带指纹"
+				}
+				if e.InUse {
+					how += "，在用"
+				}
+				if e.Off {
+					how += "，关着"
+				}
+				fmt.Fprintf(c.out, "%d  %s  %s\n", e.N, e.URL, how)
+			}
+			return nil
+		}
+		if len(args) != 3 || (args[2] != "off" && args[2] != "on") {
+			return errors.New("用法：deneb debug control-entrance [<序号> off|on]（序号从 1 开始，不带参数列出入口）")
+		}
+		n, err := strconv.Atoi(args[1])
+		if err != nil {
+			return errors.New("序号要是数字，从 1 开始")
+		}
+		if err := c.lc.SetControlEntranceOff(ctx, n, args[2] == "off"); err != nil {
+			return err
+		}
+		fmt.Fprintf(c.out, "控制服务器的第 %d 个入口：%s（引擎重启后恢复）\n", n, map[string]string{"off": "关了，改走下一个", "on": "开了，马上回头试"}[args[2]])
+		return nil
 	case "relay-direct":
 		// relay-direct <中转站> off|on：真机测试时让一个公共中转站的直连
 		// 不通（它就走 Cloudflare 隧道），或者恢复。发行版也有，只在内存里，
