@@ -76,8 +76,10 @@ func TestStartingOutOfReach(t *testing.T) {
 				}
 				over = works
 			}
-			if bx, _ := middle(button); abs32(bx-lx) > 0.5 {
-				t.Errorf("the button's middle is at %.1f, the line's at %.1f", bx, lx)
+			// The line is its ring and its words, centered as one
+			// (waitingWords): the button under the middle of the two.
+			if bx, _ := middle(button); abs32(bx-(lx-(waitRing+waitRoom)/2)) > 0.5 {
+				t.Errorf("the button's middle is at %.1f, the line's (its ring and words) at %.1f", bx, lx-(waitRing+waitRoom)/2)
 			}
 			if button.Y <= over.Y+over.H {
 				t.Errorf("the button %v is not under the words %v", button, over)

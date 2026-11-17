@@ -619,7 +619,7 @@ export function minePage(root             , ctx     , _route       )            
         `<p><b>Linux</b><span>需同时安装 deneb.deb 和 denebd.deb（后台服务）。在下载目录中运行：</span></p>` +
         `<div class="add-cmd"><code>${esc(LINUX_SHOWN)}</code><button class="link-btn accent add-copy-cmd">复制</button></div></div></div></li>` +
         `<li class="add-3"><span class="n">3</span><div><b class="add-who">${ctx.email ? `使用 ${esc(maskEmail(ctx.email))} 登录` : '使用同一邮箱登录'}</b></div></li></ol>` +
-        `<p class="add-wait"><span class="spin grey"></span>等待设备上线…</p>`,
+        `<p class="add-wait"><span class="spin small"></span>等待设备上线…</p>`,
       'add-one',
     );
     const copy = (b             , text        ) => {

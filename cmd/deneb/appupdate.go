@@ -40,6 +40,11 @@ type appUpdater struct {
 	cancel            context.CancelFunc
 	check             func(context.Context) (*appRelease, error)
 	relaunch          func()
+	// checkBusy times the check's 正在检查, as settings show it (updateValue);
+	// checks counts the checks done, so that one finding the same says it
+	// again.
+	checkBusy busy
+	checks    int
 }
 
 func newAppUpdater(a *app) *appUpdater {
@@ -85,6 +90,7 @@ func (u *appUpdater) beginCheck(show bool) {
 		cancel()
 		u.app.post(func(*ui.Context) {
 			u.cancel = nil
+			u.checks++
 			switch {
 			case err != nil:
 				log.Printf("deneb: check update: %v", err)
@@ -199,7 +205,7 @@ func (a *app) updateEntry(c *ui.Context, p *palette) {
 		if prominent {
 			ink = white
 		}
-		b.AnimatePose(pressPose(b, .96), ui.Snappy)
+		b.AnimatePose(pressPose(b, pressGive), ui.Snappy)
 		b.Tooltip(u.title())
 		b.Children(func() {
 			ui.Icon(c, downloadGlyph).Size(17, 17).TextColor(ink).Shrink(0)
@@ -247,7 +253,12 @@ func (a *app) updateLayer(c *ui.Context, p *palette) {
 			if u.total > 0 {
 				fraction = min(1, float32(u.downloaded)/float32(u.total))
 			}
-			ui.Box(c).Height(5).Radius(999).Background(p.well2).Clip().Children(func() { ui.Box(c).Height(5).Width(376 * fraction).Radius(999).Background(p.primary) })
+			// The bar grows to each new length with the Smooth spring, not in
+			// a jump (DESIGN §5).
+			ui.Box(c).Height(5).Radius(999).Background(p.well2).Clip().Children(func() {
+				bar := ui.Box(c.Key("update-progress")).Height(5).Radius(999).Background(p.primary)
+				bar.Width(bar.AnimateTo("width", 376*fraction, ui.Smooth))
+			})
 			status := "正在连接下载服务…"
 			if u.total > 0 {
 				status = fmt.Sprintf("%.1f / %.1f MB · %d%%", float64(u.downloaded)/(1<<20), float64(u.total)/(1<<20), u.downloaded*100/u.total)
@@ -258,16 +269,10 @@ func (a *app) updateLayer(c *ui.Context, p *palette) {
 			ui.Text(c, status).FontSize(12).TextColor(p.ink3)
 		}
 		dialogActions(c, func() {
+			// A dialog's buttons, as every dialog has them (dialogButton):
+			// their light under the pointer, their press.
 			button := func(key, label string, primary bool, fn func()) {
-				b := ui.ButtonBase(c.Key(key)).Height(34).Padding(0, 20).Radius(999).FocusRing(false).Background(p.well)
-				ink := p.ink
-				if primary {
-					b.Background(p.primary)
-					ink = white
-				}
-				b.AnimatePose(pressPose(b, .97), ui.Snappy)
-				b.Children(func() { ui.Text(c, label).FontSize(13).FontWeight(600).TextColor(ink).SingleLine() })
-				if b.Clicked() {
+				if dialogButton(c, p, key, label, primary, false, false).Clicked() {
 					fn()
 				}
 			}

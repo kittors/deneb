@@ -28,7 +28,7 @@ func (a *app) accountRowView(c *ui.Context, p *palette) {
 	if row.Hovered() || a.accountOpen {
 		row.Background(p.well2)
 	}
-	row.Transition(ui.ElementTransition{Duration: 120 * time.Millisecond, Colors: true})
+	row.Transition(ui.ElementTransition{Duration: fadeTime, Colors: true})
 	row.Children(func() {
 		if who := a.people[a.me]; who != nil {
 			ball(c, who, 32, false)
@@ -88,7 +88,8 @@ func (a *app) accountCard(c *ui.Context, p *palette) {
 	if me != nil {
 		name = me.Name
 	}
-	ui.Column(c).Padding(16).Children(func() {
+	// Me, then this computer, 16 apart: no line between (the user, 11-17).
+	ui.Column(c).Padding(16).Gap(16).Children(func() {
 		ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 			ball(c, a.people[a.me], 40, false)
 			ui.Column(c).Gap(4).Shrink(1).Children(func() {
@@ -96,7 +97,6 @@ func (a *app) accountCard(c *ui.Context, p *palette) {
 				ui.Text(c, a.snap.Email).FontSize(12).TextColor(p.ink2).SingleLine()
 			})
 		})
-		rule(c, p)
 		if d := a.snap.Device(a.snap.Self); d != nil {
 			ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 				a.profileTile(c, p, d.ID, glyphFor(d.Kind), ownerColors[0], 32, false, 0)
@@ -115,7 +115,7 @@ func (a *app) accountCard(c *ui.Context, p *palette) {
 				if out.Hovered() {
 					out.Background(p.well2)
 				}
-				out.AnimatePose(pressPose(out, 0.96), ui.Snappy)
+				out.AnimatePose(pressPose(out, pressGive), ui.Snappy)
 				out.Children(func() { ui.Text(c, "登出").FontSize(12).FontWeight(500).TextColor(p.ink).SingleLine() })
 				if out.Clicked() {
 					a.logout(c)
@@ -125,26 +125,35 @@ func (a *app) accountCard(c *ui.Context, p *palette) {
 	})
 }
 
-// rule is a thin line across a card, between its parts.
-func rule(c *ui.Context, p *palette) {
-	ui.Box(c).Height(1).Margin(12, 0, 12, 0).Background(p.line)
-}
-
 // menuItem is a row of a card or a panel that is one button: its words, in
 // col; at its right end what it is now (value, grey, as a 名称：值 has it)
 // and an icon, if any. It lights up under the pointer, out to the card's
-// edges, its words staying on the edge all else keeps to.
+// edges, its words staying on the edge all else keeps to; pressed, it
+// darkens a step (a whole row does not shrink).
 func menuItem(c *ui.Context, p *palette, key, label, value string, col ui.Color, icon string) ui.Element {
-	b := ui.ButtonBase(c.Key(key)).Height(40).Padding(0, 8).Margin(0, -8).Radius(10).Gap(12).AlignItems(ui.Center).FocusRing(false).Label(label)
-	if b.Hovered() {
-		b.Background(p.well)
-	}
-	b.Transition(ui.ElementTransition{Duration: 120 * time.Millisecond, Colors: true})
-	b.Children(func() {
-		ui.Text(c, label).FontSize(13).FontWeight(500).TextColor(col).Grow(1).Shrink(1).SingleLine()
+	return menuItemWith(c, p, key, label, col, icon, func() {
 		if value != "" {
 			ui.Text(c, value).FontSize(12).TextColor(p.ink3).SingleLine()
 		}
+	})
+}
+
+// menuItemWith is menuItem with its value drawn by value: one that changes
+// while the row's work is under way (settings' 软件更新).
+func menuItemWith(c *ui.Context, p *palette, key, label string, col ui.Color, icon string, value func()) ui.Element {
+	b := ui.ButtonBase(c.Key(key)).Height(40).Padding(0, 8).Margin(0, -8).Radius(10).Gap(12).AlignItems(ui.Center).FocusRing(false).Label(label)
+	switch {
+	case b.Pressed():
+		// A step darker than the light under the pointer (a whole row does
+		// not give, as a button does).
+		b.Background(p.press)
+	case b.Hovered():
+		b.Background(p.well)
+	}
+	b.Transition(ui.ElementTransition{Duration: fadeTime, Colors: true})
+	b.Children(func() {
+		ui.Text(c, label).FontSize(13).FontWeight(500).TextColor(col).Grow(1).Shrink(1).SingleLine()
+		value()
 		if icon != "" {
 			// Its strokes on the edge, as the panel's × is.
 			ui.Icon(c, uiGlyphs[icon]).Size(16, 16).Margin(0, -glyphRoom, 0, 0).TextColor(p.ink3)
@@ -159,9 +168,16 @@ func menuItem(c *ui.Context, p *palette, key, label, value string, col ui.Color,
 func (a *app) logout(c *ui.Context) {
 	a.accountOpen = false
 	a.lowerCurtain(c, func(c *ui.Context) {
+		// Down, the window waits for the engine: past busyDelay, the
+		// curtain says so (the window a blank page till then, the user's
+		// recording of 11-17 1.2 s of it).
+		cu := a.curtain
+		cu.waiting = "正在登出"
+		cu.work.begin(c.Now())
 		run(a, c, func(ctx context.Context) (model.Result, error) {
 			return a.store.Do(ctx, model.Op{Kind: model.OpLogout})
 		}, func(c *ui.Context, _ model.Result, err error) {
+			cu.work.end()
 			if err != nil {
 				if a.curtain != nil {
 					a.curtain.back = true
@@ -186,6 +202,14 @@ type curtain struct {
 	// sign-in comes; refused, it lifts back over the window as it was.
 	op   *pending
 	back bool
+	// While what it waits for is under way (logging out), the curtain says
+	// so in its middle, past busyDelay: waiting, the words; work, its timing;
+	// said, that it has said so. Said, the line stays till the curtain
+	// lifts, and fades out first: the sign-in comes in a view of its own,
+	// where the line would not fade out by itself.
+	waiting string
+	work    busy
+	said    bool
 }
 
 const (
@@ -217,9 +241,14 @@ func (a *app) curtainView(c *ui.Context, p *palette, lifting bool) {
 	switch {
 	case (lifting || cu.back) && cu.done:
 		if cu.lift.IsZero() {
+			// The line on it, if it said one, goes first; then the curtain
+			// lifts: one thing at a time.
 			cu.lift = now
+			if cu.said {
+				cu.lift = now.Add(swapOut)
+			}
 		}
-		k = 1 - float32(now.Sub(cu.lift))/float32(curtainLift)
+		k = min(1, 1-float32(now.Sub(cu.lift))/float32(curtainLift))
 		if k <= 0 {
 			a.curtain = nil
 			return
@@ -228,7 +257,29 @@ func (a *app) curtainView(c *ui.Context, p *palette, lifting bool) {
 		k = min(1, float32(now.Sub(cu.at))/float32(curtainFall))
 	}
 	c.AnimationFrame()
-	ui.Box(c.Key("curtain")).Absolute().Left(0).Top(0).Right(0).Bottom(0).Background(p.bg).Opacity(ui.EaseInOut(k))
+	ui.Box(c.Key("curtain")).Absolute().Left(0).Top(0).Right(0).Bottom(0).Background(p.bg).Opacity(ui.EaseInOut(k)).Center().
+		Children(func() {
+			if cu.waiting == "" {
+				return
+			}
+			if cu.work.on(c, now) {
+				cu.said = true
+			}
+			if !cu.said {
+				return
+			}
+			line := float32(1)
+			if !cu.lift.IsZero() {
+				line = max(0, min(1, float32(cu.lift.Sub(now))/float32(swapOut)))
+			}
+			// As the starting page: the mark, greyed, and the line under it.
+			ui.Column(c.Key("curtain-waiting")).Gap(16).AlignItems(ui.Center).Opacity(line).
+				Transition(ui.ElementTransition{Duration: swapIn, Enter: &ui.Motion{}}).
+				Children(func() {
+					ui.Icon(c, markGlyph).Size(markSize, markSize).TextColor(p.ink3)
+					waitingWords(c, p, cu.waiting+"…", now)
+				})
+		})
 	if k >= 1 && !cu.done {
 		cu.done = true
 		cu.then(c)
@@ -280,7 +331,7 @@ func (a *app) deleteRow(c *ui.Context, p *palette, id model.DeviceID) {
 		if b.Hovered() {
 			b.Background(p.well2)
 		}
-		b.AnimatePose(pressPose(b, .97), ui.Snappy)
+		b.AnimatePose(pressPose(b, pressGive), ui.Snappy)
 		b.Children(func() {
 			ui.Icon(c, uiGlyphs["trash"]).Size(14, 14).TextColor(danger)
 			ui.Text(c, label).FontSize(12).FontWeight(500).TextColor(danger)

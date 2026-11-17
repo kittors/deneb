@@ -676,8 +676,38 @@ button {
   font-size: 13px;
   font-weight: 500;
 }
+/* No line between the rows: the well holds them together, 4 apart
+   (design/components.md 分隔线, as the desktop's). */
 .row + .row {
-  border-top: 1px solid var(--line);
+  margin-top: var(--space-4);
+}
+/* The ring while work is under way (design/components.md 进行中), as the
+   desktop's busyRing: of the color of the words it stands for, on a faint
+   track of it, a turn a second; 16 in a button, 12 (small) beside words;
+   primary, the one standing for a page's wait (the desktop's spinner). */
+.spin {
+  display: inline-block;
+  flex: none;
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  border: 2px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin var(--motion-spin) linear infinite;
+}
+.spin.small {
+  width: 12px;
+  height: 12px;
+  border-width: 1.5px;
+}
+.spin.primary {
+  color: var(--primary);
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 .row svg {
   color: var(--ink-2);
@@ -1399,7 +1429,7 @@ button {
 .side .me {
   border-radius: 12px;
   cursor: pointer;
-  transition: background 0.12s;
+  transition: background var(--motion-fade);
 }
 .side .me:hover,
 .side .me.on {
@@ -1414,6 +1444,11 @@ button {
   background: var(--bg);
   box-shadow: var(--shadow-md);
   transform-origin: 0 100%;
+  /* Me, then each thing to do, 16 apart: no line between (the user,
+     11-17). */
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
 }
 .acct-who {
   display: flex;
@@ -1434,11 +1469,6 @@ button {
   font-size: 12px;
   color: var(--ink-2);
 }
-.acct-rule {
-  height: 1px;
-  margin: 12px 0;
-  background: var(--line-2);
-}
 .acct-item {
   display: flex;
   align-items: center;
@@ -1454,10 +1484,14 @@ button {
   text-decoration: none;
   font: inherit;
   cursor: pointer;
-  transition: background 0.12s;
+  transition: background var(--motion-fade);
 }
 .acct-item:hover {
   background: var(--well);
+}
+/* Pressed, a step darker: a whole row does not give, as a button does. */
+.acct-item:active {
+  background: var(--press);
 }
 .acct-item svg {
   color: var(--ink-3);
@@ -1531,23 +1565,6 @@ button {
 }
 .acct-wait.trouble {
   color: #ef4444;
-}
-.spin {
-  width: 16px;
-  height: 16px;
-  border: 2px solid color-mix(in srgb, var(--ink-3) 25%, transparent);
-  border-top-color: var(--primary);
-  border-radius: 50%;
-  animation: acct-spin 1s linear infinite;
-}
-.spin.white {
-  border-color: rgba(255, 255, 255, 0.3);
-  border-top-color: #fff;
-}
-@keyframes acct-spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 .acct-sub {
   margin: 8px 0 0;
@@ -4509,32 +4526,16 @@ body {
   background: var(--bg);
   box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--ok) 70%, transparent);
 }
-/* The button's spinner while the code goes out. */
-.spin {
-  width: 14px;
-  height: 14px;
-  box-sizing: border-box;
-  border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.35);
-  border-top-color: #fff;
-  animation: spin 0.8s linear infinite;
-}
-.spin.grey {
-  width: 12px;
-  height: 12px;
-  border-width: 1.6px;
-  border-color: color-mix(in srgb, var(--ink-3) 45%, transparent);
-  border-top-color: var(--ink-2);
-}
-.jc-hint .spin.grey {
-  display: inline-block;
+/* A ring beside words in a line (.spin, a-v3.css): a hint's, as close as
+   a row's value (the desktop's busyValue); a page's wait, as far as its
+   line (waitingWords). */
+.jc-hint .spin,
+.ll-wait .spin {
   vertical-align: -2px;
-  margin-right: 5px;
+  margin-right: var(--space-4);
 }
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+.ll-wait .spin {
+  margin-right: var(--space-8);
 }
 .join-note {
   max-width: 440px;

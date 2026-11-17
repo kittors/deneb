@@ -15,8 +15,11 @@ import (
 // address it answers with: a remote desktop in the remote desktop app, a
 // shared folder in the file manager, a website in the browser.
 func (a *app) openService(c *ui.Context, d *device, s service) {
+	a.openKey = openKey(d, s)
+	a.opening.begin(c.Now())
 	run(a, c, func(ctx context.Context) (string, error) { return a.store.Open(ctx, d.dev, s.svc) },
 		func(c *ui.Context, addr string, err error) {
+			a.opening.end()
 			if err != nil {
 				a.problem(c, err)
 				return
@@ -26,6 +29,9 @@ func (a *app) openService(c *ui.Context, d *device, s service) {
 			}
 		})
 }
+
+// openKey names a device's service, for its 打开's ring (a.opening).
+func openKey(d *device, s service) string { return string(d.dev) + "\x00" + s.svc.Key }
 
 // serviceURL is the link the system opens a service at addr with: one its
 // apps know by the kind of service and its port.
@@ -53,9 +59,11 @@ func serviceURL(s model.Service, addr string) string {
 // send to a friend: opening it, the friend is asked into the LAN.
 func (a *app) inviteFriends(c *ui.Context) {
 	lan := a.lan
+	a.inviting.begin(c.Now())
 	run(a, c, func(ctx context.Context) (model.Result, error) {
 		return a.store.Do(ctx, model.Op{Kind: model.OpLANInvite, LAN: lan})
 	}, func(c *ui.Context, r model.Result, err error) {
+		a.inviting.end()
 		if err != nil {
 			a.problem(c, err)
 			return

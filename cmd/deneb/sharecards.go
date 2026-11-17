@@ -229,7 +229,7 @@ func (a *app) shareServices(c *ui.Context, p *palette, m *model.Device) {
 	box.Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{Y: -4}, Exit: &ui.Motion{}})
 	box.Children(func() {
 		ui.Text(c, say("开放给", a.people[who].name, "的")).FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(12, 4, 8, 4)
-		ui.Column(c).Radius(14).Background(p.well).Padding(0, 12).Dividers(1, p.line).Children(func() {
+		ui.Column(c).Radius(14).Background(p.well).Padding(0, 12).Gap(4).Children(func() {
 			if len(sh.Services) == 0 {
 				ui.Row(c).Height(44).AlignItems(ui.Center).Children(func() {
 					ui.Text(c, "暂无服务").FontSize(13).TextColor(p.ink3)

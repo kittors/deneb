@@ -843,6 +843,10 @@ func layoutSizes(t *testing.T) [][2]float32 {
 func (r *m3rig) settingsWith(stage updateStage) bool {
 	r.a.updates = newAppUpdater(r.a)
 	r.a.updates.stage = stage
+	if stage == updateChecking {
+		// Checking a second already: past busyDelay, its 正在检查 shows.
+		r.a.updates.checkBusy.begin(r.tt.Now().Add(-time.Second))
+	}
 	return r.openWords("设置")
 }
 

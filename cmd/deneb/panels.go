@@ -1094,7 +1094,7 @@ func (a *app) card(c *ui.Context, p *palette) {
 					// Nothing to list: the list takes no room.
 					svcs = nil
 				}
-				ui.Column(c).Radius(14).Background(p.well).Padding(0, 12).Dividers(1, p.line).Children(func() {
+				ui.Column(c).Radius(14).Background(p.well).Padding(0, 12).Gap(4).Children(func() {
 					for i := range svcs {
 						s := svcs[i]
 						ui.Row(c.Key(s.name)).Height(44).Gap(12).Children(func() {
@@ -1106,7 +1106,12 @@ func (a *app) card(c *ui.Context, p *palette) {
 							ui.Icon(c, uiGlyphs[s.icon]).Size(18, 18).TextColor(p.ink2)
 							ui.Text(c, serviceLabel(d.services, s)).FontSize(13).FontWeight(500).TextColor(ink).Grow(1)
 							if s.on && d.dev != a.snap.Self {
-								if wellButton(c, p, "open", "打开").Clicked() {
+								// Its ring while the store opens the way to it.
+								var work *busy
+								if a.openKey == openKey(d, s) {
+									work = &a.opening
+								}
+								if wellButton(c, p, "open", "打开", work).Clicked() && !a.opening.working(c.Now()) {
 									a.openService(c, d, s)
 								}
 							}
@@ -1544,7 +1549,7 @@ func (a *app) lanCard(c *ui.Context, p *palette) {
 				return
 			}
 			cardLabel(c, p, "加入审批")
-			ui.Column(c).Radius(14).Background(p.well).Padding(0, 12).Dividers(1, p.line).Children(func() {
+			ui.Column(c).Radius(14).Background(p.well).Padding(0, 12).Gap(4).Children(func() {
 				for _, sw := range []struct {
 					key, label string
 					on         bool

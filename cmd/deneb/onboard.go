@@ -36,6 +36,7 @@ type onboarding struct {
 	skipAt  time.Time // 先不装
 	joining bool      // 加入朋友的: the link's field
 	link    string
+	looking busy // 加入: the link being looked up (store.Preview)
 	invite  *model.Invite
 	leaving time.Time // done: it fades away over the window
 	next    time.Time // when it goes on by itself to the next step
@@ -401,12 +402,10 @@ func askBox(c *ui.Context, p *palette, text string) ui.Element {
 	return box
 }
 
-// onboardButton is the steps' main button, as wide as their column, its
-// hover fading in.
-func onboardButton(c *ui.Context, p *palette, key, label string) ui.Element {
-	b := primaryButton(c, p, key, label, 44, 24, 14).Width(360).Justify(ui.Center)
-	b.Transition(ui.ElementTransition{Duration: 120 * time.Millisecond, Colors: true})
-	return b
+// onboardButton is the steps' main button, as wide as their column. Given
+// work, as primaryButton.
+func onboardButton(c *ui.Context, p *palette, key, label string, work ...*busy) ui.Element {
+	return primaryButton(c, p, key, label, 44, 24, 14, "", work...).Width(360).Justify(ui.Center)
 }
 
 // onboardLAN is the last step: a LAN of one's own, or a friend's.
@@ -427,11 +426,13 @@ func (a *app) onboardLAN(c *ui.Context, p *palette, now time.Time) {
 			way("way-link").Gap(12).Children(func() {
 				field := ui.TextInputBase(c.Key("link"), &o.link).Width(360).Height(46).Padding(0, 16).Radius(12).Background(p.well).
 					FontSize(13).Placeholder("把邀请链接粘贴到这里").PlaceholderColor(p.ink3).AutoFocus()
-				join := onboardButton(c, p, "join-link", "加入")
-				if (join.Clicked() || field.Submitted()) && strings.TrimSpace(o.link) != "" {
+				join := onboardButton(c, p, "join-link", "加入", &o.looking)
+				if (join.Clicked() || field.Submitted()) && strings.TrimSpace(o.link) != "" && !o.looking.working(c.Now()) {
 					link := strings.TrimSpace(o.link)
+					o.looking.begin(c.Now())
 					run(a, c, func(ctx context.Context) (*model.Invite, error) { return a.store.Preview(ctx, link) },
 						func(c *ui.Context, inv *model.Invite, err error) {
+							o.looking.end()
 							if err != nil || inv == nil || inv.Gone {
 								o.link = ""
 								return
@@ -556,20 +557,9 @@ func (a *app) onboardOver(c *ui.Context, p *palette) {
 		Children(func() { a.onboardView(c, p) })
 }
 
-// spinner is a small ring turning, while something is under way.
-func spinner(c *ui.Context, p *palette, now time.Time) {
-	c.AnimationFrame()
-	turn := float32(now.UnixNano()%int64(time.Second)) / float32(time.Second) * 360
-	s := ui.Box(c).Size(16, 16)
-	s.Draw(func(pt *ui.Painter, r ui.Rect) {
-		var path ui.Path
-		path.Circle(r.X+r.W/2, r.Y+r.H/2, r.W/2-1.5)
-		pt.StrokePath(&path, 2, p.ink3.Alpha(0.25))
-		path.Dash(0, 12, 40)
-		pt.StrokePath(&path, 2, p.primary)
-	})
-	s.Rotate(turn)
-}
+// spinner is the ring of 16 in the primary color, while something is
+// under way (busyRing).
+func spinner(c *ui.Context, p *palette, now time.Time) { busyRing(c, 16, p.primary, now) }
 
 // checkMark is a tick in col, size across.
 func checkMark(c *ui.Context, col ui.Color, size float32) ui.Element {
@@ -610,20 +600,45 @@ func (a *app) diagnosticsRow(c *ui.Context, p *palette) {
 		if b.Hovered() && !busy {
 			b.Background(p.well)
 		}
+		if !busy {
+			b.AnimatePose(pressPose(b, pressGive), ui.Snappy)
+		}
+		// 正在收集 is the row's value while it is put together (busyValue);
+		// the button and it take turns, one fading out before the other fades
+		// in (§6.5).
+		shown, alpha := a.diagTurn(c, busy, now)
 		b.Children(func() {
-			if busy {
-				spinner(c, p, now)
-				ui.Text(c, "正在收集…").FontSize(12).TextColor(p.ink2)
-				return
-			}
-			ui.Icon(c, uiGlyphs["inbox"]).Size(14, 14).TextColor(p.primary)
-			ui.Text(c, "导出诊断包").FontSize(12).FontWeight(500).TextColor(p.primary)
+			ui.Row(c).Gap(4).AlignItems(ui.Center).Opacity(alpha).Children(func() {
+				if shown {
+					busyValue(c, "正在收集…", p.ink2, now)
+					return
+				}
+				ui.Icon(c, uiGlyphs["inbox"]).Size(14, 14).TextColor(p.primary)
+				ui.Text(c, "导出诊断包").FontSize(12).FontWeight(500).TextColor(p.primary)
+			})
 		})
-		if b.Clicked() && !busy {
+		if b.Clicked() && !busy && !a.diagWork.working(now) {
 			a.exportDiag(now)
 		}
 		ui.Text(c, "里面有版本、网络状况和最近的连接记录，没有密钥，也没有你传的东西").FontSize(11).TextColor(p.ink3).LineHeight(1.45)
 	})
+}
+
+// diagTurn is which of the diagnostics' button and its 正在收集 shows at
+// now, the package being put together (busy) or not, and how opaque: one
+// at a time (a.diagWords), and 正在收集 only past busyDelay, at least
+// busyHold (a.diagWork).
+func (a *app) diagTurn(c *ui.Context, busy bool, now time.Time) (bool, float32) {
+	a.diagWork.follow(now, busy)
+	want := "button"
+	if a.diagWork.on(c, now) {
+		want = "busy"
+	}
+	shown, alpha, moving := a.diagWords.step(want, now)
+	if moving {
+		c.AnimationFrame()
+	}
+	return shown == "busy", alpha
 }
 
 // diagPretend is how long the demo, which has no engine to put the

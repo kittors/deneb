@@ -483,17 +483,27 @@ func (a *app) inviteButton(c *ui.Context, p *palette) {
 			pt.StrokePath(&path, 1.5, p.ink3.Alpha(k))
 		})
 	}
-	pose := pressPose(btn, 0.96)
-	if full && btn.Hovered() && !btn.Pressed() {
+	// While the store makes the link, past busyDelay a ring takes the
+	// words' place (busyLabel).
+	ring := a.inviting.on(c, c.Now())
+	pose := pressPose(btn, pressGive)
+	switch {
+	case a.inviting.working(c.Now()):
+		pose = ui.Pose{}
+	case full && btn.Hovered() && !btn.Pressed():
 		pose = ui.Pose{Y: -1}
 	}
 	btn.AnimatePose(pose, ui.Snappy)
 	ink := white.Mix(p.ink2, k)
 	btn.Children(func() {
-		ui.Icon(c, uiGlyphs["plus"]).Size(16, 16).TextColor(ink)
-		ui.Text(c, "邀请朋友").FontSize(13).FontWeight(500).TextColor(ink)
+		busyLabel(c, ring, ink, 16, func() {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Icon(c, uiGlyphs["plus"]).Size(16, 16).TextColor(ink)
+				ui.Text(c, "邀请朋友").FontSize(13).FontWeight(500).TextColor(ink)
+			})
+		})
 	})
-	if btn.Clicked() {
+	if btn.Clicked() && !a.inviting.working(c.Now()) {
 		if full {
 			a.selected, a.seatFreeing, a.seatFor, a.more = seatCard, false, "", false
 			return

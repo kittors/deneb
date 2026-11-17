@@ -675,8 +675,38 @@ button {
   font-size: 13px;
   font-weight: 500;
 }
+/* No line between the rows: the well holds them together, 4 apart
+   (design/components.md 分隔线, as the desktop's). */
 .row + .row {
-  border-top: 1px solid var(--line);
+  margin-top: var(--space-4);
+}
+/* The ring while work is under way (design/components.md 进行中), as the
+   desktop's busyRing: of the color of the words it stands for, on a faint
+   track of it, a turn a second; 16 in a button, 12 (small) beside words;
+   primary, the one standing for a page's wait (the desktop's spinner). */
+.spin {
+  display: inline-block;
+  flex: none;
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  border: 2px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin var(--motion-spin) linear infinite;
+}
+.spin.small {
+  width: 12px;
+  height: 12px;
+  border-width: 1.5px;
+}
+.spin.primary {
+  color: var(--primary);
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 .row svg {
   color: var(--ink-2);

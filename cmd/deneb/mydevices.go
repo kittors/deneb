@@ -231,10 +231,7 @@ func (a *app) deviceCard(c *ui.Context, p *palette, d *model.Device) {
 		if a.deviceDetails == d.ID {
 			more := ui.Column(c.Key("details")).Gap(16)
 			more.Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{}, Exit: &ui.Motion{}})
-			more.Children(func() {
-				rule(c, p)
-				a.deviceDetailsView(c, p, d, now)
-			})
+			more.Children(func() { a.deviceDetailsView(c, p, d, now) })
 		}
 	})
 }
@@ -677,6 +674,7 @@ type svcEdit struct {
 	err        string
 	errPort    bool
 	saving     bool
+	work       busy // the save's, for 添加's ring (primaryButton)
 }
 
 func (a *app) addServiceChip(c *ui.Context, p *palette, d *model.Device) {
@@ -731,12 +729,8 @@ func (a *app) serviceEditor(c *ui.Context, p *palette, d *model.Device, in []*mo
 			if digits := onlyDigits(e.port, 5); digits != e.port {
 				e.port = digits
 			}
-			label := "添加"
-			if e.saving {
-				label = "添加中…"
-			}
 			empty := strings.TrimSpace(e.port) == ""
-			add := primaryButton(c, p, "svc-add", label, 32, 16, 13).Label("添加").Disabled(e.saving || empty)
+			add := primaryButton(c, p, "svc-add", "添加", 32, 16, 13, "", &e.work).Disabled(empty)
 			if empty {
 				// Not ready: plainly so, as a disabled button is.
 				add.Opacity(0.45)
@@ -759,7 +753,7 @@ func (a *app) serviceEditor(c *ui.Context, p *palette, d *model.Device, in []*mo
 // addService sets the service up: in the device's first LAN, closed, as
 // service.set does the first time it hears of one (open to no one yet).
 func (a *app) addService(c *ui.Context, d *model.Device, in []*model.LAN, e *svcEdit) {
-	if e.saving || len(in) == 0 {
+	if e.saving || e.work.working(c.Now()) || len(in) == 0 {
 		return
 	}
 	n, err := strconv.Atoi(strings.TrimSpace(e.port))
@@ -774,9 +768,11 @@ func (a *app) addService(c *ui.Context, d *model.Device, in []*model.LAN, e *svc
 	def := model.HandService(e.name, uint16(n))
 	op := model.Op{Kind: model.OpServiceSet, LAN: in[0].ID, Device: d.ID, Service: def.Key, Def: &def}
 	e.saving, e.err, e.errPort = true, "", false
+	e.work.begin(c.Now())
 	dev := d.ID
 	run(a, c, func(ctx context.Context) (model.Result, error) { return a.store.Do(ctx, op) }, func(c *ui.Context, _ model.Result, err error) {
 		e.saving = false
+		e.work.end()
 		if a.svcEdit != e {
 			return
 		}
@@ -856,12 +852,11 @@ func (a *app) deviceDetailsView(c *ui.Context, p *palette, d *model.Device, now 
 					when = ago(now.Sub(sample.At))
 				}
 				ui.Text(c, when).FontSize(12).TextColor(p.ink2)
-				label := "刷新"
-				if a.snap.MetricsLoading {
-					label = "刷新中…"
-				}
-				r := textButton(c, p, "refresh", label, true).Label("刷新监控数据").Disabled(a.snap.MetricsLoading)
-				if r.Clicked() {
+				// Under way, past busyDelay, a ring takes the words' place; not
+				// disabled meanwhile, which would fade the ring.
+				a.metricsWork.follow(now, a.snap.MetricsLoading)
+				r := textButton(c, p, "refresh", "刷新", true, &a.metricsWork).Label("刷新监控数据")
+				if r.Clicked() && !a.metricsWork.working(now) {
 					if store, ok := a.store.(interface{ RefreshDeviceMetrics() }); ok {
 						store.RefreshDeviceMetrics()
 					}

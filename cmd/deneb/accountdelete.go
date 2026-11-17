@@ -510,19 +510,7 @@ func radio(c *ui.Context, p *palette, on bool, col ui.Color) {
 }
 
 // whiteSpinner is the spinner on a red button.
-func whiteSpinner(c *ui.Context, now time.Time) {
-	c.AnimationFrame()
-	turn := float32(now.UnixNano()%int64(time.Second)) / float32(time.Second) * 360
-	s := ui.Box(c).Size(16, 16)
-	s.Draw(func(pt *ui.Painter, r ui.Rect) {
-		var path ui.Path
-		path.Circle(r.X+r.W/2, r.Y+r.H/2, r.W/2-1.5)
-		pt.StrokePath(&path, 2, white.Alpha(0.3))
-		path.Dash(0, 12, 40)
-		pt.StrokePath(&path, 2, white)
-	})
-	s.Rotate(turn)
-}
+func whiteSpinner(c *ui.Context, now time.Time) { busyRing(c, 16, white, now) }
 
 // deviceNames lists devices by name, this computer first, then as the
 // tray has them; past four, "……等 6 台".

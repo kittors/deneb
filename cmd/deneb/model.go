@@ -479,6 +479,21 @@ type app struct {
 	// startWords is that page's line, as it changes.
 	waitSince  time.Time
 	startWords swapper
+	// updateWords is what settings' 软件更新 says, as it changes;
+	// updateShown, what it was asked to say last (updateValue).
+	updateWords swapper
+	updateShown string
+	// metricsWork is the store bringing My Devices' numbers anew, for
+	// 刷新's ring; inviting, 邀请朋友's; opening, a service's 打开 (openKey,
+	// which), as the store opens a way to it.
+	metricsWork busy
+	inviting    busy
+	opening     busy
+	openKey     string
+	// diagWords is the diagnostics' button or its 正在收集, as they take
+	// turns; diagWork, the package being put together (diagTurn).
+	diagWords swapper
+	diagWork  busy
 
 	// swap: the engine is being changed for the one shipped (engineswap.go).
 	swap *engineSwap

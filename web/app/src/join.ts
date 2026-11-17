@@ -137,7 +137,7 @@ function pageSteps(el: HTMLElement, holder: HTMLElement): Steps {
 const CODE_LIFE = 10 * 60_000;
 const RESEND = 60;
 // A small grey spinner, for the lines under the boxes.
-const SPIN_GREY = `<span class="spin grey" aria-hidden="true"></span>`;
+const SPIN_GREY = `<span class="spin small" aria-hidden="true"></span>`;
 // Feedback that would only flash when the server answers at once waits this
 // long first (DESIGN §14.14: no blank wait, and no flicker either).
 const SLOW = 150;

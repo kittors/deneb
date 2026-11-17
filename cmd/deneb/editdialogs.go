@@ -67,8 +67,14 @@ func dialogActions(c *ui.Context, buttons func()) {
 	ui.Row(c).Gap(12).Justify(ui.End).Children(buttons)
 }
 
-func dialogButton(c *ui.Context, p *palette, key, label string, primary, destructive, disabled bool) ui.Element {
-	b := ui.ButtonBase(c.Key(key)).Height(40).MinWidth(88).Padding(0, 16).Radius(999).Center().Label(label).Disabled(disabled)
+// dialogButton is a dialog's button; a disabled one greys. Given work, the
+// work it starts: while that is working it keeps its look, and past
+// busyDelay its words give way to a ring (busyLabel). It is not disabled
+// meanwhile, which would fade it: the caller takes no second click
+// (busy.working).
+func dialogButton(c *ui.Context, p *palette, key, label string, primary, destructive, disabled bool, work ...*busy) ui.Element {
+	ring, working := underWay(c, work)
+	b := ui.ButtonBase(c.Key(key)).Height(40).MinWidth(88).Padding(0, 16).Radius(999).Center().Label(label).Disabled(disabled && !working)
 	bg, ink := p.well, p.ink
 	if primary {
 		bg, ink = p.primary, white
@@ -76,15 +82,20 @@ func dialogButton(c *ui.Context, p *palette, key, label string, primary, destruc
 	if destructive {
 		bg, ink = danger, white
 	}
-	if disabled {
+	if disabled && !working {
 		bg, ink = p.well2, p.ink3
 	}
 	b.Background(bg)
-	if b.Hovered() && !disabled {
+	if b.Hovered() && (!disabled || working) {
 		b.Background(bg.Mix(p.ink, .06))
 	}
-	b.AnimatePose(pressPose(b, .97), ui.Snappy)
-	b.Children(func() { ui.Text(c, label).FontSize(13).FontWeight(600).TextColor(ink).SingleLine() })
+	b.Transition(ui.ElementTransition{Duration: fadeTime, Colors: true})
+	if !working {
+		b.AnimatePose(pressPose(b, pressGive), ui.Snappy)
+	}
+	b.Children(func() {
+		busyLabel(c, ring, ink, 16, func() { ui.Text(c, label).FontSize(13).FontWeight(600).TextColor(ink).SingleLine() })
+	})
 	return b
 }
 
@@ -92,6 +103,7 @@ type renaming struct {
 	id, name, original string
 	op                 model.Op
 	selected, saving   bool
+	work               busy // the save's, for 确认's ring (dialogButton)
 	err                string
 }
 
@@ -143,15 +155,17 @@ func (a *app) renameLayer(c *ui.Context, p *palette) {
 			ui.Text(c, fmtCount(r.name)).FontSize(11).TextColor(p.ink3)
 		})
 		save := func() {
-			if r.saving || invalid != "" || strings.TrimSpace(r.name) == r.original {
+			if r.saving || r.work.working(c.Now()) || invalid != "" || strings.TrimSpace(r.name) == r.original {
 				return
 			}
 			r.saving = true
+			r.work.begin(c.Now())
 			r.err = ""
 			op := r.op
 			op.Name = strings.TrimSpace(r.name)
 			run(a, c, func(ctx context.Context) (model.Result, error) { return a.store.Do(ctx, op) }, func(c *ui.Context, _ model.Result, err error) {
 				r.saving = false
+				r.work.end()
 				if a.renaming != r {
 					return
 				}
@@ -167,11 +181,7 @@ func (a *app) renameLayer(c *ui.Context, p *palette) {
 			if dialogButton(c, p, "cancel", "取消", false, false, r.saving).Clicked() {
 				close()
 			}
-			label := "确认"
-			if r.saving {
-				label = "保存中…"
-			}
-			if dialogButton(c, p, "save", label, true, false, r.saving || invalid != "" || strings.TrimSpace(r.name) == r.original).Clicked() {
+			if dialogButton(c, p, "save", "确认", true, false, r.saving || invalid != "" || strings.TrimSpace(r.name) == r.original, &r.work).Clicked() {
 				save()
 			}
 		})

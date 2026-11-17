@@ -21,6 +21,7 @@ type avatarEditor struct {
 	palette, pattern   int
 	choices            []avatarChoice
 	busy, saving       bool
+	work               busy // the save's, for 保存's ring (dialogButton)
 	err                string
 }
 
@@ -181,12 +182,9 @@ func (a *app) avatarLayer(c *ui.Context, p *palette) {
 			if dialogButton(c, p, "cancel", "取消", false, false, e.busy || e.saving).Clicked() {
 				close()
 			}
-			label := "保存"
-			if e.saving {
-				label = "保存中…"
-			}
-			if dialogButton(c, p, "save", label, true, false, e.busy || e.saving || (bytes.Equal(e.original, e.draft) && e.kind == e.originalKind)).Clicked() {
+			if dialogButton(c, p, "save", "保存", true, false, e.busy || e.saving || (bytes.Equal(e.original, e.draft) && e.kind == e.originalKind), &e.work).Clicked() && !e.work.working(c.Now()) {
 				e.saving = true
+				e.work.begin(c.Now())
 				e.err = ""
 				data := bytes.Clone(e.draft)
 				run(a, c, func(ctx context.Context) (model.Result, error) {
@@ -197,6 +195,7 @@ func (a *app) avatarLayer(c *ui.Context, p *palette) {
 					return a.store.Do(ctx, op)
 				}, func(c *ui.Context, _ model.Result, err error) {
 					e.saving = false
+					e.work.end()
 					if a.avatarEdit != e {
 						return
 					}

@@ -147,7 +147,7 @@ func note(c *ui.Context, p *palette, text string, top float32) {
 // wellRows are a card's rows of a name and a value on the well, each with
 // what leads it.
 func wellRows(c *ui.Context, p *palette, rows []wellRow) {
-	ui.Column(c).Radius(14).Background(p.well).Padding(0, 12).Dividers(1, p.line).Children(func() {
+	ui.Column(c).Radius(14).Background(p.well).Padding(0, 12).Gap(4).Children(func() {
 		for _, r := range rows {
 			ui.Row(c.Key("row-" + r.name)).Height(40).Gap(12).AlignItems(ui.Center).Children(func() {
 				if r.lead != nil {
@@ -489,7 +489,7 @@ func (a *app) joinCardView(c *ui.Context, p *palette, id string) {
 				if !copied.IsZero() {
 					label = "✓ 已复制"
 				}
-				if primaryButton(c, p, "copy", label, 30, 12, 12).Shrink(0).Clicked() {
+				if primaryButton(c, p, "copy", label, 30, 12, 12, "").Shrink(0).Clicked() {
 					if a.copyText != nil {
 						a.copyText(command)
 					}

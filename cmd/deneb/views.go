@@ -65,7 +65,15 @@ func (a *app) startingView(c *ui.Context, p *palette) {
 	ui.Column(c).Fill().Background(p.bg).Center().DragWindow().Children(func() {
 		ui.Box(c.Key("starting-over")).Height(startingRoom).Shrink(0)
 		ui.Icon(c, markGlyph).Size(markSize, markSize).TextColor(p.ink3)
-		ui.Text(c.Key("starting-line"), shown).FontSize(13).TextColor(p.ink2).Margin(16, 0, 0, 0).Opacity(alpha)
+		// Waiting, a ring before the words (waitingWords); the engine that
+		// cannot start says why, with none.
+		ui.Row(c.Key("starting-line")).Margin(16, 0, 0, 0).Opacity(alpha).Children(func() {
+			if a.engineErr != "" && shown == a.engineErr {
+				ui.Text(c, shown).FontSize(13).TextColor(p.ink2)
+				return
+			}
+			waitingWords(c, p, shown, now)
+		})
 		ui.Column(c.Key("starting-under")).Height(startingRoom).Shrink(0).AlignItems(ui.Center).Opacity(alpha).Children(func() {
 			if shown != startNoControl {
 				return
@@ -130,13 +138,14 @@ func (a *app) someConnected() bool {
 // thing to do; while the package is put together, "正在收集…" turning in
 // its place. The toast then says where it went, as from the card.
 func (a *app) startingDiag(c *ui.Context, p *palette, now time.Time) {
-	ui.Row(c.Key("starting-diag")).Height(28).Margin(8, 0, 0, 0).Gap(4).AlignItems(ui.Center).Children(func() {
-		if a.diagWorking(c, now) {
-			spinner(c, p, now)
-			ui.Text(c, "正在收集…").FontSize(12).TextColor(p.ink2)
+	// The button and 正在收集 take turns, as on the card (diagTurn).
+	shown, alpha := a.diagTurn(c, a.diagWorking(c, now), now)
+	ui.Row(c.Key("starting-diag")).Height(28).Margin(8, 0, 0, 0).Gap(4).AlignItems(ui.Center).Opacity(alpha).Children(func() {
+		if shown {
+			busyValue(c, "正在收集…", p.ink2, now)
 			return
 		}
-		if textButton(c, p, "starting-diag-button", startDiagLabel, true).Clicked() {
+		if textButton(c, p, "starting-diag-button", startDiagLabel, true).Clicked() && !a.diagWork.working(now) {
 			a.exportDiag(now)
 		}
 	})
@@ -153,7 +162,7 @@ const startDiagLabel = "导出诊断包"
 func (a *app) loginView(c *ui.Context, p *palette) {
 	ui.Column(c).Fill().Background(p.bg).Center().Gap(24).DragWindow().Children(func() {
 		ui.Icon(c, markGlyph).Size(markSize, markSize).TextColor(p.primary)
-		btn := primaryButton(c, p, "login", "登录", 40, 28, 14)
+		btn := primaryButton(c, p, "login", "登录", 40, 28, 14, "")
 		if btn.Clicked() && !a.loggingIn {
 			a.startLogin(c)
 		}
@@ -186,19 +195,29 @@ func (a *app) startLogin(c *ui.Context) {
 }
 
 // primaryButton is the design's primary pill: white words on the primary
-// color, which presses in a little; icon, if given, leads them ("+ 添加设备").
-func primaryButton(c *ui.Context, p *palette, key, label string, height, pad, size float32, icon ...string) ui.Element {
-	btn := ui.ButtonBase(c.Key(key)).Height(height).Padding(0, pad).Gap(4).Radius(999).Background(p.primary).FocusRing(false).
+// color, which presses in a little; icon, if not "", leads them ("+ 添加设备").
+// Given work, the work it starts: while that is working it does not press
+// in, and past busyDelay its words give way to a ring (busyLabel).
+func primaryButton(c *ui.Context, p *palette, key, label string, height, pad, size float32, icon string, work ...*busy) ui.Element {
+	ring, working := underWay(c, work)
+	btn := ui.ButtonBase(c.Key(key)).Height(height).Padding(0, pad).Radius(999).Background(p.primary).FocusRing(false).
 		Shadow(0, 1, 2, 0, p.primary.Alpha(0.3)).InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.18))
+	btn.Transition(ui.ElementTransition{Duration: fadeTime, Colors: true})
 	if btn.Hovered() {
 		btn.Background(p.primary2)
 	}
-	btn.AnimatePose(pressPose(btn, 0.96), ui.Snappy)
+	if !working {
+		btn.AnimatePose(pressPose(btn, pressGive), ui.Snappy)
+	}
 	btn.Children(func() {
-		if len(icon) > 0 {
-			ui.Icon(c, uiGlyphs[icon[0]]).Size(16, 16).TextColor(white)
-		}
-		ui.Text(c, label).FontSize(size).FontWeight(500).TextColor(white).SingleLine()
+		busyLabel(c, ring, white, 16, func() {
+			ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+				if icon != "" {
+					ui.Icon(c, uiGlyphs[icon]).Size(16, 16).TextColor(white)
+				}
+				ui.Text(c, label).FontSize(size).FontWeight(500).TextColor(white).SingleLine()
+			})
+		})
 	})
 	return btn
 }
@@ -206,47 +225,61 @@ func primaryButton(c *ui.Context, p *palette, key, label string, height, pad, si
 // textButton is the design's text button (design/components.md): an
 // action that does not take the eye, as 重命名, 详情, 复制, 刷新; accent
 // shows it in the primary color, where it is the line's one thing to do.
-func textButton(c *ui.Context, p *palette, key, label string, accent bool) ui.Element {
+// Given work, as primaryButton: past busyDelay its words give way to a
+// ring of 12.
+func textButton(c *ui.Context, p *palette, key, label string, accent bool, work ...*busy) ui.Element {
+	ring, working := underWay(c, work)
 	btn := ui.ButtonBase(c.Key(key)).Height(28).Padding(0, 8).Radius(999).FocusRing(false).Shrink(0).Label(label)
-	btn.Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Colors: true})
+	btn.Transition(ui.ElementTransition{Duration: fadeTime, Colors: true})
 	if btn.Hovered() {
 		btn.Background(p.well2)
 	}
-	btn.AnimatePose(pressPose(btn, 0.95), ui.Snappy)
+	if !working {
+		btn.AnimatePose(pressPose(btn, pressGive), ui.Snappy)
+	}
 	ink := p.ink2
 	if accent {
 		ink = p.primary
 	}
-	btn.Children(func() { ui.Text(c, label).FontSize(12).FontWeight(500).TextColor(ink).SingleLine() })
+	btn.Children(func() {
+		busyLabel(c, ring, ink, 12, func() { ui.Text(c, label).FontSize(12).FontWeight(500).TextColor(ink).SingleLine() })
+	})
 	return btn
 }
 
 // ghostButton is the design's secondary pill: ink on the well.
 func ghostButton(c *ui.Context, p *palette, key, label string) ui.Element {
 	btn := ui.ButtonBase(c.Key(key)).Height(34).Padding(0, 16).Radius(999).Background(p.well).FocusRing(false)
+	btn.Transition(ui.ElementTransition{Duration: fadeTime, Colors: true})
 	if btn.Hovered() {
 		btn.Background(p.well2)
 	}
-	btn.AnimatePose(pressPose(btn, 0.96), ui.Snappy)
+	btn.AnimatePose(pressPose(btn, pressGive), ui.Snappy)
 	btn.Children(func() { ui.Text(c, label).FontSize(13).FontWeight(500).TextColor(p.ink).SingleLine() })
 	return btn
 }
 
 // wellButton is a button on a well, a grey box: white, a hair of shadow
 // under it, as the services' 打开 and the chores' 同意 are. A ghostButton,
-// grey, would not show on the grey.
-func wellButton(c *ui.Context, p *palette, key, label string) ui.Element {
+// grey, would not show on the grey. Given work, as primaryButton: past
+// busyDelay its words give way to a ring of 12.
+func wellButton(c *ui.Context, p *palette, key, label string, work ...*busy) ui.Element {
+	ring, working := underWay(c, work)
 	b := ui.ButtonBase(c.Key(key)).Height(28).Padding(0, 12).Radius(999).Background(p.bg).FocusRing(false).
 		Shadow(0, 1, 2, 0, ui.RGBA(9, 9, 11, 0.06))
-	b.AnimatePose(pressPose(b, 0.94), ui.Snappy)
-	b.Children(func() { ui.Text(c, label).FontSize(12).FontWeight(500).SingleLine() })
+	if !working {
+		b.AnimatePose(pressPose(b, pressGive), ui.Snappy)
+	}
+	b.Children(func() {
+		busyLabel(c, ring, p.ink, 12, func() { ui.Text(c, label).FontSize(12).FontWeight(500).TextColor(p.ink).SingleLine() })
+	})
 	return b
 }
 
 // cardPrimary is a card's main button, the ghostButton's pair: as high, as
-// much room at its sides, its words as large.
-func cardPrimary(c *ui.Context, p *palette, key, label string) ui.Element {
-	return primaryButton(c, p, key, label, 34, 16, 13)
+// much room at its sides, its words as large. Given work, as primaryButton.
+func cardPrimary(c *ui.Context, p *palette, key, label string, work ...*busy) ui.Element {
+	return primaryButton(c, p, key, label, 34, 16, 13, "", work...)
 }
 
 // emptyCanvas is the canvas with no LAN to show yet: one line, saying how to
@@ -266,6 +299,7 @@ type naming struct {
 	name    string
 	focused bool // the field had the focus, so losing it now ends the naming
 	busy    bool // sent, waiting for the store
+	work    busy // that, for the ring in the + 's place
 }
 
 // newLANRow is the sidebar's "新建局域网". A click turns it into a field to
@@ -284,7 +318,8 @@ func (a *app) newLANRow(c *ui.Context, p *palette) {
 	row := ui.Row(c.Key("new-lan-name")).Height(36).Padding(0, 8).Gap(12).Radius(10).Background(p.bg).
 		Shadow(0, 1, 2, 0, ui.RGBA(9, 9, 11, 0.06)).Shadow(0, 1, 1, 0, ui.RGBA(9, 9, 11, 0.04))
 	row.Children(func() {
-		ui.Icon(c, uiGlyphs["plus"]).Size(18, 18).TextColor(p.primary)
+		// Sent, past busyDelay, a ring takes the + 's place.
+		busyLabel(c, n.work.on(c, c.Now()), p.primary, 16, func() { ui.Icon(c, uiGlyphs["plus"]).Size(18, 18).TextColor(p.primary) })
 		field := ui.TextInputBase(c.Key("name"), &n.name).FontSize(13).FontWeight(500).Grow(1).
 			Placeholder("给局域网起个名字").AutoFocus()
 		if n.busy {
@@ -311,9 +346,11 @@ func (a *app) createLAN(c *ui.Context, n *naming) {
 		return
 	}
 	n.busy = true
+	n.work.begin(c.Now())
 	run(a, c, func(ctx context.Context) (model.Result, error) {
 		return a.store.Do(ctx, model.Op{Kind: model.OpLANCreate, Name: name})
 	}, func(c *ui.Context, r model.Result, err error) {
+		n.work.end()
 		if a.naming == n {
 			a.naming = nil
 		}
@@ -344,6 +381,9 @@ type inviteCard struct {
 	// invitation is the id of an invite sent to me by name, rather than by
 	// a link (DESIGN §6.7): joining takes that.
 	invitation string
+	// joining is 加入's work: the card stays, its ring in 加入, till the
+	// store has the LAN.
+	joining busy
 }
 
 // inviteSpring is how the card comes in: as the design demo's, a little
@@ -420,7 +460,7 @@ func (a *app) inviteLayer(c *ui.Context, p *palette) {
 				if ghostButton(c, p, "later", "以后再说").Clicked() {
 					a.invite = nil
 				}
-				if cardPrimary(c, p, "join", "加入").Clicked() {
+				if cardPrimary(c, p, "join", "加入", &card.joining).Clicked() && !card.joining.working(c.Now()) {
 					a.join(c, card)
 				}
 			})
@@ -428,12 +468,14 @@ func (a *app) inviteLayer(c *ui.Context, p *palette) {
 	})
 }
 
-// join accepts the invite: the card goes at once, as in the design demo,
-// and the LAN comes onto the canvas, this computer in it, once the store
-// has it there.
+// join accepts the invite. The card stays while the store takes it, past
+// busyDelay a ring in 加入 (DESIGN §5), and goes once the store has the
+// LAN, which comes onto the canvas, this computer in it; refused, the card
+// stays as it was, and a toast says why. The demo's store answers at once:
+// the card goes at once, as in the design demo.
 func (a *app) join(c *ui.Context, card *inviteCard) {
 	inv := card.inv
-	a.invite = nil
+	card.joining.begin(c.Now())
 	op := model.Op{Kind: model.OpInviteAccept, Invite: inv.Link, Invitation: card.invitation}
 	if card.invitation != "" {
 		op.Invite = ""
@@ -441,9 +483,13 @@ func (a *app) join(c *ui.Context, card *inviteCard) {
 	run(a, c, func(ctx context.Context) (model.Result, error) {
 		return a.store.Do(ctx, op)
 	}, func(c *ui.Context, r model.Result, err error) {
+		card.joining.end()
 		if err != nil {
 			a.problem(c, err)
 			return
+		}
+		if a.invite == card {
+			a.invite = nil
 		}
 		lan := r.LAN
 		if lan == "" {

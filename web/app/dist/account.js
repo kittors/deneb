@@ -86,11 +86,8 @@ function openCard(app     , ctx     )       {
   card = App.h(
     `<div class="acct-card" role="dialog" aria-label="账号">` +
       `<div class="acct-who">${App.ball(v.me)}<div><b>${esc(me ? spaced(me.displayName || me.name) : '')}</b><span>${esc(me?.email || '')}</span></div></div>` +
-      `<div class="acct-rule"></div>` +
       item('logout', '退出登录', '这个浏览器退出，别的设备照常') +
-      `<div class="acct-rule"></div>` +
       item('privacy', '隐私说明', '记了什么、存多久、谁看得到、怎么删', '', G.ui('external', 16), 'a', `href="${PRIVACY_URL}" target="_blank" rel="noopener"`) +
-      `<div class="acct-rule"></div>` +
       item('delete', '注销账号', '账号和名下的东西一起删掉，不能恢复', 'danger') +
       `</div>`,
   )               ;
@@ -148,7 +145,7 @@ export function openDelete(app     , ctx     )       {
   const page = App.h(
     `<div class="acct-del" role="dialog" aria-label="注销账号">` +
       `<button class="acct-back" type="button">${G.ui('chevronLeft', 16)}返回</button>` +
-      `<div class="acct-col"><div class="acct-wait"><span class="spin"></span>正在看会删掉什么…</div></div>` +
+      `<div class="acct-col"><div class="acct-wait"><span class="spin primary"></span>正在看会删掉什么…</div></div>` +
       `</div>`,
   )               ;
   app.win.appendChild(page);
@@ -292,7 +289,7 @@ export function openDelete(app     , ctx     )       {
     trouble.hidden = true;
     go.disabled = true;
     go.classList.add('sending');
-    go.innerHTML = `<span class="spin white"></span>正在注销…`;
+    go.innerHTML = `<span class="spin"></span>正在注销…`;
     const relays = (acc?.relays || []).map(relayName);
     // What the login page will say, before the session ends with the
     // account; taken back if it does not.
