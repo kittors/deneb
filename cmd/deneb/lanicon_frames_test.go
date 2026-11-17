@@ -20,9 +20,10 @@ import (
 // switch-motion.md §5) in the demo, both themes, when DENEB_LANICON names
 // a folder: the sidebar and the header with them at three window sizes;
 // the "全部" view; the card; "局域网头像" opened from it, a preset picked,
-// saved; a picture of one's own; a server without the feature. Each
-// scene's frames go in <theme>-<scene>/, its stills beside them.
-// DENEB_LANICON_ONLY picks scenes.
+// saved; a picture of one's own; a server without the feature; 保存 while
+// the server takes its time, answered and refused. Each scene's frames go
+// in <theme>-<scene>/, its stills beside them. DENEB_LANICON_ONLY picks
+// scenes.
 func TestLANIconFrames(t *testing.T) {
 	root := os.Getenv("DENEB_LANICON")
 	if root == "" {
@@ -42,6 +43,8 @@ func TestLANIconFrames(t *testing.T) {
 		{"pick", playLANIconPick},
 		{"own", playLANIconOwn},
 		{"none", playLANIconNone},
+		{"wait", playLANIconWait},
+		{"wait-fail", playLANIconWaitFail},
 	}
 	for _, dark := range []bool{false, true} {
 		theme := map[bool]string{false: "light", true: "dark"}[dark]
@@ -172,4 +175,35 @@ func samplePhoto() []byte {
 	var b bytes.Buffer
 	png.Encode(&b, img)
 	return b.Bytes()
+}
+
+// 保存 while the server takes its time, as the 13th batch's waits are
+// recorded (waits_frames_test.go): past busyDelay, a ring in the button
+// where its words were, the button as it was; answered, the dialog goes.
+// Refused (fail), the words come back and a line in red says why, for 保存
+// again.
+func playLANIconWait(t *testing.T, root, theme string, dark bool) {
+	lanIconWait(t, root, theme, dark, "wait", nil)
+}
+
+func playLANIconWaitFail(t *testing.T, root, theme string, dark bool) {
+	lanIconWait(t, root, theme, dark, "wait-fail", errOffline)
+}
+
+func lanIconWait(t *testing.T, root, theme string, dark bool, key string, fail error) {
+	w := newWaitRig(t, root, theme, dark, key, false)
+	w.a.openLANIcon("weekend")
+	w.run(800 * time.Millisecond)
+	w.tapOnly(w.text("小猫"))
+	w.run(400 * time.Millisecond)
+	w.begin()
+	w.press("保存")
+	w.answer(1200*time.Millisecond, fail)
+	got := w.d.Snapshot().LAN("weekend").Icon.Preset
+	switch {
+	case fail == nil && (got != "fluent3d/cat" || w.a.lanIconEdit != nil):
+		t.Errorf("%s: saved, 周末联机's picture is %q, the dialog open: %v", key, got, w.a.lanIconEdit != nil)
+	case fail != nil && (got == "fluent3d/cat" || w.a.lanIconEdit == nil || w.a.lanIconEdit.err == ""):
+		t.Errorf("%s: refused, 周末联机's picture is %q; the dialog: %+v", key, got, w.a.lanIconEdit)
+	}
 }

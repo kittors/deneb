@@ -130,6 +130,7 @@ type lanIconEditor struct {
 	lan          model.LANID
 	choice       model.LANIcon
 	busy, saving bool
+	work         busy // the save's, for 保存's ring (dialogButton)
 	err          string
 }
 
@@ -222,7 +223,7 @@ func (a *app) lanIconLayer(c *ui.Context, p *palette) {
 							b.Background(p.well)
 						}
 						b.Transition(ui.ElementTransition{Duration: fadeTime, Colors: true})
-						b.AnimatePose(pressPose(b, 0.96), ui.Snappy)
+						b.AnimatePose(pressPose(b, pressGive), ui.Snappy)
 						b.Children(func() {
 							if pic := lanPreset(name); pic != nil {
 								ui.Image(c, pic).Size(lanIconChoice, lanIconChoice).Fit(ui.Contain)
@@ -242,16 +243,14 @@ func (a *app) lanIconLayer(c *ui.Context, p *palette) {
 			if dialogButton(c, p, "cancel", "取消", false, false, quiet).Clicked() {
 				close()
 			}
-			label := "保存"
-			if e.saving {
-				label = "保存中…"
-			}
-			if dialogButton(c, p, "save", label, true, false, quiet || e.choice.None() || sameLANIcon(e.choice, l.Icon)).Clicked() {
+			if dialogButton(c, p, "save", "保存", true, false, quiet || e.choice.None() || sameLANIcon(e.choice, l.Icon), &e.work).Clicked() && !e.work.working(c.Now()) {
 				e.saving, e.err = true, ""
+				e.work.begin(c.Now())
 				op := model.Op{Kind: model.OpLANSetIcon, LAN: e.lan, Icon: e.choice}
 				run(a, c, func(ctx context.Context) (model.Result, error) { return a.store.Do(ctx, op) },
 					func(c *ui.Context, _ model.Result, err error) {
 						e.saving = false
+						e.work.end()
 						if a.lanIconEdit != e {
 							return
 						}
@@ -284,7 +283,7 @@ func (a *app) lanMark(c *ui.Context, p *palette, l *model.LAN) {
 	}
 	if mine {
 		mark.Label("换头像").Cursor(ui.CursorPointer)
-		mark.AnimatePose(pressPose(mark, 0.96), ui.Snappy)
+		mark.AnimatePose(pressPose(mark, pressGive), ui.Snappy)
 		if mark.Hovered() {
 			mark.Shadow(0, 0, 0, 2, p.primary.Alpha(0.35))
 		}

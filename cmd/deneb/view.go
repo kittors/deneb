@@ -368,10 +368,9 @@ func navRowWith(c *ui.Context, p *palette, key, label string, on bool, lead func
 	case flash > 0:
 		row.Background(p.well.Mix(p.primary, 0.18*flash))
 	case row.Pressed():
-		// Pressed: a shade darker, the row itself still, as the menu's
-		// rows (design/plan/m7/loading-and-dividers.md §3; its token once
-		// the 13th batch is in).
-		row.Background(p.well.Mix(p.ink, 0.08))
+		// Pressed: the palette's press, the row itself still, as a menu's
+		// rows (a whole row does not give: theme.go's pressGive).
+		row.Background(p.press)
 	case row.Hovered():
 		row.Background(p.well2)
 	default:
