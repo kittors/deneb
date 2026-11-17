@@ -14,6 +14,7 @@ type palette struct {
 	bg       ui.Color // window and cards
 	well     ui.Color // sidebar, groups inside cards
 	well2    ui.Color // hover on the well
+	press    ui.Color // a whole row pressed (a menu's): the well 8% toward the ink
 	line     ui.Color // hairlines
 	line2    ui.Color // switch track when off
 	ink      ui.Color // text
@@ -34,6 +35,7 @@ var lightPalette = palette{
 	bg:       ui.Hex("#ffffff"),
 	well:     ui.Hex("#f4f4f6"),
 	well2:    ui.Hex("#ececef"),
+	press:    ui.Hex("#e2e2e4"),
 	line:     ui.RGBA(9, 9, 11, 0.07),
 	line2:    ui.RGBA(9, 9, 11, 0.1),
 	ink:      ui.Hex("#18181b"),
@@ -55,6 +57,7 @@ var darkPalette = palette{
 	bg:       ui.Hex("#111113"),
 	well:     ui.Hex("#19191c"),
 	well2:    ui.Hex("#222226"),
+	press:    ui.Hex("#2b2b2e"),
 	line:     ui.RGBA(255, 255, 255, 0.07),
 	line2:    ui.RGBA(255, 255, 255, 0.1),
 	ink:      ui.Hex("#fafafa"),
@@ -113,19 +116,38 @@ var (
 	shadowLarge  = [...]float32{32, 80, 0.14, 8, 24, 0.06}
 )
 
-// The web's motion beside the springs (DESIGN §5): a fade, and the step
-// between things that come one after another. web/tokens/gen writes them
-// with the springs into web/tokens.css: --motion-<name> and --ease-<spring>.
+// The motion beside the springs (DESIGN §5): a fade, and the step between
+// things that come one after another. web/tokens/gen writes them, and the
+// waiting and pressing below, with the springs into web/tokens.css:
+// --motion-<name> and --ease-<spring>.
 var (
 	fadeTime    = 160 * time.Millisecond
 	staggerTime = 70 * time.Millisecond
 )
 
+// Waiting and pressing (DESIGN §5, design/components.md):
+//   - busyDelay: work done sooner says nothing; past it, the place that was
+//     pressed says it is under way, with a ring;
+//   - busyHold: once shown, that stays at least so long, not to flash;
+//   - spinTime: one turn of the ring;
+//   - swapOut, swapIn: one thing at a time (swap.go), the shown one fading
+//     out before the next fades in;
+//   - pressGive: how far a pressed button gives (its scale). A whole row,
+//     a menu's, does not give: its ground darkens to the palette's press.
+const (
+	busyDelay = 200 * time.Millisecond
+	busyHold  = 400 * time.Millisecond
+	spinTime  = time.Second
+	swapOut   = 90 * time.Millisecond
+	swapIn    = 160 * time.Millisecond
+	pressGive = float32(0.96)
+)
+
 // foldTime is a group of the menu bar's panel opening out or folding away
 // by its height (menubar.go's fold); the panel's waiting ring, coming over
-// groups that fold away, waits as long for them to. Not busyDelay (the
-// 13th batch's, how long work goes before it says it is under way): this
-// waits for a motion to end. The desktop's own: the web has no such panel.
+// groups that fold away, waits as long for them to. Not busyDelay: this
+// waits for a motion to end, not for work. The desktop's own: the web has
+// no such panel.
 var foldTime = 220 * time.Millisecond
 
 // The website's widths (DESIGN §14.16): its words, its pictures, the docs'

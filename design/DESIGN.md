@@ -60,6 +60,7 @@
 | --- | --- | --- | --- |
 | `bg` | `#FFFFFF` | `#111113` | 窗口、卡片 |
 | `well` | `#F4F4F6` | `#19191C` | 画布、侧边栏、卡片里的分组 |
+| `press` | `#E2E2E4` | `#2B2B2E` | 整行按下时的底色（菜单行）：`well` 往 `ink` 混 8% |
 | `line` | `#09090B` @6% | 白 @7% | 1px 描边、分隔线 |
 | `ink` | `#18181B` | `#FAFAFA` | 主文字 |
 | `ink-2` | `#71717A` | `#A1A1AA` | 次要文字、第二行标题 |
@@ -146,7 +147,12 @@
 | Draw | 420ms EaseInOut | 连线生长与收回 |
 | Stagger | 每项 60–70ms | 多个节点或多条线依次出现 |
 | Pulse | 1.6s 循环，往返 EaseInOut | 占位圈呼吸、建立中的提示 |
+| Swap | 先淡出 90ms，再淡入 160ms | 一次一件事：换字、换提示条、按钮里的字换成转圈 |
+| Busy | 200ms 内做完不出；出了至少留 400ms | "正在…"：按钮里、行里、整页的转圈 |
+| Spin | 1s 一圈，匀速 | 转圈 |
+| Press | 缩到 0.96 | 按下的按钮和块；整行按下不缩，底色换成 `press` |
 
+- 这些时长和比例写在 `cmd/deneb/theme.go`（`fadeTime`、`staggerTime`、`busyDelay`、`busyHold`、`spinTime`、`swapOut`、`swapIn`、`pressGive`），`go run ./web/tokens/gen` 写进 `web/tokens.css`，网页按 `--motion-fade`、`--motion-busy-delay`、`--motion-press` 这样的名字用。
 - 居中弹窗（重命名、头像、设备列表、危险确认、设置、更新）：面板由中心从0.96缩放到1并上移8px，使用Smooth；遮罩与整体160ms EaseOut淡入。关闭保留面板退出快照，0.96缩放/下移，整体与遮罩使用220ms EaseInOut淡退，避免过早透明截断可见退场；不能整层直接消失。减弱动态效果只保留淡变，连续开关保留当前动画进度。
 - 弹簧在目标改变时保留当前速度（MyGo 的 `AnimateTo` 本身就是这样），连续点击不会卡顿。
 - 交互反馈在 100ms 内开始；单个过渡不超过 600ms（循环动画除外）。

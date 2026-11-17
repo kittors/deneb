@@ -32,6 +32,20 @@ import (
 	"strings"
 )
 
+// motion are theme.go's motion beside the springs, in the order
+// web/tokens.css lists them as --motion-<key>: durations in milliseconds,
+// and press, the scale a pressed button gives to.
+var motion = []struct{ key, name, unit string }{
+	{"fade", "fadeTime", "ms"},
+	{"stagger", "staggerTime", "ms"},
+	{"busy-delay", "busyDelay", "ms"},
+	{"busy-hold", "busyHold", "ms"},
+	{"spin", "spinTime", "ms"},
+	{"swap-out", "swapOut", "ms"},
+	{"swap-in", "swapIn", "ms"},
+	{"press", "pressGive", ""},
+}
+
 // drawing are the desktop's files whose named values are design: sizes,
 // timings, springs, poses and colors.
 var drawing = []string{"canvas.go", "links.go", "panels.go", "allview.go", "view.go", "views.go", "menubar.go", "glyphs.go", "model.go", "theme.go"}
@@ -74,12 +88,12 @@ func main() {
 		}
 		scale[k] = v
 	}
-	for k, name := range map[string]string{"fade": "fadeTime", "stagger": "staggerTime"} {
-		v, ok := topValue(theme, name).(float64)
+	for _, m := range motion {
+		v, ok := topValue(theme, m.name).(float64)
 		if !ok {
-			log.Fatalf("gen: theme.go has no %s", name)
+			log.Fatalf("gen: theme.go has no %s", m.name)
 		}
-		scale["motion-"+k] = v
+		scale["motion-"+m.key] = v
 	}
 	out["scale"] = scale
 
@@ -478,7 +492,9 @@ func css(color map[string]any, theme map[string]any, extra map[string]any, scale
 			for _, k := range wk {
 				fmt.Fprintf(&b, "  --width-%s: %gpx;\n", k, widths[k])
 			}
-			fmt.Fprintf(&b, "  --motion-fade: %gms;\n  --motion-stagger: %gms;\n", scale["motion-fade"], scale["motion-stagger"])
+			for _, m := range motion {
+				fmt.Fprintf(&b, "  --motion-%s: %g%s;\n", m.key, scale["motion-"+m.key], m.unit)
+			}
 			springs := scale["spring"].(map[string]any)
 			for _, name := range []string{"Smooth", "Snappy", "Bouncy"} {
 				s := springs[name].(map[string]any)

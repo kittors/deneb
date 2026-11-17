@@ -9,12 +9,8 @@ import (
 
 // One thing at a time (DESIGN §6.5): the tray's words and the toast's
 // content change without two of them showing at once, the shown one fading
-// out before the next fades in; the pill they are in stretches to the next
-// one with the tray's spring as it comes.
-const (
-	swapOut = 90 * time.Millisecond
-	swapIn  = 160 * time.Millisecond
-)
+// out before the next fades in (swapOut, swapIn: theme.go); the pill they
+// are in stretches to the next one with the tray's spring as it comes.
 
 // swapper is what a pill shows, by key, as it changes from one to the next.
 type swapper struct {

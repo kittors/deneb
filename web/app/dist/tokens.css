@@ -12,6 +12,7 @@
   --line: rgba(9, 9, 11, 0.07);
   --line-2: rgba(9, 9, 11, 0.1);
   --ok: #22c55e;
+  --press: #e2e2e4;
   --primary: #2f6bff;
   --primary-2: #2457e0;
   --shadow: rgba(9, 9, 11, 0.09);
@@ -67,6 +68,12 @@
   --width-window: 1180px;
   --motion-fade: 160ms;
   --motion-stagger: 70ms;
+  --motion-busy-delay: 200ms;
+  --motion-busy-hold: 400ms;
+  --motion-spin: 1000ms;
+  --motion-swap-out: 90ms;
+  --motion-swap-in: 160ms;
+  --motion-press: 0.96;
   --motion-smooth: 500ms;
   --ease-smooth: linear(0, 0.029, 0.097, 0.186, 0.282, 0.376, 0.466, 0.547, 0.619, 0.682, 0.736, 0.782, 0.821, 0.854, 0.881, 0.903, 0.921, 0.936, 0.949, 0.959, 0.967, 0.973, 0.979, 0.983, 1);
   --motion-snappy: 500ms;
@@ -91,6 +98,7 @@
   --line: rgba(255, 255, 255, 0.07);
   --line-2: rgba(255, 255, 255, 0.1);
   --ok: #34d399;
+  --press: #2b2b2e;
   --primary: #4c82ff;
   --primary-2: #3b6ff0;
   --shadow: rgba(0, 0, 0, 0.5);

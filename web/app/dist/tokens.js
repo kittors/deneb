@@ -14,6 +14,7 @@ export default {
       "line": "rgba(255, 255, 255, 0.07)",
       "line2": "rgba(255, 255, 255, 0.1)",
       "ok": "#34d399",
+      "press": "#2b2b2e",
       "primary": "#4c82ff",
       "primary2": "#3b6ff0",
       "shadow": "rgba(0, 0, 0, 0.5)",
@@ -33,6 +34,7 @@ export default {
       "line": "rgba(9, 9, 11, 0.07)",
       "line2": "rgba(9, 9, 11, 0.1)",
       "ok": "#22c55e",
+      "press": "#e2e2e4",
       "primary": "#2f6bff",
       "primary2": "#2457e0",
       "shadow": "rgba(9, 9, 11, 0.09)",
@@ -72,7 +74,7 @@ export default {
       },
       "nameWidth": 128,
       "relayFade": 280,
-      "slotGap": 10,
+      "slotGap": 8,
       "slotTile": 40,
       "soft": {
         "spring": {
@@ -93,7 +95,12 @@ export default {
       "tileSize": 60,
       "trackIn": 480,
       "trackOut": 280,
-      "trayBand": 104
+      "trayBand": 104,
+      "trayBottom": 22,
+      "trayRing": 1.5
+    },
+    "glyphs.go": {
+      "starTightAspect": 0.7636666666666667
     },
     "links.go": {
       "beamSpeed": 150,
@@ -104,21 +111,30 @@ export default {
       "waitFade": 240
     },
     "menubar.go": {
+      "panelLabelBottom": 4,
+      "panelLabelTop": 12,
       "panelMaxHeight": 560,
+      "panelRowHeight": 48,
       "panelWidth": 320
     },
     "model.go": {
       "offlineGrey": "#a1a1aa"
     },
     "panels.go": {
-      "cardNameWidth": 186
+      "cardNameWidth": 186,
+      "toastRing": 1
     },
     "view.go": {
+      "glyphRoom": 4,
       "headerHeight": 76,
+      "headerTop": 20,
+      "iconButtonSize": 32,
       "inviteHeight": 34,
       "lanNameWidth": 420,
       "macTitleBar": 32,
-      "sidebarWidth": 232
+      "sidebarWidth": 232,
+      "statusLine": 16,
+      "titleLine": 24
     },
     "views.go": {
       "inviteSpring": {
@@ -127,7 +143,9 @@ export default {
           "duration": 300
         }
       },
-      "markSize": 52
+      "markSize": 52,
+      "startingPatience": 10000,
+      "startingRoom": 56
     }
   },
   "generatedBy": "go run ./web/tokens/gen, from cmd/deneb and MyGo's ui package. Do not edit by hand.",
@@ -142,8 +160,14 @@ export default {
       1.15,
       1.1
     ],
+    "motion-busy-delay": 200,
+    "motion-busy-hold": 400,
     "motion-fade": 160,
+    "motion-press": 0.96,
+    "motion-spin": 1000,
     "motion-stagger": 70,
+    "motion-swap-in": 160,
+    "motion-swap-out": 90,
     "radius": [
       4,
       8,
