@@ -257,29 +257,33 @@ func (a *app) curtainView(c *ui.Context, p *palette, lifting bool) {
 		k = min(1, float32(now.Sub(cu.at))/float32(curtainFall))
 	}
 	c.AnimationFrame()
-	ui.Box(c.Key("curtain")).Absolute().Left(0).Top(0).Right(0).Bottom(0).Background(p.bg).Opacity(ui.EaseInOut(k)).Center().
-		Children(func() {
-			if cu.waiting == "" {
-				return
-			}
-			if cu.work.on(c, now) {
-				cu.said = true
-			}
-			if !cu.said {
-				return
-			}
-			line := float32(1)
-			if !cu.lift.IsZero() {
-				line = max(0, min(1, float32(cu.lift.Sub(now))/float32(swapOut)))
-			}
-			// As the starting page: the mark, greyed, and the line under it.
-			ui.Column(c.Key("curtain-waiting")).Gap(16).AlignItems(ui.Center).Opacity(line).
-				Transition(ui.ElementTransition{Duration: swapIn, Enter: &ui.Motion{}}).
-				Children(func() {
-					ui.Icon(c, markGlyph).Size(markSize, markSize).TextColor(p.ink3)
-					waitingWords(c, p, cu.waiting+"…", now)
-				})
-		})
+	box := ui.Box(c.Key("curtain")).Absolute().Left(0).Top(0).Right(0).Bottom(0).Background(p.bg).Opacity(ui.EaseInOut(k)).Center()
+	if !cu.lift.IsZero() {
+		// Lifting, it lets the pointer through to what comes under it.
+		box.PassThrough()
+	}
+	box.Children(func() {
+		if cu.waiting == "" {
+			return
+		}
+		if cu.work.on(c, now) {
+			cu.said = true
+		}
+		if !cu.said {
+			return
+		}
+		line := float32(1)
+		if !cu.lift.IsZero() {
+			line = max(0, min(1, float32(cu.lift.Sub(now))/float32(swapOut)))
+		}
+		// As the starting page: the mark, greyed, and the line under it.
+		ui.Column(c.Key("curtain-waiting")).Gap(16).AlignItems(ui.Center).Opacity(line).
+			Transition(ui.ElementTransition{Duration: swapIn, Enter: &ui.Motion{}}).
+			Children(func() {
+				ui.Icon(c, markGlyph).Size(markSize, markSize).TextColor(p.ink3)
+				waitingWords(c, p, cu.waiting+"…", now)
+			})
+	})
 	if k >= 1 && !cu.done {
 		cu.done = true
 		cu.then(c)

@@ -479,6 +479,10 @@ type app struct {
 	// startWords is that page's line, as it changes.
 	waitSince  time.Time
 	startWords swapper
+	// wasStarting: the window was the starting page; startOut, when the
+	// view came and the page began to fade out (startingLeaves).
+	wasStarting bool
+	startOut    time.Time
 	// updateWords is what settings' 软件更新 says, as it changes;
 	// updateShown, what it was asked to say last (updateValue).
 	updateWords swapper

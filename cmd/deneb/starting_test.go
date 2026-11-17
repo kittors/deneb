@@ -100,23 +100,37 @@ func TestStartingNoNetwork(t *testing.T) {
 	}
 }
 
-// TestStartingToTheView: the view coming ends the starting page at once,
-// before 10 s or after: the very next frame is the LAN's, with nothing of
-// the starting page.
+// TestStartingToTheView: the view coming ends the starting page, before
+// 10 s or after, one thing at a time (DESIGN §5): the page fades out as it
+// is, nothing new on it and no LAN yet; then the LAN's window comes up
+// through the background, the curtain lifting off it, and nothing of the
+// starting page is left.
 func TestStartingToTheView(t *testing.T) {
 	for _, wait := range []time.Duration{3 * time.Second, 12 * time.Second} {
 		r := startingRig(t, "control-out")
 		r.run(wait)
+		was := r.tt.Texts()
 		r.d.Simulate("control-back")
 		r.tt.Advance(16 * time.Millisecond)
 		r.tt.Frame()
+		if r.has("周末联机") || r.has("正在连接 Deneb…") && wait > startingPatience {
+			t.Errorf("after %v, the view come, fading out: %q, was %q", wait, r.tt.Texts(), was)
+		}
+		r.run(swapOut + 50*time.Millisecond)
 		for _, s := range []string{"正在连接 Deneb…", startNoControl, startDiagLabel, "已经连上的设备照常能用"} {
 			if r.has(s) {
-				t.Errorf("after %v, the view come: %q still shows", wait, s)
+				t.Errorf("after %v, the page gone: %q still shows", wait, s)
 			}
 		}
 		if !r.has("周末联机") {
-			t.Errorf("after %v, the view come: no LAN: %q", wait, r.tt.Texts())
+			t.Errorf("after %v, the page gone: no LAN: %q", wait, r.tt.Texts())
+		}
+		if r.a.curtain == nil {
+			t.Errorf("after %v: the window came with no curtain lifting off it", wait)
+		}
+		r.run(curtainLift + 100*time.Millisecond)
+		if r.a.curtain != nil {
+			t.Errorf("after %v: the curtain still over the window", wait)
 		}
 	}
 }

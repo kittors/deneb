@@ -44,7 +44,8 @@ const startingRoom = 56
 // past startingPatience, the line says so, the new words fading in after
 // the old fade out (DESIGN §6.5); under it, in the same fade, that the
 // devices connected still work, if some are, and the way to the
-// diagnostics (DESIGN §6.14). The view coming ends it at once.
+// diagnostics (DESIGN §6.14). The view coming, the page fades out as it
+// is, and the window comes (startingLeaves).
 func (a *app) startingView(c *ui.Context, p *palette) {
 	now := a.now()
 	line := "正在连接 Deneb…"
@@ -56,6 +57,14 @@ func (a *app) startingView(c *ui.Context, p *palette) {
 	case a.longWait(c, now):
 		line = startNoControl
 	}
+	// Leaving, the page keeps what it says as it fades out.
+	page := float32(1)
+	if !a.startOut.IsZero() {
+		page = 1 - frac(now.Sub(a.startOut), swapOut)
+		if a.startWords.shown != "" {
+			line = a.startWords.shown
+		}
+	}
 	shown, alpha, busy := a.startWords.step(line, now)
 	if busy {
 		c.AnimationFrame()
@@ -64,17 +73,17 @@ func (a *app) startingView(c *ui.Context, p *palette) {
 	a.cardAt = ui.Rect{}
 	ui.Column(c).Fill().Background(p.bg).Center().DragWindow().Children(func() {
 		ui.Box(c.Key("starting-over")).Height(startingRoom).Shrink(0)
-		ui.Icon(c, markGlyph).Size(markSize, markSize).TextColor(p.ink3)
+		ui.Icon(c, markGlyph).Size(markSize, markSize).TextColor(p.ink3).Opacity(page)
 		// Waiting, a ring before the words (waitingWords); the engine that
 		// cannot start says why, with none.
-		ui.Row(c.Key("starting-line")).Margin(16, 0, 0, 0).Opacity(alpha).Children(func() {
+		ui.Row(c.Key("starting-line")).Margin(16, 0, 0, 0).Opacity(alpha * page).Children(func() {
 			if a.engineErr != "" && shown == a.engineErr {
 				ui.Text(c, shown).FontSize(13).TextColor(p.ink2)
 				return
 			}
 			waitingWords(c, p, shown, now)
 		})
-		ui.Column(c.Key("starting-under")).Height(startingRoom).Shrink(0).AlignItems(ui.Center).Opacity(alpha).Children(func() {
+		ui.Column(c.Key("starting-under")).Height(startingRoom).Shrink(0).AlignItems(ui.Center).Opacity(alpha * page).Children(func() {
 			if shown != startNoControl {
 				return
 			}
@@ -86,6 +95,35 @@ func (a *app) startingView(c *ui.Context, p *palette) {
 	})
 	ww, wh := c.Size()
 	a.toastView(c, p, ww, wh, now)
+}
+
+// startingLeaves reports whether the starting page is still on, the view
+// having come: one thing at a time (DESIGN §5), its mark and line fade out
+// first (swapOut); then the window comes up through the background, the
+// curtain lifting off it (DESIGN §6.6). starting is whether the window is
+// the starting page now (starting).
+func (a *app) startingLeaves(c *ui.Context, starting bool) bool {
+	now := a.now()
+	switch {
+	case starting:
+		a.startOut, a.wasStarting = time.Time{}, true
+		return false
+	case a.wasStarting:
+		a.wasStarting, a.startOut = false, now
+	}
+	if a.startOut.IsZero() {
+		return false
+	}
+	if now.Sub(a.startOut) < swapOut {
+		c.AnimationFrame()
+		return true
+	}
+	a.startOut = time.Time{}
+	if a.curtain == nil && a.snap.LoggedIn {
+		// Down already, it only lifts (the window draws it).
+		a.curtain = &curtain{done: true, back: true}
+	}
+	return false
 }
 
 // starting reports whether the window is the starting page: this

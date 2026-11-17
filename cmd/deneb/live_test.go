@@ -106,8 +106,11 @@ func (r *liveRig) shot(step string) {
 	png.Encode(f, r.tt.Image())
 }
 
+// click clicks what shows text, once it shows: the window may still be
+// coming, the starting page fading out before it (startingLeaves).
 func (r *liveRig) click(text string) {
 	r.t.Helper()
+	r.until(text, func() bool { _, ok := r.tt.Find(text); return ok })
 	if err := r.tt.Click(text); err != nil {
 		r.t.Fatalf("click %q: %v; the window shows %q", text, err, r.tt.Texts())
 	}

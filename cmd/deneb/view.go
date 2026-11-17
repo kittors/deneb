@@ -41,7 +41,10 @@ func (a *app) view(c *ui.Context) {
 	a.tickAdapter(c)
 	p := colors(c)
 	starting := a.starting()
-	if !starting {
+	// The view come, the starting page fades out before the window comes
+	// (startingLeaves).
+	leaving := a.startingLeaves(c, starting)
+	if !starting && !leaving {
 		// The starting page, shown anew, comes with its line as it is then.
 		a.startWords = swapper{}
 	}
@@ -52,7 +55,7 @@ func (a *app) view(c *ui.Context) {
 		return
 	}
 	switch {
-	case starting:
+	case starting || leaving:
 		a.startingView(c, p)
 		a.updateOutsideSidebar(c, p)
 		return
