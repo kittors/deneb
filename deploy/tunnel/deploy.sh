@@ -10,10 +10,12 @@
 #   deploy/tunnel/deploy.sh            # HOST=hk-155
 #
 # The tunnel and its two public host names are made in Cloudflare's
-# dashboard (Zero Trust → Networks → Tunnels), by the user: the control
-# server's → http://127.0.0.1:47450, the relay's → http://127.0.0.1:47451.
-# The host names stay there and in the deployment's own notes, never in
-# this repository (deneb.app in its examples).
+# dashboard (Networking → Tunnels, each name a route of the kind
+# "Published application"), by the user: the control server's →
+# http://127.0.0.1:47450, the relay's → http://127.0.0.1:47451. The host
+# names stay there and in deploy/tunnel/site.hk155.env (CONTROL_TUNNEL_HOST,
+# RELAY_TUNNEL_HOST), which git ignores; never in this repository
+# (deneb.app in its examples).
 #
 # The tunnel's token: the user puts it in /opt/deneb-tunnel/token on hk-155,
 # the token alone on one line. This script never reads it, prints it, or
