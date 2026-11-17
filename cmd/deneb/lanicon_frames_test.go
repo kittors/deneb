@@ -180,8 +180,8 @@ func samplePhoto() []byte {
 // 保存 while the server takes its time, as the 13th batch's waits are
 // recorded (waits_frames_test.go): past busyDelay, a ring in the button
 // where its words were, the button as it was; answered, the dialog goes.
-// Refused (fail), the words come back and a line in red says why, for 保存
-// again.
+// Refused (fail), the words come back and a line in red says why; another
+// picked, the line goes; 保存 again, answered this time.
 func playLANIconWait(t *testing.T, root, theme string, dark bool) {
 	lanIconWait(t, root, theme, dark, "wait", nil)
 }
@@ -199,11 +199,24 @@ func lanIconWait(t *testing.T, root, theme string, dark bool, key string, fail e
 	w.begin()
 	w.press("保存")
 	w.answer(1200*time.Millisecond, fail)
-	got := w.d.Snapshot().LAN("weekend").Icon.Preset
-	switch {
-	case fail == nil && (got != "fluent3d/cat" || w.a.lanIconEdit != nil):
-		t.Errorf("%s: saved, 周末联机's picture is %q, the dialog open: %v", key, got, w.a.lanIconEdit != nil)
-	case fail != nil && (got == "fluent3d/cat" || w.a.lanIconEdit == nil || w.a.lanIconEdit.err == ""):
-		t.Errorf("%s: refused, 周末联机's picture is %q; the dialog: %+v", key, got, w.a.lanIconEdit)
+	want := "fluent3d/cat"
+	if fail != nil {
+		if e := w.a.lanIconEdit; e == nil || e.err == "" || w.d.Snapshot().LAN("weekend").Icon.Preset == want {
+			t.Fatalf("%s: refused, the dialog: %+v", key, e)
+		}
+		w.tapOnly(w.text("小狗"))
+		w.run(700 * time.Millisecond)
+		w.shot("换了一个")
+		w.tapOnly(w.text("保存"))
+		w.run(1200 * time.Millisecond)
+		w.shot("再保存")
+		w.mark("let")
+		w.s.let(nil)
+		w.run(900 * time.Millisecond)
+		w.shot("保存了")
+		want = "fluent3d/dog"
+	}
+	if got := w.d.Snapshot().LAN("weekend").Icon.Preset; got != want || w.a.lanIconEdit != nil {
+		t.Errorf("%s: 周末联机's picture is %q, not %q; the dialog open: %v", key, got, want, w.a.lanIconEdit != nil)
 	}
 }

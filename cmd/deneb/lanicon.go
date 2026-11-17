@@ -132,6 +132,9 @@ type lanIconEditor struct {
 	busy, saving bool
 	work         busy // the save's, for 保存's ring (dialogButton)
 	err          string
+	// errWords is err as it shows beside the buttons, coming and going
+	// one at a time (§6.5).
+	errWords swapper
 }
 
 // openLANIcon opens the dialog of the LAN's picture, for its owner.
@@ -190,7 +193,10 @@ func (a *app) lanIconLayer(c *ui.Context, p *palette) {
 			ui.Text(c, "这个局域网已经不在了").TextColor(p.ink3)
 			return
 		}
-		quiet := e.busy || e.saving
+		// Reading a picture of one's own, the rest waits for it, greyed.
+		// Saving, nothing greys (DESIGN §5: waiting is not "can't"): 保存
+		// says it is under way, and the rest takes no click till it is done.
+		reading, quiet := e.busy, e.busy || e.saving
 		ui.Row(c).Gap(16).AlignItems(ui.Center).Children(func() {
 			if pic, ok := a.lanPicOf(e.choice); ok {
 				lanIconView(c, pic, lanIconPreview)
@@ -203,7 +209,7 @@ func (a *app) lanIconLayer(c *ui.Context, p *palette) {
 				if e.busy {
 					label = "读取中…"
 				}
-				if dialogButton(c, p, "upload", label, false, false, quiet).Clicked() {
+				if dialogButton(c, p, "upload", label, false, false, reading).Clicked() {
 					a.pickLANIcon(e)
 				}
 				ui.Text(c, "PNG / JPEG · 最大 8 MB").FontSize(12).TextColor(p.ink3)
@@ -215,11 +221,11 @@ func (a *app) lanIconLayer(c *ui.Context, p *palette) {
 					for i := row * 8; i < min(row*8+8, len(proto.LANIconPresets)); i++ {
 						name := proto.LANIconPresets[i]
 						b := ui.ButtonBase(c.Key("lan-icon-"+name)).Size(lanIconCell, lanIconCell).Radius(12).Center().
-							Label(lanIconNames[path.Base(name)]).FocusRing(false).Disabled(quiet)
+							Label(lanIconNames[path.Base(name)]).FocusRing(false).Disabled(reading)
 						switch {
 						case e.choice.Preset == name:
 							b.Background(p.primary.Alpha(.1)).Border(1.5, p.primary)
-						case b.Hovered():
+						case b.Hovered() && !quiet:
 							b.Background(p.well)
 						}
 						b.Transition(ui.ElementTransition{Duration: fadeTime, Colors: true})
@@ -229,38 +235,49 @@ func (a *app) lanIconLayer(c *ui.Context, p *palette) {
 								ui.Image(c, pic).Size(lanIconChoice, lanIconChoice).Fit(ui.Contain)
 							}
 						})
-						if b.Clicked() {
+						if b.Clicked() && !quiet {
 							e.choice, e.err = model.LANIcon{Preset: name}, ""
 						}
 					}
 				})
 			}
 		})
-		if e.err != "" {
-			ui.Text(c, e.err).FontSize(12).TextColor(danger).LineHeight(1.4)
+		// What went wrong shows beside the buttons, where the eye is once
+		// 保存 is pressed, and fades in and out there: the dialog keeps its
+		// size as it comes and goes.
+		words, alpha, moving := e.errWords.step(e.err, c.Now())
+		if moving {
+			c.AnimationFrame()
 		}
-		dialogActions(c, func() {
-			if dialogButton(c, p, "cancel", "取消", false, false, quiet).Clicked() {
-				close()
-			}
-			if dialogButton(c, p, "save", "保存", true, false, quiet || e.choice.None() || sameLANIcon(e.choice, l.Icon), &e.work).Clicked() && !e.work.working(c.Now()) {
-				e.saving, e.err = true, ""
-				e.work.begin(c.Now())
-				op := model.Op{Kind: model.OpLANSetIcon, LAN: e.lan, Icon: e.choice}
-				run(a, c, func(ctx context.Context) (model.Result, error) { return a.store.Do(ctx, op) },
-					func(c *ui.Context, _ model.Result, err error) {
-						e.saving = false
-						e.work.end()
-						if a.lanIconEdit != e {
-							return
-						}
-						if err != nil {
-							e.err = message(err)
-							return
-						}
-						a.lanIconEdit = nil
-					})
-			}
+		ui.Row(c).Gap(16).AlignItems(ui.Center).Children(func() {
+			ui.Box(c).Grow(1).Shrink(1).Children(func() {
+				if words != "" {
+					ui.Text(c, words).FontSize(12).TextColor(danger).LineHeight(1.4).MaxLines(2).Opacity(alpha)
+				}
+			})
+			dialogActions(c, func() {
+				if dialogButton(c, p, "cancel", "取消", false, false, reading).Clicked() {
+					close()
+				}
+				if dialogButton(c, p, "save", "保存", true, false, quiet || e.choice.None() || sameLANIcon(e.choice, l.Icon), &e.work).Clicked() && !e.work.working(c.Now()) {
+					e.saving, e.err = true, ""
+					e.work.begin(c.Now())
+					op := model.Op{Kind: model.OpLANSetIcon, LAN: e.lan, Icon: e.choice}
+					run(a, c, func(ctx context.Context) (model.Result, error) { return a.store.Do(ctx, op) },
+						func(c *ui.Context, _ model.Result, err error) {
+							e.saving = false
+							e.work.end()
+							if a.lanIconEdit != e {
+								return
+							}
+							if err != nil {
+								e.err = message(err)
+								return
+							}
+							a.lanIconEdit = nil
+						})
+				}
+			})
 		})
 	})
 }
