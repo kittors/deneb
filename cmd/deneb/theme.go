@@ -154,3 +154,13 @@ var foldTime = 220 * time.Millisecond
 // contents beside them, and the window at its own size, as the first
 // screen shows it. web/tokens/gen writes them as --width-<name>.
 var siteWidth = struct{ Text, Content, Toc, Window float32 }{Text: 680, Content: 980, Toc: 224, Window: 1180}
+
+// A frame, at sixty a second (DESIGN §5): what fades out is kept a frame
+// longer than its fade, so that the frame showing it clear is drawn before
+// it is let go; let go sooner, a frame a little late cuts its fade short.
+const aFrame = time.Second / 60
+
+// How far new words come down into their place as they fade in, taking
+// over from the words before (the line under a LAN's title, DESIGN §6.5):
+// enough to read as new words, too little to read as moving.
+const wordsDrop = 3

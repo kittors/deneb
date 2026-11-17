@@ -638,7 +638,7 @@ func (a *app) headerLine(c *ui.Context, p *palette) {
 		// lines fading across each other in one place read as a muddle.
 		t := ui.Text(c.Key("header-line-"+text), text).FontSize(12).TextColor(ink).SingleLine()
 		// Gone with the page, it fades out where it was (switchmotion.go).
-		t.Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{Y: -3}, Exit: &ui.Motion{}})
+		t.Transition(ui.ElementTransition{Duration: swapIn, Enter: &ui.Motion{Y: -wordsDrop}, Exit: &ui.Motion{}})
 	})
 }
 

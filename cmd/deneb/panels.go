@@ -306,8 +306,8 @@ func (a *app) trayView(c *ui.Context, p *palette, w, h float32, now time.Time) {
 	case show:
 		a.trayUp, a.trayOut = true, time.Time{}
 	case a.trayUp && a.trayOut.IsZero() && quick:
-		a.trayOut = now.Add(swapOut + 20*time.Millisecond)
-		c.After(swapOut + 20*time.Millisecond)
+		a.trayOut = now.Add(outFor)
+		c.After(outFor)
 	case a.trayUp && a.trayOut.IsZero():
 		a.trayOut = now.Add(300 * time.Millisecond)
 		c.After(300 * time.Millisecond)

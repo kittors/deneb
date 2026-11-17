@@ -971,8 +971,9 @@ func (a *app) relayView(c *ui.Context, p *palette, r *relayStop, w, h float32) {
 			name.AnimatePose(ui.Pose{}, ui.Animation{Duration: 220 * time.Millisecond, Delay: 60 * time.Millisecond})
 		default:
 			// At rest too, so that going it fades from where it is: a
-			// pose first asked for is there at once.
-			name.AnimatePose(ui.Pose{}, ui.Animation{Duration: 120 * time.Millisecond})
+			// pose first asked for is there at once. Back before it is
+			// gone, it comes back from there.
+			name.AnimatePose(ui.Pose{}, switchBack)
 		}
 	})
 }

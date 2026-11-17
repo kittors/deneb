@@ -30,6 +30,18 @@ var (
 	switchBack = ui.Animation{Duration: swapIn}
 )
 
+// The waits around those fades, from the same tokens.
+const (
+	// outFor is how long what fades out with the page before stays (the
+	// tray, and the devices and relays only that page had): its fade, and
+	// a frame to draw it clear in before it is let go.
+	outFor = swapOut + aFrame
+	// switchFor is how long a switch goes on, for what comes and goes with
+	// the page to fade as the page does: the old page's fade out, the new
+	// one's fade in, and a frame for the one that fade ends in.
+	switchFor = swapOut + swapIn + aFrame
+)
+
 // switchMotion is what the window keeps of a page change on its way.
 type switchMotion struct {
 	// The sidebar's white ground: navKey is the row it was under in the
@@ -397,14 +409,14 @@ func (a *app) carryOver(c *ui.Context, w *canvasWas) {
 func (a *app) sweepGhosts(now time.Time) {
 	keep := a.sw.ghosts[:0]
 	for _, g := range a.sw.ghosts {
-		if now.Sub(g.ghostAt) < swapOut+50*time.Millisecond || g.vis > 0.001 {
+		if now.Sub(g.ghostAt) < outFor || g.vis > 0.001 {
 			keep = append(keep, g)
 		}
 	}
 	a.sw.ghosts = keep
 	kr := a.sw.ghostRelays[:0]
 	for _, r := range a.sw.ghostRelays {
-		if now.Sub(r.ghostAt) < swapOut+50*time.Millisecond || r.vis > 0.001 {
+		if now.Sub(r.ghostAt) < outFor || r.vis > 0.001 {
 			kr = append(kr, r)
 		}
 	}
@@ -501,7 +513,7 @@ func (a *app) titleStep(c *ui.Context, lan model.LANID, name string) (model.LANI
 // switching reports whether the canvas took over from another page's just
 // now: what comes and goes with the page fades as it does.
 func (a *app) switching(now time.Time) bool {
-	return !a.sw.at.IsZero() && now.Sub(a.sw.at) < swapOut+swapIn+100*time.Millisecond
+	return !a.sw.at.IsZero() && now.Sub(a.sw.at) < switchFor
 }
 
 // lineKey is what tells a device's second line from another: its words
