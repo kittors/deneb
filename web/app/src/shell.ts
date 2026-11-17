@@ -9,6 +9,7 @@ import './v3-links.ts';
 import './v3-app.ts';
 import tokens from './tokens.js';
 import { colorIndex, listedLANs, sharedOnly } from './model.ts';
+import { LAN_ICON_ROW, lanIconHTML, lanIcons } from './lanicon.ts';
 import type { UserView, LANView, PersonID, InvitePreview } from './model.ts';
 import { ApiError } from './api.ts';
 import { D } from './clock.ts';
@@ -229,7 +230,11 @@ export function setOpsDot(n: number): void {
 function side(v: UserView, sel: string, ctx: Ctx): void {
   const P = App.PEOPLE;
   const row = (id: string, label: string, lead: string, tail = '', cls = '') => `<div class="nav ${id === sel ? 'on' : ''} ${cls}" data-id="${esc(id)}" role="link" tabindex="0">${lead}<span class="nav-label">${esc(spaced(label))}</span>${tail}</div>`;
-  const dots = (l: LANView) => `<span class="dots">${l.members.filter((m) => m.state === 'joined').slice(0, 3).map((m) => App.dot(P[m.person] ? P[m.person].c : tokens.color.owners[1])).join('')}</span>`;
+  // A LAN's picture where the server gives LANs pictures (M7), else its
+  // first members' balls.
+  const dots = (l: LANView) =>
+    (lanIcons(v) && lanIconHTML(l.icon, LAN_ICON_ROW)) ||
+    `<span class="dots">${l.members.filter((m) => m.state === 'joined').slice(0, 3).map((m) => App.dot(P[m.person] ? P[m.person].c : tokens.color.owners[1])).join('')}</span>`;
   const lans = v.lans.filter((l) => !sharedOnly(v, l));
   const count = (n: number) => (n > 0 ? `<span class="count">${n}</span>` : '');
   const shared = (v.sharedWithMe || []).filter((s) => !leaving.has(s.share)).length;

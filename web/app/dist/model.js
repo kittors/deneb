@@ -87,6 +87,17 @@
                            
                     
                  
+                                                                   
+                              
+                 
+ 
+
+// LANIcon is a LAN's picture (design/plan/m7/switch-motion.md §5): one of
+// the presets by name (proto.LANIconPresets), or the owner's own, a 128×128
+// PNG.
+                          
+                  
+                 
  
 
                             
@@ -202,6 +213,8 @@
                                                              
                      
                    
+                            
+                 
  
 
                            

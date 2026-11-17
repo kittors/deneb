@@ -87,9 +87,18 @@ func (a *app) view(c *ui.Context) {
 			if a.strip > 0 {
 				ui.Box(c.Key("title-strip")).Height(a.strip).Shrink(0).DragWindow()
 			}
-			if a.myDevicesOpen {
-				a.myDevicesPage(c, p)
-			} else {
+			// One page at a time: the one shown fades out, then the next
+			// fades in (switchmotion.go).
+			page, alpha := a.pageStep(c)
+			holder := ui.Column(c.Key("page-" + page)).Grow(1).FillWidth()
+			if alpha < 1 {
+				holder.Opacity(alpha)
+			}
+			holder.Children(func() {
+				if page == "mine" {
+					a.myDevicesPage(c, p)
+					return
+				}
 				if a.all() {
 					a.allHeader(c, p)
 				} else {
@@ -97,7 +106,7 @@ func (a *app) view(c *ui.Context) {
 				}
 				a.canvas(c, p)
 				a.inviteLayer(c, p)
-			}
+			})
 		})
 		a.personChip(c, p)
 		a.accountLayer(c, p)
@@ -106,6 +115,7 @@ func (a *app) view(c *ui.Context) {
 		a.settingsLayer(c, p)
 		a.updateLayer(c, p)
 		a.avatarLayer(c, p)
+		a.lanIconLayer(c, p)
 		a.renameLayer(c, p)
 		a.addOneLayer(c, p)
 		a.confirmLayer(c, p)
@@ -168,7 +178,11 @@ func (a *app) sidebar(c *ui.Context, p *palette, bar ui.TitleBar) {
 	top := max(h, 16) + 8
 	// Every row's mark, the groups' names and Deneb's star start at one edge,
 	// 8 inside the rows' light (DESIGN §3.9).
-	ui.Column(c).Width(sidebarWidth).Background(p.well).Padding(top, 12, 12, 12).Gap(4).DragWindow().Children(func() {
+	side := ui.Column(c).Width(sidebarWidth).Background(p.well).Padding(top, 12, 12, 12).Gap(4).DragWindow()
+	side.Children(func() {
+		// The white ground on its way to the row just chosen, under the
+		// rows (switchmotion.go).
+		a.navPill(c, p, side)
 		ui.Row(c).Gap(8).Padding(4, 8, 16, 8).Children(func() {
 			starMark(c, p, 18)
 			ui.Text(c, "Deneb").FontSize(15).FontWeight(600)
@@ -188,7 +202,7 @@ func (a *app) sidebar(c *ui.Context, p *palette, bar ui.TitleBar) {
 		if len(a.shownLANs()) > 1 {
 			// Every LAN at once, each in a region (scene 3).
 			people := func() { ui.Icon(c, uiGlyphs["people"]).Size(18, 18).TextColor(p.ink3) }
-			if navRowWith(c, p, "all", "全部", a.all() && !a.myDevicesOpen, people, rowOpts{}) {
+			if navRowWith(c, p, "all", "全部", a.all() && !a.myDevicesOpen, people, rowOpts{nav: &a.sw}) {
 				a.show(c, allLANs, false)
 			}
 		}
@@ -201,7 +215,7 @@ func (a *app) sidebar(c *ui.Context, p *palette, bar ui.TitleBar) {
 			// Something waits for me there: a small blue dot at the row's end,
 			// until I let it in or turn it away (DESIGN §6.7).
 			waits := l.Owner == a.snap.Me && len(l.Pending)+len(l.PendingMembers) > 0
-			o := rowOpts{count: count, flash: a.flash(c, l.ID), dot: waits, ring: a.personOver == l.ID, at: a.rowAt(l.ID)}
+			o := rowOpts{count: count, flash: a.flash(c, l.ID), dot: waits, ring: a.personOver == l.ID, at: a.rowAt(l.ID), nav: &a.sw}
 			if !l.Waiting && l.Has(a.snap.Self) {
 				// Its switch: on, it connects; off, it is paused on this
 				// computer, which must be in it (scene 3).
@@ -216,7 +230,12 @@ func (a *app) sidebar(c *ui.Context, p *palette, bar ui.TitleBar) {
 			}
 			hover := false
 			o.hover = &hover
-			if navRowWith(c, p, "lan-"+string(l.ID), l.Name, l.ID == a.lan && !a.myDevicesOpen, dots(l.Members), o) {
+			lead := dots(l.Members)
+			if pic, ok := a.lanPic(l.ID); ok {
+				// Its picture, where the balls were (lanicon.go).
+				lead = func() { lanIconView(c, pic, lanIconRow) }
+			}
+			if navRowWith(c, p, "lan-"+string(l.ID), l.Name, l.ID == a.lan && !a.myDevicesOpen, lead, o) {
 				a.show(c, l.ID, false)
 			}
 			if hover {
@@ -242,7 +261,7 @@ func (a *app) sidebar(c *ui.Context, p *palette, bar ui.TitleBar) {
 		a.newLANRow(c, p)
 		ui.Box(c).Height(16)
 		group(c, p, "设备")
-		if navRow(c, p, "我的设备", "我的设备", a.myDevicesOpen, func() { ui.Icon(c, uiGlyphs["home"]).Size(18, 18).TextColor(p.ink3) }, fmt.Sprint(len(a.snap.Mine)), 0) {
+		if navRowWith(c, p, "我的设备", "我的设备", a.myDevicesOpen, func() { ui.Icon(c, uiGlyphs["home"]).Size(18, 18).TextColor(p.ink3) }, rowOpts{count: fmt.Sprint(len(a.snap.Mine)), nav: &a.sw}) {
 			a.setMyDevices(true)
 			a.accountOpen = false
 		}
@@ -252,7 +271,7 @@ func (a *app) sidebar(c *ui.Context, p *palette, bar ui.TitleBar) {
 		}
 		// The devices given to me, on a canvas of their own (DESIGN §6.11).
 		inbox := func() { ui.Icon(c, uiGlyphs["inbox"]).Size(18, 18).TextColor(p.ink3) }
-		if navRowWith(c, p, "共享给我", "共享给我", a.shared() && !a.myDevicesOpen, inbox, rowOpts{count: shared, flash: a.flash(c, model.SharedLANID)}) &&
+		if navRowWith(c, p, "共享给我", "共享给我", a.shared() && !a.myDevicesOpen, inbox, rowOpts{count: shared, flash: a.flash(c, model.SharedLANID), nav: &a.sw}) &&
 			a.snap.Can(model.FeatureShare) {
 			a.show(c, model.SharedLANID, false)
 		}
@@ -305,6 +324,9 @@ type rowOpts struct {
 	at        *ui.Rect
 	trail     func() bool
 	hover     *bool
+	// nav: the sidebar's choice, whose white ground travels from row to
+	// row (switchmotion.go).
+	nav *switchMotion
 }
 
 // navRowWith is a row of the sidebar as o asks.
@@ -320,23 +342,43 @@ func navRowWith(c *ui.Context, p *palette, key, label string, on bool, lead func
 	if o.ring {
 		row.Border(1.5, p.primary)
 	}
-	if flash > 0 {
+	// The white ground of the row chosen is the pill's on its way here
+	// (switchmotion.go); at rest, the row's own.
+	pill, changed := false, false
+	if o.nav != nil {
+		pill, changed = o.nav.rowSeen(key, row.Bounds(), on, c.Now())
+	}
+	// Chosen or not, the ground changes at once: the pill takes it over
+	// where it was, and hands it back where it arrives. Hover and press
+	// fade (DESIGN §5: Fade).
+	was := row.AnimateTo("on", map[bool]float32{false: 0, true: 1}[on], ui.Animation{Duration: fadeTime})
+	switch {
+	case flash > 0:
 		row.Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: &ui.Motion{Collapse: true}})
+	case on || changed:
+	default:
+		row.Transition(ui.ElementTransition{Duration: fadeTime, Colors: true})
 	}
 	switch {
+	case on && pill:
 	case on && flash > 0:
 		row.Background(p.bg.Mix(p.primary, 0.18*flash)).Shadow(0, 1, 2, 0, ui.RGBA(9, 9, 11, 0.06)).Shadow(0, 1, 1, 0, ui.RGBA(9, 9, 11, 0.04))
 	case on:
 		row.Background(p.bg).Shadow(0, 1, 2, 0, ui.RGBA(9, 9, 11, 0.06)).Shadow(0, 1, 1, 0, ui.RGBA(9, 9, 11, 0.04))
 	case flash > 0:
 		row.Background(p.well.Mix(p.primary, 0.18*flash))
+	case row.Pressed():
+		// Pressed: a shade darker, the row itself still, as the menu's
+		// rows (design/plan/m7/loading-and-dividers.md §3; its token once
+		// the 13th batch is in).
+		row.Background(p.well.Mix(p.ink, 0.08))
 	case row.Hovered():
 		row.Background(p.well2)
+	default:
+		row.Background(p.well2.Alpha(0))
 	}
-	color := p.ink2
-	if on {
-		color = p.ink
-	}
+	// The label goes over to the chosen ink as the ground arrives.
+	color := p.ink2.Mix(p.ink, was)
 	flipped := false
 	row.Children(func() {
 		lead()
@@ -388,8 +430,21 @@ func pressPose(e ui.Element, scale float32) ui.Pose {
 func (a *app) header(c *ui.Context, p *palette) {
 	l := a.snap.LAN(a.lan)
 	if l == nil {
-		// No LAN yet: the header keeps its place, with nothing in it.
-		ui.Row(c).Height(headerHeight).DragWindow()
+		// No LAN: the header keeps its place, with nothing in it; the last
+		// LAN's words and balls fade out of it (switchmotion.go).
+		ui.Column(c).Height(headerHeight).Padding(headerTop, 24, 0, 28).Gap(4).DragWindow().Children(func() {
+			ui.Row(c).Height(titleLine).Gap(16).Children(func() {
+				title := ui.ButtonBase(c.Key("lan-title")).FocusRing(false)
+				_, shown, alpha := a.titleStep(c, "", "")
+				title.Children(func() {
+					ui.Text(c, shown).FontSize(20).FontWeight(600).SingleLine().MaxWidth(lanNameWidth).Opacity(alpha)
+				})
+				ui.Spacer(c)
+				a.headerRight(c, p, nil)
+			})
+			a.lineView(c, p, p.ink3, "")
+			a.headerLine(c, p)
+		})
 		return
 	}
 	name := l.Name
@@ -397,8 +452,20 @@ func (a *app) header(c *ui.Context, p *palette) {
 		ui.Row(c).Height(titleLine).Gap(16).Children(func() {
 			// A click on the LAN's name shows its card (DESIGN §6.7).
 			title := ui.ButtonBase(c.Key("lan-title")).FocusRing(false).Cursor(ui.CursorPointer)
+			// Another page's name takes this one's place one at a time: out,
+			// then in (switchmotion.go).
+			shownLAN, shown, alpha := a.titleStep(c, l.ID, name)
+			pic, iconed := a.lanPic(shownLAN)
+			if iconed {
+				title.Gap(12).AlignItems(ui.Center)
+			}
 			title.Children(func() {
-				ui.Text(c, name).FontSize(20).FontWeight(600).SingleLine().MaxWidth(lanNameWidth)
+				if iconed {
+					// Its picture beside its name (lanicon.go), the two
+					// taking another page's place together.
+					lanIconView(c, pic, lanIconTitle).Opacity(alpha)
+				}
+				ui.Text(c, shown).FontSize(20).FontWeight(600).SingleLine().MaxWidth(lanNameWidth).Opacity(alpha)
 			})
 			if title.Clicked() && !a.shared() {
 				if a.selected == lanCard {
@@ -426,34 +493,63 @@ func (a *app) headerRight(c *ui.Context, p *palette, l *model.LAN) {
 		a.noticePill(c, p)
 		a.ballRects = map[string]ui.Rect{}
 		ui.Row(c).Gap(16).Children(func() {
-			ui.Row(c).Children(func() {
+			// Another page's balls take these ones' place one at a time
+			// (switchmotion.go): this LAN's, or none in the "全部" view.
+			key := "all"
+			if l != nil {
+				key = string(l.ID)
+			}
+			if a.sw.stacks == nil {
+				a.sw.stacks = map[string]stackSrc{}
+			}
+			a.sw.stacks[key] = stackSrc{lan: l, members: a.members, shared: a.shared()}
+			shown, alpha, busy := a.sw.stack.step(key, c.Now())
+			if busy {
+				c.AnimationFrame()
+			}
+			src := a.sw.stacks[shown]
+			stack := ui.Row(c.Key("stack-" + shown))
+			if alpha < 1 {
+				stack.Opacity(alpha)
+			}
+			stack.Children(func() {
+				sl := src.lan
+				if sl == nil {
+					return
+				}
 				// Everyone in the stack keeps one ball: a member's solid, one
 				// who waits for me, or for my invite's answer, dashed (DESIGN
 				// §6.7). Letting someone in fills theirs where it is. On the
 				// canvas of the devices given to me, they are who gave them.
 				i := 0
-				for _, id := range a.members {
-					if a.shared() && id == a.me {
+				for _, id := range src.members {
+					if src.shared && id == a.me {
 						continue
 					}
-					a.stackBall(c, p, l, id, member, i > 0, model.Invited{})
+					a.stackBall(c, p, sl, id, member, i > 0, model.Invited{})
 					i++
 				}
-				for _, id := range l.PendingMembers {
-					a.stackBall(c, p, l, string(id), waitsForMe, i > 0, model.Invited{})
+				for _, id := range sl.PendingMembers {
+					a.stackBall(c, p, sl, string(id), waitsForMe, i > 0, model.Invited{})
 					i++
 				}
-				for _, v := range l.Invited {
-					a.stackBall(c, p, l, string(v.Person), invitedByMe, i > 0, v)
+				for _, v := range sl.Invited {
+					a.stackBall(c, p, sl, string(v.Person), invitedByMe, i > 0, v)
 					i++
 				}
 			})
-			if l.Waiting || a.shared() {
-				// Not in yet: there is no one to invite into it. Nor into
-				// the devices given to me.
-				return
+			// Not in yet: there is no one to invite into it. Nor into the
+			// devices given to me, nor in the "全部" view. Coming and going
+			// with the page, it fades as the balls do; between two LANs it
+			// stays as it is.
+			want := l != nil && !l.Waiting && !a.shared()
+			on, ia, busy := a.sw.invite.step(map[bool]string{false: "0", true: "1"}[want], c.Now())
+			if busy {
+				c.AnimationFrame()
 			}
-			a.inviteButton(c, p)
+			if on == "1" {
+				a.inviteButton(c, p, ia)
+			}
 		})
 	})
 }
@@ -463,9 +559,12 @@ const inviteHeight = 34
 
 // inviteButton is "邀请朋友". My seats full, it is a dashed outline, grey,
 // and a click shows the seats instead (pricing-and-relays §1.5 item 2).
-func (a *app) inviteButton(c *ui.Context, p *palette) {
+func (a *app) inviteButton(c *ui.Context, p *palette, alpha float32) {
 	full := a.seatsFull()
 	btn := ui.ButtonBase(c.Key("invite")).Height(inviteHeight).Padding(0, 16).Gap(8).Radius(999).FocusRing(false)
+	if alpha < 1 {
+		btn.Opacity(alpha)
+	}
 	k := btn.AnimateTo("full", map[bool]float32{false: 0, true: 1}[full], ui.Animation{Duration: 200 * time.Millisecond})
 	fill := p.primary
 	if btn.Hovered() {
@@ -538,7 +637,8 @@ func (a *app) headerLine(c *ui.Context, p *palette) {
 		// New words take the old ones' place at once and fade in: two
 		// lines fading across each other in one place read as a muddle.
 		t := ui.Text(c.Key("header-line-"+text), text).FontSize(12).TextColor(ink).SingleLine()
-		t.Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{Y: -3}})
+		// Gone with the page, it fades out where it was (switchmotion.go).
+		t.Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{Y: -3}, Exit: &ui.Motion{}})
 	})
 }
 
@@ -575,24 +675,42 @@ const lanNameWidth = 420
 // another view's, shows at once.
 func (a *app) summaryLine(c *ui.Context, p *palette) {
 	dot, line := a.summary(p)
-	of := fmt.Sprint(a.all(), a.shared(), a.lan)
-	if a.lineOf != of {
-		a.lineWords, a.lineOf = swapper{}, of
-	}
-	// The dot's color goes with the words it is shown with.
+	a.lineView(c, p, dot, line)
+}
+
+// lineView is the line under the title: its dot and line, the dot's color
+// going with the words it is shown with. Another LAN's line, or another
+// view's, takes this one's place one at a time too, with the title
+// (switchmotion.go). With no words, the dot goes with them.
+func (a *app) lineView(c *ui.Context, p *palette, dot ui.Color, line string) {
 	want := map[bool]string{false: "0", true: "1"}[dot == p.ok] + line
 	shown, alpha, busy := a.lineWords.step(want, c.Now())
 	if busy {
 		c.AnimationFrame()
+	}
+	if shown != a.sw.lineShown {
+		a.sw.lineBefore, a.sw.lineShown = a.sw.lineShown, shown
 	}
 	if shown[:1] == "1" {
 		dot = p.ok
 	} else {
 		dot = p.ink3
 	}
+	dotAlpha := float32(1)
+	switch {
+	case shown[1:] == "":
+		dotAlpha = 0
+	case want[1:] == "" || len(a.sw.lineBefore) < 2:
+		// Going to no words, or coming from none: the dot fades with the
+		// words.
+		dotAlpha = alpha
+	}
 	ui.Row(c).Height(statusLine).Gap(8).Children(func() {
 		d := ui.Box(c.Key("summary-dot")).Size(7, 7).Radius(999).Background(dot).Shadow(0, 0, 0, 3, dot.Alpha(0.18))
 		d.Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Colors: true})
+		if dotAlpha < 1 {
+			d.Opacity(dotAlpha)
+		}
 		ui.Text(c.Key("summary-line"), shown[1:]).FontSize(13).TextColor(p.ink2).Opacity(alpha)
 	})
 }

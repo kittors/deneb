@@ -1422,3 +1422,30 @@ button {
 .out-btn:active {
   transform: scale(0.96);
 }
+
+/* A LAN's picture (lanicon.ts, design/plan/m7/switch-motion.md §5): a preset
+   whole, the owner's own in a rounded square; in the sidebar where its
+   members' balls were, beside the title over the canvas. */
+.lan-ic {
+  display: block;
+  flex: none;
+  width: var(--s);
+  height: var(--s);
+  object-fit: contain;
+  user-select: none;
+}
+.lan-ic.own {
+  object-fit: cover;
+  border-radius: var(--radius-8);
+}
+.head .title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+}
+.head .title-ic {
+  display: flex;
+}
+.head .title-ic[hidden] {
+  display: none;
+}

@@ -87,6 +87,17 @@ export interface LANView {
   approveMembers?: boolean;
   pending?: boolean;
   mode?: LANMode;
+  // Its picture (M7, the feature lanIcon): a preset's name, or the
+  // owner's own (base64 PNG).
+  icon?: LANIcon;
+}
+
+// LANIcon is a LAN's picture (design/plan/m7/switch-motion.md §5): one of
+// the presets by name (proto.LANIconPresets), or the owner's own, a 128×128
+// PNG.
+export interface LANIcon {
+  preset?: string;
+  image?: string;
 }
 
 export interface LoginInfo {
@@ -202,6 +213,8 @@ export interface InvitePreview {
   // while the link still works, or to someone in it already.
   members?: Person[];
   devices?: number;
+  // The LAN's picture (M7).
+  icon?: LANIcon;
 }
 
 export interface UserView {

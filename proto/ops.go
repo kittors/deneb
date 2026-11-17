@@ -59,6 +59,10 @@ type OpArgs struct {
 	Confirm   string `json:"confirm,omitempty"`
 	DryRun    bool   `json:"dryRun,omitempty"`
 	OwnedLANs string `json:"ownedLANs,omitempty"`
+
+	// Icon is lan.setIcon's new picture: one of LANIconPresets by name, or
+	// a picture. (M7)
+	Icon *LANIcon `json:"icon,omitempty"`
 }
 
 // account.delete's choices for the LANs the person owns with others in.
@@ -263,6 +267,12 @@ const (
 	// changes nothing; the card says 正在检查 and then what was found, in
 	// the versions that follow.
 	OpRelayCheck OpType = "relay.check"
+
+	// M7, FeatureLANIcon.
+
+	// LAN, Icon: a preset of LANIconPresets, or a picture, which the server
+	// takes as NormalizeLANIcon does. The LAN's owner only.
+	OpLANSetIcon OpType = "lan.setIcon"
 )
 
 // OpResult is the answer to an op that went through. One that did not

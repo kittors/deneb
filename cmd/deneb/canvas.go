@@ -359,16 +359,26 @@ func (a *app) canvas(c *ui.Context, p *palette) {
 	if a.start.IsZero() {
 		a.start = now
 	}
-	if !a.all() && a.snap.LAN(a.lan) == nil {
-		a.emptyCanvas(c, p)
-		return
-	}
-	if l := a.snap.LAN(a.lan); l != nil && l.Waiting {
-		a.waitingCanvas(c, p, l)
+	// No LAN yet, or one I wait to be let into: words instead of devices,
+	// taking over from the page before as a page of devices does
+	// (switchmotion.go).
+	board := a.boardKind()
+	a.boardStep(now, board)
+	if board != "" {
+		a.otherBoard(c, p, board, w, h, now)
 		return
 	}
 	a.place()
+	if was := a.sw.carry; was != nil && a.cw > 0 {
+		// Laid out: the new page takes over from the old (switchmotion.go).
+		a.sw.carry = nil
+		a.carryOver(c, was)
+	}
 	a.sweep(c, now)
+	a.sweepGhosts(now)
+	if !a.all() {
+		a.regionGhosts(c)
+	}
 	box := ui.Box(c).Grow(1)
 	back := now.Before(a.unclipUntil)
 	if a.aim.d == nil && !back {
@@ -398,6 +408,9 @@ func (a *app) canvas(c *ui.Context, p *palette) {
 		if a.all() {
 			a.regions(c, p)
 		}
+		// What only the page before had, fading out under the rest.
+		a.ghostsView(c, p, w, h)
+		a.boardOut(c, p, now)
 		// The relays under the devices, but the one in the hand, as the frame
 		// began: one the hand picks up in this frame floats from the next.
 		shows, up := map[*relayStop]bool{}, map[*relayStop]bool{}
@@ -419,9 +432,9 @@ func (a *app) canvas(c *ui.Context, p *palette) {
 		}
 		a.cardLayer(c, p)
 		a.toastView(c, p, w, h, now)
-		if !a.all() {
-			a.trayView(c, p, w, h, now)
-		}
+		// In the "全部" view too, which has no tray: going there, the tray
+		// sinks and fades as it does when it empties.
+		a.trayView(c, p, w, h, now)
 		// Built last, so that they float over everything: the ones in the
 		// hand or on their way, and any that came out of the tray just now.
 		for _, d := range slices.Clone(a.devices) {
@@ -506,6 +519,9 @@ func (a *app) deviceView(c *ui.Context, p *palette, d *device, w, h float32) {
 		c.After(d.popped.Sub(c.Now()))
 	}
 	going := !d.gone.IsZero()
+	// Only on the page before: it fades out where it was, deaf to the hand
+	// (switchmotion.go).
+	ghost := d.ghost
 	col := ui.Column(c.Key(d.key())).Absolute().Left(d.base.X - 70).Top(d.base.Y - tileSize/2).Width(140).AlignItems(ui.Center).Gap(8)
 	// No Snap and no throw: a device lands where the hand lets go, as a
 	// thing set down on a table; what happens next depends on that point.
@@ -521,6 +537,10 @@ func (a *app) deviceView(c *ui.Context, p *palette, d *device, w, h float32) {
 		}
 	}
 	opts := ui.DraggableOptions{Bounds: bounds, Rigid: true, Animation: ui.Snappy}
+	if d.shifting {
+		// On both pages: to its place on the new one, as a layout moves.
+		opts.Animation = ui.Smooth
+	}
 	if landing {
 		// On its way into the tray, to the slot the tray opened for it,
 		// wherever that is now. The hand cannot catch it on the way.
@@ -537,8 +557,12 @@ func (a *app) deviceView(c *ui.Context, p *palette, d *device, w, h float32) {
 			c.After(left)
 		}
 	}
+	if ghost {
+		col.PassThrough()
+	}
 	col.Draggable(&d.off, opts)
-	if _, _, ok := col.DragEnded(); ok && !landing && a.all() {
+	if _, _, ok := col.DragEnded(); ok && ghost {
+	} else if ok && !landing && a.all() {
 		a.droppedInAll(c, d, w, h)
 	} else if ok && !landing {
 		if a.dropOnBall(c, d) {
@@ -562,7 +586,7 @@ func (a *app) deviceView(c *ui.Context, p *palette, d *device, w, h float32) {
 	}
 	d.dragging = col.Dragging()
 	live := col.DragOffset()
-	if a.all() {
+	if a.all() && !ghost {
 		a.heldInAll(d, live, bounds)
 	}
 	switch {
@@ -573,20 +597,22 @@ func (a *app) deviceView(c *ui.Context, p *palette, d *device, w, h float32) {
 		d.off = ui.Point{}
 		c.AnimationFrame()
 	case d.dragging:
-		d.flying = false
+		d.flying, d.shifting = false, false
 	case d.flying && dist(live, d.off) < 0.75:
 		d.flying = false
+	case d.shifting && dist(live, d.off) < 0.75:
+		d.shifting = false
 	}
 	if landing && (d.aimed && dist(live, d.off) < 0.75 || c.Now().Sub(d.leaving) > 1200*time.Millisecond) {
 		// In its slot, as large as the tray's tiles: the tray takes it.
 		a.landed(c, d)
 	}
-	if !d.dragging && !d.flying && !landing && !first {
+	if !d.dragging && !d.flying && !d.shifting && !landing && !first && !ghost {
 		d.rest = d.at()
 	}
 	// Step aside while something else is dragged over this device.
 	push := ui.Point{}
-	if fp, who, ok := a.dragged(); ok && who != any(d) && !d.dragging && !d.flying && !landing && !a.selfInAll(who) {
+	if fp, who, ok := a.dragged(); ok && !ghost && who != any(d) && !d.dragging && !d.flying && !landing && !a.selfInAll(who) {
 		push, d.way = makeRoom(a.foot(d, d.at()), fp, d.way, a.roomAt(d, d.at(), a.footOf(d), w, h))
 	} else {
 		d.way = ui.Point{}
@@ -615,8 +641,12 @@ func (a *app) deviceView(c *ui.Context, p *palette, d *device, w, h float32) {
 		faded = 1
 	}
 	d.faded = col.AnimateTo("faded", faded, ui.Smooth)
-	if d.faded > 0 {
-		col.Opacity(1 - 0.65*d.faded)
+	// Fading with the page: in a moment after the old is out, or out
+	// where it is (switchmotion.go).
+	d.vis = visibility(col, d.fresh, ghost)
+	d.fresh = false
+	if d.faded > 0 || d.vis < 1 {
+		col.Opacity((1 - 0.65*d.faded) * d.vis)
 	}
 	// Its link is cut while I refuse its owner on this computer.
 	cut := float32(0)
@@ -624,7 +654,7 @@ func (a *app) deviceView(c *ui.Context, p *palette, d *device, w, h float32) {
 		cut = 1
 	}
 	d.cut = col.AnimateTo("cut", cut, ui.Animation{Duration: 320 * time.Millisecond})
-	if col.Clicked() {
+	if col.Clicked() && !ghost {
 		if d.pending && !d.mine {
 			// Waiting for me: a click lets it in (DESIGN §6.7).
 			a.approve(c, d, true)
@@ -655,6 +685,8 @@ func (a *app) deviceView(c *ui.Context, p *palette, d *device, w, h float32) {
 	pose := ui.Pose{}
 	tileAnim := ui.Snappy
 	switch {
+	case ghost:
+		// As it was: only fading.
 	case pop:
 		pose = ui.Pose{Scale: 0.5, Fade: 1}
 	case going:
@@ -710,10 +742,19 @@ func (a *app) deviceView(c *ui.Context, p *palette, d *device, w, h float32) {
 			a.tileBadges(c, p, d, col.Hovered())
 		})
 		name := ui.Column(c).AlignItems(ui.Center)
-		if a.all() && d.id == a.self {
-			// Over its tile in the "全部" view, clear of the links that go
-			// down to the regions under it (scene 3).
+		// Over its tile in the "全部" view, clear of the links that go down
+		// to the regions under it (scene 3). Going over or under as the
+		// page changes, it fades out where it was, then in where it goes:
+		// it never crosses the tile.
+		wantUp := a.all() && d.id == a.self
+		nameUp, nameAlpha := a.namePlace(c, d, wantUp)
+		// Fading out to go over or under, it keeps the words it had.
+		outgoing := nameUp != wantUp
+		if nameUp {
 			name.Absolute().Left(0).Right(0).Bottom(tileSize + 10)
+		}
+		if nameAlpha < 1 {
+			name.Opacity(nameAlpha)
 		}
 		if first || landing || armed || up || pop || going || a.selfOverRegion(d) {
 			// (This computer held over a region in the "全部" view: its name
@@ -735,12 +776,35 @@ func (a *app) deviceView(c *ui.Context, p *palette, d *device, w, h float32) {
 				ui.Text(c, d.name).FontSize(13).FontWeight(500).SingleLine().MaxWidth(nameWidth)
 			}
 			status, ink := a.status(d), p.ink2
+			if outgoing && d.nameWas != "" {
+				status = d.nameWas
+			} else {
+				d.nameWas = status
+			}
+			lineAlpha := float32(1)
 			if hint := a.dropHint(d, live); hint != "" {
 				// In the hand in the "全部" view, its second line says what
-				// letting go does (scene 3).
+				// letting go does (scene 3), at once.
 				status, ink = hint, p.primary
+				d.line = swapper{}
+			} else {
+				// New words take the old ones' place one at a time (DESIGN
+				// §6.5), as it pauses, connects or goes offline; a count
+				// that goes up every second just changes.
+				key := lineKey(status)
+				shown, la, busy := d.line.step(key, c.Now())
+				if busy {
+					c.AnimationFrame()
+				}
+				if shown == key || d.lineText == "" {
+					d.lineText = status
+				}
+				status, lineAlpha = d.lineText, la
 			}
 			st := ui.Text(c, status).FontSize(12).TextColor(ink).SingleLine().MaxWidth(nameWidth)
+			if lineAlpha < 1 {
+				st.Opacity(lineAlpha)
+			}
 			if !d.using.IsZero() && linked(d.path) {
 				// The count goes up every second, its digits of one width.
 				st.FontFeatures("tnum")
@@ -801,15 +865,27 @@ func deviceTilePicture(c *ui.Context, p *palette, kind string, col ui.Color, siz
 }
 
 func (a *app) relayView(c *ui.Context, p *palette, r *relayStop, w, h float32) {
-	r.side = a.relayLabelSide(r)
+	if r.leftAt.IsZero() || r.side == "" {
+		// Going, its name stays on its side as it fades with it.
+		r.side = a.relayLabelSide(r)
+	}
 	if r.flight != nil && a.relayFlying(c, p, r) {
 		return
 	}
 	// Mine, dragged in: the hand can take it into the tray (M4).
 	out := a.relayRemovable(r)
 	el := ui.Box(c.Key("relay\x00"+string(r.id))).Absolute().Left(r.base.X-20).Top(r.base.Y-20).Size(40, 40)
-	el.Draggable(&r.off, ui.DraggableOptions{Bounds: a.dragBounds(r.base, out, w, h), Rigid: true, Animation: ui.Snappy})
-	if _, _, ok := el.DragEnded(); ok && out && a.overTray(r.at(), w, h) {
+	anim := ui.Snappy
+	if r.shifting {
+		// On both pages: to its place on the new one (switchmotion.go).
+		anim = ui.Smooth
+	}
+	if r.ghost {
+		el.PassThrough()
+	}
+	el.Draggable(&r.off, ui.DraggableOptions{Bounds: a.dragBounds(r.base, out, w, h), Rigid: true, Animation: anim})
+	if _, _, ok := el.DragEnded(); ok && r.ghost {
+	} else if ok && out && a.overTray(r.at(), w, h) {
 		// Let go over the tray: this LAN no longer uses it (DESIGN §6.12).
 		r.live = r.at()
 		a.relayOut(c, r.id)
@@ -823,8 +899,11 @@ func (a *app) relayView(c *ui.Context, p *palette, r *relayStop, w, h float32) {
 	}
 	live := el.DragOffset()
 	r.dragging = el.Dragging()
+	if r.dragging || r.shifting && dist(live, r.off) < 0.75 {
+		r.shifting = false
+	}
 	push := ui.Point{}
-	if fp, who, ok := a.dragged(); ok && who != any(r) && !el.Dragging() {
+	if fp, who, ok := a.dragged(); ok && !r.ghost && who != any(r) && !el.Dragging() {
 		push, r.way = makeRoom(r.footprint(r.at()), fp, r.way, a.roomAt(r, r.at(), r.footprint, w, h))
 	} else {
 		r.way = ui.Point{}
@@ -835,7 +914,12 @@ func (a *app) relayView(c *ui.Context, p *palette, r *relayStop, w, h float32) {
 	el.Translate(px, py)
 	r.live = ui.Point{X: r.base.X + live.X + px, Y: r.base.Y + live.Y + py}
 	el.Cursor(ui.CursorGrab)
-	if el.Clicked() && a.snap.Can(model.FeatureRelays) {
+	r.vis = visibility(el, r.fresh, r.ghost)
+	r.fresh = false
+	if r.vis < 1 {
+		el.Opacity(r.vis)
+	}
+	if el.Clicked() && !r.ghost && a.snap.Can(model.FeatureRelays) {
 		// Its card (M4).
 		a.openRelay(r.id)
 	}
@@ -843,12 +927,17 @@ func (a *app) relayView(c *ui.Context, p *palette, r *relayStop, w, h float32) {
 	off := el.AnimateTo("down", map[bool]float32{false: 0, true: 1}[r.down], ui.Animation{Duration: 300 * time.Millisecond})
 	// It pops in as a link comes to go through it, and shrinks away as the
 	// last one goes (DESIGN scene 1); the hand cannot take one going.
-	pop, going := r.popFirst, !r.leftAt.IsZero()
+	// The frame it pops in in, however many times that frame is built:
+	// a pose is the last build's, and the first must show it small.
+	pop := r.popFirst || !r.poppedAt.IsZero() && !c.Now().After(r.poppedAt)
+	going := !r.leftAt.IsZero()
 	r.popFirst = false
 	popping := !r.poppedAt.IsZero() && c.Now().Sub(r.poppedAt) < 700*time.Millisecond
-	anim := ui.Snappy
+	anim = ui.Snappy
 	pose := ui.Pose{}
 	switch {
+	case r.ghost:
+		pop, going, popping = false, false, false
 	case pop:
 		pose = ui.Pose{Scale: 0.5, Fade: 1}
 	case going:
@@ -880,6 +969,10 @@ func (a *app) relayView(c *ui.Context, p *palette, r *relayStop, w, h float32) {
 			name.AnimatePose(ui.Pose{Fade: 1}, ui.Animation{Duration: 120 * time.Millisecond})
 		case popping:
 			name.AnimatePose(ui.Pose{}, ui.Animation{Duration: 220 * time.Millisecond, Delay: 60 * time.Millisecond})
+		default:
+			// At rest too, so that going it fades from where it is: a
+			// pose first asked for is there at once.
+			name.AnimatePose(ui.Pose{}, ui.Animation{Duration: 120 * time.Millisecond})
 		}
 	})
 }

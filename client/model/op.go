@@ -22,6 +22,9 @@ const (
 	// LAN (M7, design/plan/m7/mydevices.md §6.2).
 	OpServiceRemove OpKind = "service.remove" // Device, Service
 	OpDeviceRefuse  OpKind = "device.refuse"  // Device, Person, Refuse
+	// OpLANSetIcon gives a LAN another picture, its owner only (M7,
+	// FeatureLANIcon).
+	OpLANSetIcon OpKind = "lan.setIcon" // LAN, Icon
 
 	// M2 (DESIGN §6.7–§6.9). lan.invite also takes a Person, inviting them
 	// by name; invite.accept and invite.decline take an Invitation instead
@@ -99,6 +102,10 @@ type Op struct {
 	Avatar     []byte
 	DevKind    string // device.setKind
 	Invitation string // invite.accept, invite.decline: an Invitation's ID
+
+	// Icon is lan.setIcon's new picture: a preset's name, or a picture
+	// (M7).
+	Icon LANIcon
 
 	// M3. service.set takes Share (or Person, for a share the view has not
 	// heard the id of) instead of LAN, to switch a service in a share.
@@ -279,6 +286,14 @@ func (s *Snapshot) With(op Op) *Snapshot {
 		}
 		n, nl := s.withLAN(op.LAN)
 		nl.Name = op.Name
+		return n
+	case OpLANSetIcon:
+		l := s.LAN(op.LAN)
+		if l == nil || op.Icon.None() {
+			return s
+		}
+		n, nl := s.withLAN(op.LAN)
+		nl.Icon = LANIcon{Preset: op.Icon.Preset, Image: slices.Clone(op.Icon.Image)}
 		return n
 	case OpLANPause:
 		l := s.LAN(op.LAN)

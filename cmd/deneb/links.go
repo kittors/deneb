@@ -214,6 +214,11 @@ func (a *app) paintLinks(pt *ui.Painter, r ui.Rect, p *palette, grow map[string]
 	a.beamsAt = now
 	me := a.device(a.self)
 	if me == nil {
+		// The page before's links fade out where they were, though the
+		// new page has no device (switchmotion.go).
+		me = a.ghostSelf()
+	}
+	if me == nil {
 		return
 	}
 	o := ui.Point{X: r.X, Y: r.Y}
@@ -221,14 +226,23 @@ func (a *app) paintLinks(pt *ui.Painter, r ui.Rect, p *palette, grow map[string]
 	if p.dark {
 		glow = 0.26
 	}
-	for _, d := range a.devices {
+	devices := a.devices
+	if len(a.sw.ghosts) > 0 {
+		// The links of the page before fade with their devices, as they
+		// were (switchmotion.go).
+		devices = append(append([]*device{}, a.sw.ghosts...), a.devices...)
+	}
+	for _, d := range devices {
 		g, ok := grow[d.id]
-		if d == me || !ok || g <= 0 || d.unplaced || d.pending && d.leaving.IsZero() {
+		if d.ghost {
+			g, ok = 1, true
+		}
+		if d == me || !ok || g <= 0 || d.unplaced || d.pending && d.leaving.IsZero() || d.vis <= 0 {
 			continue
 		}
 		// Dimmed with its region while another LAN has the focus: its light
 		// goes on flowing, faintly (scene 3).
-		fk := 1 - 0.65*d.faded
+		fk := (1 - 0.65*d.faded) * d.vis
 		// This computer held up in the header: every link of its all but
 		// goes, rather than run up there (DESIGN §6.11).
 		fk *= 1 - 0.92*me.up
@@ -239,11 +253,20 @@ func (a *app) paintLinks(pt *ui.Painter, r ui.Rect, p *palette, grow map[string]
 				d.oldGeo = nil
 			}
 		}
-		geo := a.geo(d, me.live, o)
+		geo := d.ghostGeo
+		if !d.ghost || geo == nil {
+			geo = a.geo(d, me.live, o)
+		}
 		cv := geo.cv
 		L := cv.length()
 		if !linked(d.path) {
 			a.paintWaiting(pt, geo, d, g, fk, p, now, o)
+			// Its light fades out as it stops, rather than go at once
+			// (switchmotion.go: the LAN's switch, a device gone offline).
+			if k := float32(now.Sub(d.pathAt)) / float32(fadeTime); !d.pathAt.IsZero() && k < 1 && linked(d.fromPath) {
+				a.paintBeams(pt, d, me, geo, fk*(1-ui.EaseOut(max(0, k))), glow, dt, o)
+				pt.AnimationFrameRate(60)
+			}
 			continue
 		}
 		if g < 1 {
@@ -293,48 +316,8 @@ func (a *app) paintLinks(pt *ui.Painter, r ui.Rect, p *palette, grow map[string]
 		if d.cut > 0 {
 			pt.StrokePath(&geo.dots, 3, p.track.Alpha(fk*min(1, 2.2*d.cut)))
 		}
-		run := a.beams[d.id]
-		if run == nil {
-			run = newRun(d.id, L, geo.relay, !d.joined.IsZero())
-			a.beams[d.id] = run
-		}
 		light := fk * (1 - 0.75*d.dim) * (1 - d.up) * (1 - d.cut)
-		ca, cb := a.people[me.owner].color, a.people[d.owner].color
-		for i := range run {
-			run[i] = math.Mod(run[i]+dt*beamSpeed, cycle(d.id, i, L, geo.relay))
-			if light <= 0 {
-				continue
-			}
-			head, tail, ok := beamAt(run[i], i, L, cv.mid)
-			if !ok {
-				continue
-			}
-			s0, s1 := max(0, min(head, tail)), min(L, max(head, tail))
-			if s1-s0 < 1 {
-				continue
-			}
-			hp, tp := cv.at(max(0, min(L, head))), cv.at(max(0, min(L, tail)))
-			col := ca.Mix(cb, max(0, min(1, head/L)))
-			angle := float32(math.Atan2(float64(hp.X-tp.X), float64(-(hp.Y-tp.Y))) * 180 / math.Pi)
-			// The painter copies a gradient's stops as it draws, so the three
-			// strokes fill the same buffers in turn, frame after frame.
-			beam := func(k int, alpha float32, hot bool) ui.LinearGradient {
-				alpha *= light
-				end := col.Alpha(alpha)
-				if hot {
-					end = col.Mix(white, 0.55).Alpha(light)
-				}
-				st := &a.beamStops[k]
-				*st = [3]ui.GradientStop{{Color: col.Alpha(0), At: 0}, {Color: col.Alpha(alpha * 0.85), At: 0.75}, {Color: end, At: 1}}
-				return ui.LinearGradient{Angle: angle, Stops: st[:]}
-			}
-			// One path for the three strokes: the painter flattens it as each
-			// stroke is drawn, so it is reused for the next beam.
-			path := cv.pathInto(&a.beamPath, s0, s1, o)
-			pt.StrokePathGradient(path, 9, beam(0, glow*0.5, false))
-			pt.StrokePathGradient(path, 5, beam(1, glow, false))
-			pt.StrokePathGradient(path, 2, beam(2, 1, true))
-		}
+		a.paintBeams(pt, d, me, geo, light, glow, dt, o)
 		if k := float32(now.Sub(d.closedAt)) / float32(closedRun); d.closed != "" && k >= 0 && k < 1 {
 			a.paintClosed(pt, cv, L, k, fk*(1-0.65*d.dim), glow, o)
 		}
@@ -451,4 +434,59 @@ func bendFor(id string) float32 {
 		return 0.06
 	}
 	return 0.08
+}
+
+// paintBeams draws the light running along a device's link, light as
+// strong as it is, and moves it on by dt.
+func (a *app) paintBeams(pt *ui.Painter, d, me *device, geo *linkGeo, light, glow float32, dt float64, o ui.Point) {
+	cv := geo.cv
+	L := cv.length()
+	run := a.beams[d.id]
+	if d.ghost {
+		run = d.ghostBeam
+	}
+	if run == nil {
+		run = newRun(d.id, L, geo.relay, !d.joined.IsZero())
+		if d.ghost {
+			d.ghostBeam = run
+		} else {
+			a.beams[d.id] = run
+		}
+	}
+	ca, cb := a.people[me.owner].color, a.people[d.owner].color
+	for i := range run {
+		run[i] = math.Mod(run[i]+dt*beamSpeed, cycle(d.id, i, L, geo.relay))
+		if light <= 0 {
+			continue
+		}
+		head, tail, ok := beamAt(run[i], i, L, cv.mid)
+		if !ok {
+			continue
+		}
+		s0, s1 := max(0, min(head, tail)), min(L, max(head, tail))
+		if s1-s0 < 1 {
+			continue
+		}
+		hp, tp := cv.at(max(0, min(L, head))), cv.at(max(0, min(L, tail)))
+		col := ca.Mix(cb, max(0, min(1, head/L)))
+		angle := float32(math.Atan2(float64(hp.X-tp.X), float64(-(hp.Y-tp.Y))) * 180 / math.Pi)
+		// The painter copies a gradient's stops as it draws, so the three
+		// strokes fill the same buffers in turn, frame after frame.
+		beam := func(k int, alpha float32, hot bool) ui.LinearGradient {
+			alpha *= light
+			end := col.Alpha(alpha)
+			if hot {
+				end = col.Mix(white, 0.55).Alpha(light)
+			}
+			st := &a.beamStops[k]
+			*st = [3]ui.GradientStop{{Color: col.Alpha(0), At: 0}, {Color: col.Alpha(alpha * 0.85), At: 0.75}, {Color: end, At: 1}}
+			return ui.LinearGradient{Angle: angle, Stops: st[:]}
+		}
+		// One path for the three strokes: the painter flattens it as each
+		// stroke is drawn, so it is reused for the next beam.
+		path := cv.pathInto(&a.beamPath, s0, s1, o)
+		pt.StrokePathGradient(path, 9, beam(0, glow*0.5, false))
+		pt.StrokePathGradient(path, 5, beam(1, glow, false))
+		pt.StrokePathGradient(path, 2, beam(2, 1, true))
+	}
 }

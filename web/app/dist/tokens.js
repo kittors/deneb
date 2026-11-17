@@ -58,7 +58,8 @@ export default {
       "regionIn": 420,
       "regionReach": 72,
       "regionSide": 28,
-      "regionTop": 44
+      "regionTop": 44,
+      "switchStretch": 3
     },
     "canvas.go": {
       "cardWidth": 300,
@@ -101,6 +102,15 @@ export default {
     },
     "glyphs.go": {
       "starTightAspect": 0.7636666666666667
+    },
+    "lanicon.go": {
+      "lanIconCard": 40,
+      "lanIconCell": 48,
+      "lanIconChoice": 36,
+      "lanIconPreview": 64,
+      "lanIconRegion": 18,
+      "lanIconRow": 18,
+      "lanIconTitle": 28
     },
     "links.go": {
       "beamSpeed": 150,

@@ -264,7 +264,7 @@ func (a *app) load() {
 	a.relays = nil
 	if l != nil || a.all() {
 		for _, sp := range a.spots() {
-			d := &device{facts: facts{id: sp.key, dev: sp.dev, lan: sp.lan}}
+			d := &device{facts: facts{id: sp.key, dev: sp.dev, lan: sp.lan}, vis: 1}
 			if at, ok := a.places.get(a.lan, d.id); ok {
 				d.base, d.rest = at, at
 			} else {
@@ -288,6 +288,7 @@ func (a *app) load() {
 	a.syncStops()
 	for _, r := range a.relays {
 		r.shown = a.relayLinked(r) || a.kept(r)
+		r.vis = 1
 	}
 }
 
@@ -299,11 +300,21 @@ func (a *app) show(c *ui.Context, id model.LANID, pop bool) {
 	if id == a.lan && !a.myDevicesOpen || id != allLANs && a.snap.LAN(id) == nil {
 		return
 	}
+	// The canvas as it shows now, for the new one to take over from
+	// (switchmotion.go): only from a canvas, not from My Devices, whose
+	// page fades out as a whole.
+	was := a.captureCanvas()
 	a.setMyDevices(false)
 	a.keepPlaces()
 	a.lan = id
 	a.selected, a.more = "", false
 	a.load()
+	a.sw.carry = nil
+	if was != nil && !pop {
+		a.sw.carry = was
+	} else {
+		a.sw.ghosts, a.sw.ghostRelays = nil, nil
+	}
 	// When the canvas switched, to the millisecond, against the engine's
 	// timing of the connections it must not touch (acceptance step 4).
 	name := "全部"
@@ -351,13 +362,16 @@ func (a *app) reconcile(c *ui.Context) {
 	}
 	if ls := a.shownLANs(); a.all() && len(ls) < 2 {
 		// Down to one LAN, or none: "全部" goes from the sidebar, and the
-		// canvas shows the one there is.
+		// canvas shows the one there is, taking over as a click on it would
+		// (switchmotion.go).
+		was := a.captureCanvas()
 		a.lan = ""
 		if len(ls) == 1 {
 			a.lan = ls[0].ID
 		}
 		a.selected, a.more = "", false
 		a.load()
+		a.sw.carry = was
 		return
 	}
 	l := a.snap.LAN(a.lan)
@@ -366,13 +380,15 @@ func (a *app) reconcile(c *ui.Context) {
 	}
 	if l == nil && !a.all() {
 		// The LAN is gone, left or deleted: the canvas shows the first one
-		// there is.
+		// there is, or none, taking over from it as a click would.
+		was := a.captureCanvas()
 		a.lan = ""
 		if len(a.snap.LANs) > 0 {
 			a.lan = a.snap.LANs[0].ID
 		}
 		a.selected, a.more = "", false
 		a.load()
+		a.sw.carry = was
 		return
 	}
 	in := map[string]bool{}

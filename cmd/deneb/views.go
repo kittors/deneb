@@ -327,7 +327,6 @@ func (a *app) emptyCanvas(c *ui.Context, p *palette) {
 		ui.Text(c, "还没有局域网").FontSize(15).FontWeight(600).TextColor(p.ink)
 		ui.Text(c, "点左边的「新建局域网」，或者打开朋友发来的邀请链接").FontSize(13).TextColor(p.ink2)
 	})
-	a.toastView(c, p, a.cw, a.ch, c.Now())
 }
 
 // ---- A new LAN ------------------------------------------------------------------------

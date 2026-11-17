@@ -122,8 +122,29 @@ type device struct {
 	closed               string
 	closedAt, closedSeen time.Time
 	// elem keys its element while it moves from region to region in the
-	// "全部" view (rekey): the element, and its springs, stay with it.
+	// "全部" view (rekey), or from page to page (switchmotion.go): the
+	// element, and its springs, stay with it.
 	elem string
+	// As the sidebar goes from one page to another (switchmotion.go): vis
+	// is how opaque it is; fresh, it comes with the new page and fades in;
+	// ghost, only the old page had it, and it fades out where it was, from
+	// ghostAt, its link as it was (ghostGeo, ghostBeam); shifting, both
+	// have it, and it moves to its place on the new one. nameUp: its name
+	// shows over its tile (this computer in the "全部" view), nameSet once
+	// known; going over or under, it fades out (nameOut), then in (nameIn).
+	vis             float32
+	fresh, ghost    bool
+	shifting        bool
+	ghostAt         time.Time
+	ghostGeo        *linkGeo
+	ghostBeam       *beamRun
+	nameUp, nameSet bool
+	nameOut, nameIn time.Time
+	nameWas         string // the line under its name as it last showed
+	// line is the line under its name, one at a time; lineText the words
+	// it shows.
+	line     swapper
+	lineText string
 }
 
 // key is what its element is keyed by: its id as it came onto the canvas.
@@ -180,6 +201,12 @@ type relayStop struct {
 	leftAt   time.Time
 	// flight: on its way between the tray and the canvas (M4).
 	flight *relayFlight
+	// As pages change (switchmotion.go), as a device does: vis, fresh,
+	// ghost from ghostAt, shifting; matched, both pages have it.
+	vis                    float32
+	fresh, ghost, shifting bool
+	matched                bool
+	ghostAt                time.Time
 }
 
 // notice is the toast: what just happened, to which device, and its undo.
@@ -506,6 +533,13 @@ type app struct {
 	// fake world: someone takes a device out elsewhere, the network changes,
 	// an invite comes.
 	sims map[ui.Key]func(c *ui.Context, a *app)
+
+	// The window going from page to page (switchmotion.go).
+	sw switchMotion
+	// The dialog of a LAN's picture, open (lanicon.go), and the LANs' own
+	// pictures, decoded, by their bytes' hash.
+	lanIconEdit *lanIconEditor
+	lanImages   map[uint64]ui.ImageSource
 }
 
 // newApp returns the view of the store's world, with things resting where

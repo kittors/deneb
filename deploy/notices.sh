@@ -2,8 +2,9 @@
 # Writes THIRD_PARTY_NOTICES to stdout: the licenses of everything a build
 # links besides Deneb's own code, for the GOOS and GOARCH in the
 # environment: Go itself, every Go module the packages import (their
-# LICENSE, COPYING, NOTICE and PATENTS files), and the extra files -f
-# names (wintun.dll's license). Deneb's own license is LICENSE at the
+# LICENSE, COPYING, NOTICE and PATENTS files), the files of others the
+# packages embed (cmd/deneb's preset pictures of LANs), and the extra files
+# -f names (wintun.dll's license). Deneb's own license is LICENSE at the
 # root of the repository; packages ship both.
 #
 #   GOOS=windows GOARCH=amd64 deploy/notices.sh [-tags denebtest] \
@@ -58,6 +59,16 @@ section "Go $(cd "$root" && go env GOVERSION | sed 's/^go//') (the runtime and s
 	fi
 	# shellcheck disable=SC2086 # one file per line, no spaces in module cache paths
 	section "$path $version" $files
+done
+
+# Files in the repository that are not Deneb's own, with their license
+# beside them, for the packages that embed them.
+for pkg in "$@"; do
+	case $pkg in
+	./cmd/deneb | cmd/deneb | github.com/kittors/deneb/cmd/deneb)
+		section "Fluent Emoji, by Microsoft (the LANs' preset pictures, cmd/deneb/lan-icons)" "$root/cmd/deneb/lan-icons/LICENSE"
+		;;
+	esac
 done
 
 printf '%s' "$extra" | while IFS= read -r spec; do

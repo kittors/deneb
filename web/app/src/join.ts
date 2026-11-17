@@ -11,6 +11,7 @@ import { colorIndex } from './model.ts';
 import tokens from './tokens.js';
 import { after, now, recording, wait } from './clock.ts';
 import { appIcon, esc, spaced, star } from './download.ts';
+import { lanIconHTML } from './lanicon.ts';
 import { go } from './router.ts';
 
 export interface JoinOptions {
@@ -775,7 +776,11 @@ export function mountJoin(root: HTMLElement, o: JoinOptions): () => void {
     const what = people.length ? `里面有 ${people.length} 个人，${p.devices ?? 0} 台设备` : '加入后，装上 Deneb 就能用里面的设备';
     const sub = p.seatsFull ? `${from} 的位置满了，腾出来就能加入` : p.needsApproval ? `${what}，加入后要等 ${from} 同意` : what;
     const stack = people.length ? `<div class="jc-stack" aria-label="${esc(people.map((x) => x.displayName || x.name).join('、'))}">${people.slice(0, 8).map((x) => ball(x, me)).join('')}</div>` : '';
-    const c = swap(card, head(who, `${from} 邀请你加入「${p.lanName}」`, sub) + stack + `<div class="jc-foot"><button class="btn primary" type="button" data-act="join">加入</button></div>`);
+    // The LAN's picture, where it has one (M7): what one joins, the
+    // inviter's ball on its corner.
+    const pic = lanIconHTML(p.icon, 44);
+    const mark = pic ? `<span class="jc-lan">${pic}${ball(p.inviter, me, 22)}</span>` : who;
+    const c = swap(card, head(mark, `${from} 邀请你加入「${p.lanName}」`, sub) + stack + `<div class="jc-foot"><button class="btn primary" type="button" data-act="join">加入</button></div>`);
     // Not focused on arrival: a ring round the button before anyone
     // touched the page reads as something already pressed.
     const btn = c.querySelector('[data-act="join"]') as HTMLButtonElement;

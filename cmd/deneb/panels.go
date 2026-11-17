@@ -281,6 +281,10 @@ const trayNoneWords = "我的其他设备会显示在这里"
 // trayShows reports whether the tray is up: it holds devices, one is on
 // its way into it, or the hand brings one near.
 func (a *app) trayShows() bool {
+	if a.boardKind() != "" {
+		// Words instead of devices (switchmotion.go): nothing to drag in.
+		return false
+	}
 	mode, _ := a.trayMode()
 	return len(a.tray) > 0 || a.landing != nil || mode != trayIdle || a.relayTray()
 }
@@ -295,9 +299,15 @@ func (a *app) trayView(c *ui.Context, p *palette, w, h float32, now time.Time) {
 	// Coming up, it starts lower and clear; going away, it sinks and
 	// fades, and is gone once it has.
 	entering := show && !a.trayUp
+	// Coming or going with the page (switchmotion.go), it fades where it
+	// is, as the rest of the page does, without rising or sinking.
+	quick := a.switching(now)
 	switch {
 	case show:
 		a.trayUp, a.trayOut = true, time.Time{}
+	case a.trayUp && a.trayOut.IsZero() && quick:
+		a.trayOut = now.Add(swapOut + 20*time.Millisecond)
+		c.After(swapOut + 20*time.Millisecond)
 	case a.trayUp && a.trayOut.IsZero():
 		a.trayOut = now.Add(300 * time.Millisecond)
 		c.After(300 * time.Millisecond)
@@ -351,7 +361,15 @@ func (a *app) trayView(c *ui.Context, p *palette, w, h float32, now time.Time) {
 		if entering || !show {
 			lower, clear = 24, 0
 		}
-		pill.Translate(0, pill.AnimateTo("lower", lower, soft)).Opacity(pill.AnimateTo("clear", clear, soft))
+		lowerAnim, clearAnim := soft, soft
+		if quick {
+			lower = 0
+			clearAnim = switchIn
+			if !show {
+				clearAnim = switchOut
+			}
+		}
+		pill.Translate(0, pill.AnimateTo("lower", lower, lowerAnim)).Opacity(pill.AnimateTo("clear", clear, clearAnim))
 		kv := func(kd kid, target float32, anim ui.Animation) float32 {
 			return a.kidValue(pill, entering, kd, target, anim)
 		}
@@ -423,11 +441,24 @@ func (a *app) trayView(c *ui.Context, p *palette, w, h float32, now time.Time) {
 			}
 			for _, kd := range a.trayKids.order("dev", devs, looks) {
 				k := kv(kd, b2f(!kd.gone), soft)
+				if !kd.gone || k < 0.01 {
+					// Back, or closed: no longer one of the page before.
+					delete(a.sw.trayGone, kd.key)
+				}
 				if kd.gone && k < 0.01 {
 					continue
 				}
 				a.trayKids.shown("dev", kd.key)
 				switch d := byKey[kd.key]; {
+				case kd.gone && a.sw.trayGone[kd.key] != nil:
+					// A device of the page before: it fades out in its
+					// slot as the slot closes (switchmotion.go).
+					g := a.sw.trayGone[kd.key]
+					trayKid(c, kd.key, k, slotTile+slotGap, func() {
+						ui.Box(c).Size(slotTile+slotGap, slotTile).Padding(0, 0, 0, slotGap).Shrink(0).Children(func() {
+							a.profileTile(c, p, g.dev, g.kind, a.people[g.owner].color, slotTile, false, 0)
+						})
+					})
 				case kd.gone:
 					trayKid(c, kd.key, k, slotTile+slotGap, func() { a.trayGhost(c, p, a.trayKids.looks[kd.key]) })
 				case kd.key == "slot":
@@ -1501,18 +1532,10 @@ func (a *app) lanCard(c *ui.Context, p *palette) {
 		body.Transition(ui.ElementTransition{Duration: 180 * time.Millisecond, Enter: &ui.Motion{}})
 		body.Children(func() {
 			ui.Row(c).Gap(12).AlignItems(ui.Start).Children(func() {
-				// The LAN's mark: its first members' balls, as its row in the
-				// sidebar shows them.
-				ui.Box(c).Size(40, 40).Radius(12).Background(p.well).Center().Children(func() {
-					ui.Row(c).Children(func() {
-						for i, id := range l.Members[:min(3, len(l.Members))] {
-							b := ball(c, a.people[string(id)], 16, false).Shadow(0, 0, 0, 1.5, p.well)
-							if i > 0 {
-								b.Margin(0, 0, 0, -4)
-							}
-						}
-					})
-				})
+				// The LAN's mark: its picture, or its first members' balls,
+				// as its row in the sidebar shows them; the owner's opens
+				// "局域网头像" (lanicon.go).
+				a.lanMark(c, p, l)
 				ui.Column(c).Gap(4).Grow(1).Children(func() {
 					if mine {
 						name := ui.ButtonBase(c.Key("lan-name")).FocusRing(false).Cursor(ui.CursorText).AlignSelf(ui.Start)

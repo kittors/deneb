@@ -130,6 +130,8 @@ var liveFeatures = map[string]bool{
 	proto.FeatureShare: true, proto.FeatureSeats: true, proto.FeatureShareMode: true, proto.FeaturePublicDevice: true,
 	// M4's (DESIGN §6.12).
 	proto.FeatureRelays: true,
+	// M7's: the LANs' pictures.
+	proto.FeatureLANIcon: true,
 }
 
 func (l *Live) watch(ctx context.Context) {
@@ -366,7 +368,7 @@ func (l *Live) buildLocked(now time.Time) *model.Snapshot {
 				Services: map[model.DeviceID][]model.Service{}, Mode: lanMode(lv.Mode),
 				// M2: its two switches, and whether I wait to be let in.
 				ApproveDevices: lv.ApproveDevices, ApproveMembers: lv.ApproveMembers, Waiting: lv.Pending,
-				Paused: paused[apitype.ScopeID(proto.LANScope(lv.ID))]}
+				Paused: paused[apitype.ScopeID(proto.LANScope(lv.ID))], Icon: lanIcon(lv.Icon)}
 			for _, m := range lv.Members {
 				// Only those in are members: someone invited is not in yet,
 				// and one who waits for me to let them in shows apart (M2).
@@ -421,7 +423,8 @@ func (l *Live) buildLocked(now time.Time) *model.Snapshot {
 				continue
 			}
 			s.Invitations = append(s.Invitations, model.Invitation{ID: string(iv.Invite), LAN: model.LANID(iv.LAN),
-				LANName: iv.LANName, Inviter: *person(iv.Inviter, s.Me), Expires: iv.ExpiresAt, SeatsFull: iv.SeatsFull})
+				LANName: iv.LANName, Inviter: *person(iv.Inviter, s.Me), Expires: iv.ExpiresAt, SeatsFull: iv.SeatsFull,
+				Icon: lanIcon(iv.Icon)})
 		}
 	}
 	for _, ls := range l.local {
@@ -629,6 +632,9 @@ func (l *Live) Do(ctx context.Context, op model.Op) (model.Result, error) {
 		Avatar: op.Avatar, Kind: proto.DeviceKind(op.DevKind), Invitation: proto.InviteID(op.Invitation),
 		Share: proto.ShareID(op.Share), Mode: proto.LANMode(op.Mode),
 	}
+	if op.Kind == model.OpLANSetIcon {
+		args.Icon = &proto.LANIcon{Preset: op.Icon.Preset, Image: op.Icon.Image}
+	}
 	if err := l.shareArgs(op, &args); err != nil {
 		return model.Result{}, err
 	}
@@ -813,7 +819,17 @@ func (l *Live) Preview(ctx context.Context, link string) (*model.Invite, error) 
 	return &model.Invite{
 		Link: link, LAN: model.LANID(p.LAN), LANName: p.LANName, Inviter: *person(p.Inviter, me),
 		AlreadyIn: p.AlreadyIn, Gone: p.State != "" && p.State != proto.InvitePending, SeatsFull: p.SeatsFull,
+		Icon: lanIcon(p.Icon),
 	}, nil
+}
+
+// lanIcon is a LAN's picture as the view takes it: a preset the client
+// does not know, as from a newer server, is none.
+func lanIcon(i *proto.LANIcon) model.LANIcon {
+	if i == nil || i.Preset != "" && !proto.ValidLANIconPreset(i.Preset) {
+		return model.LANIcon{}
+	}
+	return model.LANIcon{Preset: i.Preset, Image: slices.Clone(i.Image)}
 }
 
 // modelError is an error of the engine's as the view takes it: a kind, and

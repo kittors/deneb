@@ -96,7 +96,7 @@
           <main class="main">
             <header class="head">
               <div>
-                <div class="title"></div>
+                <div class="title-row"><span class="title-ic"></span><div class="title"></div></div>
                 <div class="sub"><span class="dot"></span><span class="sub-text"></span></div>
               </div>
               <div class="right"><div class="stack"></div></div>
@@ -148,6 +148,9 @@
     setTitle(title, sub, tone = 'ok') {
       if (!this.win) return;
       $('.title', this.win).textContent = title;
+      // A page's picture beside its title is the page's to set again
+      // (setTitleIcon): another page's goes.
+      this.setTitleIcon('');
       const st = $('.sub-text', this.win);
       if (st.textContent && st.textContent !== sub) {
         st.animate([{ opacity: 0.2 }, { opacity: 1 }], { duration: 260, easing: 'ease-out' });
@@ -155,6 +158,16 @@
       st.textContent = sub;
       const d = $('.sub .dot', this.win);
       d.dataset.tone = tone;
+    }
+    // setTitleIcon puts a picture beside the title, a LAN's (lanicon.ts);
+    // '' takes it away.
+    setTitleIcon(html) {
+      if (!this.win) return;
+      const el = $('.title-ic', this.win);
+      if (el.dataset.html === html) return;
+      el.dataset.html = html;
+      el.innerHTML = html;
+      el.hidden = !html;
     }
     setStack(keys) {
       if (!this.win) return;

@@ -48,7 +48,7 @@ var motion = []struct{ key, name, unit string }{
 
 // drawing are the desktop's files whose named values are design: sizes,
 // timings, springs, poses and colors.
-var drawing = []string{"canvas.go", "links.go", "panels.go", "allview.go", "view.go", "views.go", "menubar.go", "glyphs.go", "model.go", "theme.go"}
+var drawing = []string{"canvas.go", "links.go", "panels.go", "allview.go", "view.go", "views.go", "menubar.go", "glyphs.go", "model.go", "theme.go", "lanicon.go"}
 
 func main() {
 	log.SetFlags(0)

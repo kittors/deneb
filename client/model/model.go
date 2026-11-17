@@ -134,6 +134,10 @@ const (
 
 	// M7's: a service taken off one of my devices (service.remove).
 	FeatureServiceRemove = "serviceRemove"
+
+	// M7's: LANs have pictures (lan.setIcon); without it, a LAN shows its
+	// members' balls.
+	FeatureLANIcon = "lanIcon"
 )
 
 // Can reports whether the control server does what feature names.
@@ -187,7 +191,20 @@ type LAN struct {
 	// Mode is how it works (M3): as a LAN, or handing out its owner's
 	// devices to its members one by one (ModeShare, scene 4).
 	Mode LANMode
+	// Icon is its picture (M7, FeatureLANIcon): zero, none.
+	Icon LANIcon
 }
+
+// LANIcon is a LAN's picture (design/plan/m7/switch-motion.md §5): one of
+// the presets, by name (proto.LANIconPresets), or the owner's own, a PNG
+// of 128×128.
+type LANIcon struct {
+	Preset string
+	Image  []byte
+}
+
+// None reports whether there is no picture.
+func (i LANIcon) None() bool { return i.Preset == "" && len(i.Image) == 0 }
 
 // Invited is someone asked into a LAN by name, who has not answered yet.
 type Invited struct {
@@ -206,6 +223,8 @@ type Invitation struct {
 	Expires time.Time
 	// SeatsFull: the inviter's seats are full (M3), as Invite's.
 	SeatsFull bool
+	// Icon is the LAN's picture (M7).
+	Icon LANIcon
 }
 
 // Cut is a use of one of this computer's services cut off: who used it,
@@ -464,6 +483,8 @@ type Invite struct {
 	// SeatsFull: the inviter's seats are full. Joining, I wait until they
 	// free one (M3, pricing-and-relays §1.5 item 5).
 	SeatsFull bool
+	// Icon is the LAN's picture (M7).
+	Icon LANIcon
 }
 
 // Error is a store's no: its kind, for the view to tell what to do, and one

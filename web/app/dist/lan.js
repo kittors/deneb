@@ -9,6 +9,7 @@
 // holds "this computer" as a dashed tile that opens the download card, and
 // fills in when this computer logs in.
 import { frame, clear, follow, App, G, esc, spaced, glyphOf, nameOf, serviceName, serviceIcon, ago } from './shell.js';
+import { LAN_ICON_TITLE, lanIconHTML, lanIcons } from './lanicon.js';
 import { sharedOnly } from './model.js';
 import { Stack, ballsOf } from './stack.js';
 import { can, seatsFull, seatLine, fullFor, whyNot, shareTo, shareSection, wireShare, personCard, wireGiven, seatCard, wireSeats, seatState, forget, freed } from './sharecard.js';
@@ -214,6 +215,9 @@ export function lanPage(root             , ctx     , route       )             {
     if (!ids.length) app.setTitle(lan .name, `${people.length} 个人，还没有设备`, 'off');
     else if (on === ids.length) app.setTitle(lan .name, `${people.length} 个人，${ids.length} 台设备都在线`, 'ok');
     else app.setTitle(lan .name, `${people.length} 个人，${ids.length} 台设备，${on} 台在线`, 'off');
+    // Its picture beside its name (M7), as the desktop's.
+    const lv = vv.lans.find((l) => l.id === lanID);
+    app.setTitleIcon(lanIcons(vv) ? lanIconHTML(lv?.icon, LAN_ICON_TITLE) : '');
   }
   summary();
 
@@ -1020,6 +1024,7 @@ function waiting(app                          , ctx     , lanID        )        
   const lan = v.lans.find((l) => l.id === lanID)           ;
   const owner = nameOf(v, lan.owner);
   app.setTitle(lan.name, spaced(`等${owner}同意`), 'off');
+  app.setTitleIcon(lanIcons(v) ? lanIconHTML(lan.icon, LAN_ICON_TITLE) : '');
   const el = App.h(`<div class="waiting" data-k="waiting">${App.ball(lan.owner, 'big')}<p>${esc(spaced(`等${owner}同意你加入「${lan.name}」`))}</p></div>`)               ;
   app.canvas.appendChild(el);
   const off = ctx.onView((nv) => {

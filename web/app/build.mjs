@@ -38,6 +38,11 @@ writeFileSync(join(out, 'app.css'), css);
 writeFileSync(join(out, 'tokens.js'), '// Generated from web/tokens.json (go run ./web/tokens/gen).\nexport default ' + readFileSync(join(web, 'tokens.json'), 'utf8').trim() + ';\n');
 copyFileSync(join(web, 'tokens.css'), join(out, 'tokens.css'));
 copyFileSync(join(app, 'index.html'), join(out, 'index.html'));
+// The LANs' preset pictures, the desktop's (cmd/deneb/lan-icons), with
+// their license.
+const icons = join(dirname(web), 'cmd', 'deneb', 'lan-icons');
+mkdirSync(join(out, 'lan-icons'), { recursive: true });
+for (const f of readdirSync(icons)) copyFileSync(join(icons, f), join(out, 'lan-icons', f));
 console.log(`built ${n} modules into ${out}`);
 // The website, beside the app (web/site/build.mjs).
 const site = buildSite(join(web, 'site'), out);

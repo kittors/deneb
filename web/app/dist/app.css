@@ -1424,6 +1424,33 @@ button {
   transform: scale(0.96);
 }
 
+/* A LAN's picture (lanicon.ts, design/plan/m7/switch-motion.md §5): a preset
+   whole, the owner's own in a rounded square; in the sidebar where its
+   members' balls were, beside the title over the canvas. */
+.lan-ic {
+  display: block;
+  flex: none;
+  width: var(--s);
+  height: var(--s);
+  object-fit: contain;
+  user-select: none;
+}
+.lan-ic.own {
+  object-fit: cover;
+  border-radius: var(--radius-8);
+}
+.head .title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+}
+.head .title-ic {
+  display: flex;
+}
+.head .title-ic[hidden] {
+  display: none;
+}
+
 /* account.css */
 /* The account (M7, DESIGN §6.15, §14.13): as the desktop's. */
 .side .me {
@@ -5019,6 +5046,25 @@ body {
     position: static;
     margin-top: 48px;
   }
+}
+
+/* The invite's LAN, by its picture, the inviter's ball on its corner
+   (lanicon.ts). */
+.jc-lan {
+  position: relative;
+  flex: none;
+  width: 44px;
+  height: 44px;
+}
+.jc-lan .lan-ic.own {
+  border-radius: var(--radius-12);
+}
+.jc-head .jc-lan .ball {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  font-size: 10px;
+  box-shadow: 0 0 0 2px var(--bg);
 }
 
 /* phone.css */

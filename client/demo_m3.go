@@ -221,7 +221,7 @@ func (d *Demo) m3Event(s *model.Snapshot, event string, now time.Time) *model.Sn
 			return s
 		}
 		n.Invitations = []model.Invitation{{ID: "inv-boardgame", LAN: demoInviteLAN, LANName: "桌游夜",
-			Inviter: *s.People["leo"], Expires: now.Add(7 * 24 * time.Hour), SeatsFull: true}}
+			Inviter: *s.People["leo"], Expires: now.Add(7 * 24 * time.Hour), SeatsFull: true, Icon: demoInviteIcon}}
 		return &n
 	}
 	return s

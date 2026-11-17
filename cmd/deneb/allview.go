@@ -232,10 +232,19 @@ func (a *app) regions(c *ui.Context, p *palette) {
 		shown[lan] = true
 		if _, seen := a.regionBorn[lan]; !seen {
 			// A region that comes in after the view is laid out fades in
-			// from below; those there as it opens are just there.
+			// from below; those there as it opens are just there. Coming
+			// to the view from a LAN's, they fade in where they are, once
+			// the LAN's own things are out of the way (switchmotion.go).
 			born := time.Time{}
 			if a.regionsLaid {
 				born = now
+			}
+			if a.sw.regionsIn {
+				born = now.Add(swapOut)
+				if a.sw.regionFade == nil {
+					a.sw.regionFade = map[model.LANID]bool{}
+				}
+				a.sw.regionFade[lan] = true
 			}
 			a.regionBorn[lan] = born
 		}
@@ -247,18 +256,31 @@ func (a *app) regions(c *ui.Context, p *palette) {
 		off := a.regionOff[lan]
 		gen := strconv.Itoa(a.regionGen[lan])
 		el := ui.Box(c.Key("region-" + string(lan))).Absolute()
+		// Going to a LAN's page, its name fades out with its ground
+		// (switchmotion.go).
+		el.Transition(ui.ElementTransition{Colors: true, Duration: swapOut, Exit: &ui.Motion{}})
 		x := el.AnimateTo("x"+gen, r.X, ui.Smooth)
 		y := el.AnimateTo("y"+gen, r.Y, ui.Smooth)
 		w := el.AnimateTo("w"+gen, r.W, ui.Smooth)
 		h := el.AnimateTo("h"+gen, r.H, ui.Smooth)
 		in := float32(1)
+		fadeOnly := a.sw.regionFade[lan]
 		if born := a.regionBorn[lan]; !born.IsZero() {
-			if k := float32(now.Sub(born)) / float32(regionIn); k < 1 {
+			span := regionIn
+			if fadeOnly {
+				span = swapIn
+			}
+			if k := float32(now.Sub(born)) / float32(span); k < 1 {
 				in = ui.EaseOut(max(0, k))
 				c.AnimationFrame()
+			} else if fadeOnly {
+				delete(a.sw.regionFade, lan)
 			}
 		}
 		rise := (1 - in) * 24
+		if fadeOnly {
+			rise = 0
+		}
 		el.Left(x+off.X).Top(y+off.Y+rise).Size(w, h)
 		focus := float32(1)
 		if a.focus != "" && a.focus != lan {
@@ -301,14 +323,18 @@ func (a *app) regions(c *ui.Context, p *palette) {
 		}
 		el.Children(func() {
 			ui.Row(c).Absolute().Left(16).Top(14).Gap(8).AlignItems(ui.Center).PassThrough().Children(func() {
-				ui.Row(c).Children(func() {
-					for i, id := range l.Members[:min(3, len(l.Members))] {
-						b := ball(c, a.people[string(id)], 12, false).Shadow(0, 0, 0, 1.5, p.well)
-						if i > 0 {
-							b.Margin(0, 0, 0, -4)
+				if pic, ok := a.lanPic(lan); ok {
+					lanIconView(c, pic, lanIconRegion)
+				} else {
+					ui.Row(c).Children(func() {
+						for i, id := range l.Members[:min(3, len(l.Members))] {
+							b := ball(c, a.people[string(id)], 12, false).Shadow(0, 0, 0, 1.5, p.well)
+							if i > 0 {
+								b.Margin(0, 0, 0, -4)
+							}
 						}
-					}
-				})
+					})
+				}
 				ui.Text(c, l.Name).FontSize(13).FontWeight(600).TextColor(p.ink2).SingleLine().MaxWidth(max(40, w-100))
 			})
 			if l.Paused {
@@ -341,6 +367,7 @@ func (a *app) regions(c *ui.Context, p *palette) {
 		c.AnimationFrame()
 	}
 	a.regionsLaid = a.cw > 0
+	a.sw.regionsIn = false
 	a.edgeNoteView(c, p)
 }
 
@@ -646,13 +673,20 @@ func (a *app) allSummary(p *palette) (ui.Color, string) {
 func (a *app) allHeader(c *ui.Context, p *palette) {
 	// As a LAN's header (view.go): the notice on the title's middle line, as
 	// it is there beside the balls and "邀请朋友".
+	// Built as a LAN's header is, so that going between them its words and
+	// what is on its right fade one at a time (switchmotion.go).
 	ui.Column(c).Height(headerHeight).Padding(headerTop, 24, 0, 28).Gap(4).DragWindow().Children(func() {
 		ui.Row(c).Height(titleLine).Gap(16).Children(func() {
-			ui.Text(c, "全部局域网").FontSize(20).FontWeight(600).SingleLine()
+			title := ui.ButtonBase(c.Key("lan-title")).FocusRing(false)
+			_, shown, alpha := a.titleStep(c, "", "全部局域网")
+			title.Children(func() {
+				ui.Text(c, shown).FontSize(20).FontWeight(600).SingleLine().MaxWidth(lanNameWidth).Opacity(alpha)
+			})
 			ui.Spacer(c)
-			a.noticePill(c, p)
+			a.headerRight(c, p, nil)
 		})
 		a.summaryLine(c, p)
+		a.headerLine(c, p)
 	})
 }
 
@@ -684,15 +718,23 @@ func (a *app) updateFocus(c *ui.Context, over model.LANID) {
 	}
 }
 
+// switchStretch is how far a switch's knob stretches as it is pressed,
+// toward where it would go (design/plan/m7/switch-motion.md §3.4).
+const switchStretch = 3
+
 // miniToggle is a LAN's switch in the sidebar: the card's switch, a size
 // smaller. It reports whether it was flipped.
 func miniToggle(c *ui.Context, p *palette, key, label string, on bool) (flipped bool) {
 	v := on
 	sw := ui.SwitchBase(c.Key(key), &v).Size(28, 16).Radius(999).Padding(2).FocusRing(false).Label(label)
 	k := sw.AnimateTo("knob", map[bool]float32{false: 0, true: 1}[v], ui.Snappy)
+	// Pressed, the knob stretches toward the way it would go, as a
+	// switch's does on the phone (HIG): the hand sees it took hold.
+	// Quick to show, as a press must be (DESIGN §5: within 100 ms).
+	e := sw.AnimateTo("press", map[bool]float32{false: 0, true: switchStretch}[sw.Pressed()], ui.Animation{Duration: fadeTime})
 	sw.Background(p.line2.Mix(p.primary, k))
 	sw.Children(func() {
-		ui.Box(c).Size(12, 12).Radius(999).Background(white).Translate(12*k, 0).
+		ui.Box(c).Size(12+e, 12).Radius(999).Background(white).Translate((12-e)*k, 0).
 			Shadow(0, 1, 2, 0, ui.RGBA(0, 0, 0, 0.2))
 	})
 	return v != on

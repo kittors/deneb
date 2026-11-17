@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"net/http"
 	"net/netip"
 	"slices"
@@ -345,7 +346,7 @@ func (m *mock) bump() {
 // view is the person's UserView: what the device API would send them, less
 // "this device".
 func (m *mock) view(me proto.PersonID) *proto.UserView {
-	v := &proto.UserView{Version: m.version, Me: me, Features: proto.M4Features}
+	v := &proto.UserView{Version: m.version, Me: me, Features: append(slices.Clone(proto.M4Features), proto.FeatureLANIcon)}
 	seen := map[proto.PersonID]bool{me: true}
 	shown := map[proto.DeviceID]bool{}
 	for _, l := range m.lans {
@@ -355,7 +356,7 @@ func (m *mock) view(me proto.PersonID) *proto.UserView {
 		lv := proto.LANView{ID: l.id, Name: l.name, Owner: l.owner, CreatedAt: l.created, Mode: l.mode, Relays: m.relayList(l), AddedRelays: slices.Clone(l.added),
 			// Empty lists, never null, as the control server sends them (a LAN
 			// made in a browser has no device yet).
-			Members: []proto.Member{}, Devices: []proto.LANDevice{}}
+			Members: []proto.Member{}, Devices: []proto.LANDevice{}, Icon: mockIcon(l.id)}
 		if l.mode == proto.LANModeShare && l.owner != me {
 			// A member of a device-sharing LAN sees its name, its owner
 			// and themself; the devices come as shares.
@@ -1052,7 +1053,16 @@ func (m *mock) preview(w http.ResponseWriter, r *http.Request, link string) {
 	if state == proto.InvitePending && m.now().After(inv.expires) {
 		state = proto.InviteExpired
 	}
-	writeJSON(w, proto.InvitePreview{Invite: inv.id, LAN: l.id, LANName: l.name, Inviter: p, State: state, ExpiresAt: inv.expires, AlreadyIn: me != "" && l.joined(me)})
+	writeJSON(w, proto.InvitePreview{Invite: inv.id, LAN: l.id, LANName: l.name, Inviter: p, State: state, ExpiresAt: inv.expires, AlreadyIn: me != "" && l.joined(me),
+		Icon: mockIcon(l.id)})
+}
+
+// mockIcon is a LAN's picture (M7): a preset, picked by its id as the
+// server picks one at random, the same every time for the recordings.
+func mockIcon(id proto.LANID) *proto.LANIcon {
+	h := fnv.New32a()
+	h.Write([]byte(id))
+	return &proto.LANIcon{Preset: proto.LANIconPresets[h.Sum32()%uint32(len(proto.LANIconPresets))]}
 }
 
 func (m *mock) userView(w http.ResponseWriter, r *http.Request, me proto.PersonID) {

@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"hash/fnv"
 	"slices"
 	"strconv"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kittors/deneb/client/model"
+	"github.com/kittors/deneb/proto"
 )
 
 // Demo is the store of the demo mode (deneb --demo, the recordings and the
@@ -135,6 +137,21 @@ func (d *Demo) Do(_ context.Context, op model.Op) (model.Result, error) {
 			return withInvitedLAN(n)
 		case model.OpInviteDecline:
 			return s.With(op)
+		case model.OpLANSetIcon:
+			// As the server decides it (M7): the owner only, a preset it
+			// knows, or a picture the view made 128×128 already.
+			l := s.LAN(op.LAN)
+			switch {
+			case l == nil:
+				return s
+			case l.Owner != s.Me:
+				opErr = &model.Error{Code: model.ErrForbidden, Message: "只有拥有者能换头像"}
+				return s
+			case op.Icon.Preset != "" && !proto.ValidLANIconPreset(op.Icon.Preset):
+				opErr = &model.Error{Code: model.ErrInvalid, Message: "没有这个头像"}
+				return s
+			}
+			return s.With(op)
 		case model.OpDeviceRenew:
 			// Renewed for the demo's 180 days, asked again two weeks before.
 			d := s.Devices[op.Device]
@@ -216,13 +233,25 @@ func (*Demo) Open(context.Context, model.DeviceID, model.Service) (string, error
 func (d *Demo) Preview(_ context.Context, link string) (*model.Invite, error) {
 	s := d.Snapshot()
 	return &model.Invite{Link: link, LAN: demoInviteLAN, LANName: "桌游夜", Inviter: *s.People["leo"],
-		AlreadyIn: s.LAN(demoInviteLAN) != nil}, nil
+		AlreadyIn: s.LAN(demoInviteLAN) != nil, Icon: demoInviteIcon}, nil
 }
 
 // DemoInvite is the invite link the demo's "收到邀请" opens.
 const DemoInvite = "deneb://join/demo"
 
 const demoInviteLAN model.LANID = "boardgame"
+
+// demoInviteIcon is 桌游夜's picture.
+var demoInviteIcon = model.LANIcon{Preset: "fluent3d/frog"}
+
+// demoIcon is the picture a LAN made in the demo gets: a preset, at random
+// as the server picks one, but the same for the same name, so that the
+// demo's recordings come out the same every time.
+func demoIcon(name string) model.LANIcon {
+	h := fnv.New32a()
+	h.Write([]byte(name))
+	return model.LANIcon{Preset: proto.LANIconPresets[h.Sum32()%uint32(len(proto.LANIconPresets))]}
+}
 
 // Simulate plays one of the demo's outside events, as the design demos'
 // control bar does:
@@ -280,6 +309,13 @@ func (d *Demo) Simulate(event string) {
 				op.Kind = model.OpLANAddDevice
 			}
 			return s.With(op)
+		case "lan-gone":
+			// The last LAN in the list is gone, deleted by its owner
+			// elsewhere, or left there: 工作室 first, then 周末联机.
+			if len(s.LANs) == 0 {
+				return s
+			}
+			n.LANs = slices.Clone(s.LANs[:len(s.LANs)-1])
 		case "connect":
 			n.Paths["jdesk"] = model.Path{Kind: model.PathConnecting, Since: now}
 			if !d.manual {
@@ -536,13 +572,17 @@ func m2Event(s *model.Snapshot, event string, now time.Time) *model.Snapshot {
 			return s
 		}
 		n.Invitations = []model.Invitation{{ID: "inv-boardgame", LAN: demoInviteLAN, LANName: "桌游夜",
-			Inviter: *s.People["leo"], Expires: now.Add(7 * 24 * time.Hour)}}
+			Inviter: *s.People["leo"], Expires: now.Add(7 * 24 * time.Hour), Icon: demoInviteIcon}}
+	case "no-lan-icons":
+		// A server before M7's pictures of LANs: the members' balls.
+		n.Features = maps(s.Features)
+		delete(n.Features, model.FeatureLANIcon)
 	case "waiting":
 		if s.LAN("books") != nil {
 			return s
 		}
 		n.LANs = append(n.LANs, &model.LAN{ID: "books", Name: "读书会", Owner: "leo", Members: []model.PersonID{"leo"},
-			Waiting: true, Services: map[model.DeviceID][]model.Service{}})
+			Waiting: true, Services: map[model.DeviceID][]model.Service{}, Icon: model.LANIcon{Preset: "fluent3d/sunflower"}})
 	case "using":
 		n.Using = maps(s.Using)
 		if _, ok := n.Using["lindb"]; ok {
@@ -619,6 +659,7 @@ func demoSnapshot() *model.Snapshot {
 		// Made in M1: as the server moved them, new members wait, new
 		// devices do not (DESIGN §6.7).
 		ApproveMembers: true,
+		Icon:           model.LANIcon{Preset: "fluent3d/gamepad"},
 	}
 	work := &model.LAN{
 		ID: "work", Name: "工作室", Owner: "me",
@@ -632,6 +673,7 @@ func demoSnapshot() *model.Snapshot {
 		},
 		Relays:         []model.RelayID{"hk"},
 		ApproveMembers: true,
+		Icon:           model.LANIcon{Preset: "fluent3d/rocket"},
 	}
 	direct := func(ms int) model.Path {
 		return model.Path{Kind: model.PathDirect, RTT: time.Duration(ms) * time.Millisecond}
@@ -664,7 +706,8 @@ func demoSnapshot() *model.Snapshot {
 		// The demo's server does all that M2 adds, and M4's relay in a
 		// click, to show what they look like.
 		Features: map[string]bool{model.FeatureApprove: true, model.FeatureInvitePerson: true,
-			model.FeatureRenew: true, model.FeatureAddRelay: true, model.FeatureServiceRemove: true},
+			model.FeatureRenew: true, model.FeatureAddRelay: true, model.FeatureServiceRemove: true,
+			model.FeatureLANIcon: true},
 	}
 }
 
@@ -678,8 +721,9 @@ func withNewLAN(s *model.Snapshot, name string) (*model.Snapshot, model.LANID) {
 	n := *s
 	l := &model.LAN{ID: id, Name: name, Owner: s.Me, Members: []model.PersonID{s.Me},
 		Devices: []model.DeviceID{s.Self}, Services: map[model.DeviceID][]model.Service{},
-		// A new LAN asks me about new devices and members (DESIGN §6.7).
-		ApproveDevices: true, ApproveMembers: true}
+		// A new LAN asks me about new devices and members (DESIGN §6.7),
+		// and gets a picture of its own.
+		ApproveDevices: true, ApproveMembers: true, Icon: demoIcon(name)}
 	if me := s.Devices[s.Self]; me != nil {
 		l.Services[s.Self] = slices.Clone(me.Catalog)
 	}
@@ -698,6 +742,7 @@ func withInvitedLAN(s *model.Snapshot) *model.Snapshot {
 			"leopc": {{Key: "udp/27015", Kind: "game", Name: "游戏服务器", Proto: "udp", Port: 27015, Ports: "27015", On: true}},
 		},
 		Relays: []model.RelayID{"hk"},
+		Icon:   demoInviteIcon,
 	}
 	if me := s.Devices[s.Self]; me != nil {
 		l.Services[s.Self] = slices.Clone(me.Catalog)

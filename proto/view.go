@@ -112,6 +112,11 @@ const (
 	// FeatureRelays: relay.create and the other relay ops, MyRelays,
 	// LANView.AddedRelays, the relay usage. (M4)
 	FeatureRelays = "relays"
+
+	// FeatureLANIcon: lan.setIcon, LANView.Icon and InvitePreview.Icon;
+	// a new LAN gets a preset at random. A client sees the members' balls
+	// without it. (M7)
+	FeatureLANIcon = "lanIcon"
 )
 
 // M2Features are the features of an M2 server.
@@ -321,6 +326,11 @@ type LANView struct {
 	// Pending is set when the viewer is a member waiting for the owner:
 	// the LAN shows only its name and owner until the owner agrees. (M2)
 	Pending bool `json:"pending,omitempty"`
+
+	// Icon is the LAN's picture: a preset's name, or the owner's own
+	// picture. Every member sees it, the ones waiting to be let in too.
+	// (M7, FeatureLANIcon)
+	Icon *LANIcon `json:"icon,omitempty"`
 	// Mode is how the LAN works (M3): as a LAN, where members' devices see
 	// one another (scene 5), or for sharing devices, where it holds the
 	// owner's and the public devices and members get only what is shared
@@ -499,6 +509,10 @@ type InvitePreview struct {
 	// LAN any more. A view's Invitations leave them out. (M3)
 	Members []Person `json:"members,omitempty"`
 	Devices int      `json:"devices"`
+
+	// Icon is the LAN's picture, for the invite's page and card, as its
+	// members see it. (M7, FeatureLANIcon)
+	Icon *LANIcon `json:"icon,omitempty"`
 }
 
 // Seats is how many seats a person uses (pricing-and-relays §1.4): the
