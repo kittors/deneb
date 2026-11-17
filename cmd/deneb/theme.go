@@ -121,6 +121,13 @@ var (
 	staggerTime = 70 * time.Millisecond
 )
 
+// foldTime is a group of the menu bar's panel opening out or folding away
+// by its height (menubar.go's fold); the panel's waiting ring, coming over
+// groups that fold away, waits as long for them to. Not busyDelay (the
+// 13th batch's, how long work goes before it says it is under way): this
+// waits for a motion to end. The desktop's own: the web has no such panel.
+var foldTime = 220 * time.Millisecond
+
 // The website's widths (DESIGN §14.16): its words, its pictures, the docs'
 // contents beside them, and the window at its own size, as the first
 // screen shows it. web/tokens/gen writes them as --width-<name>.

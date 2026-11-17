@@ -153,30 +153,118 @@ func (a *app) panelBody(c *ui.Context, p *palette) ui.Element {
 	if note {
 		c.After(a.panelNote.until.Sub(now))
 	}
+	hasChores := s.Engine && (len(choresOf(s, now)) > 0 || len(a.panelDone) > 0)
+	hasLANs := s.Engine && len(s.LANs) > 0
+	hasShared := s.Engine && s.Can(model.FeatureShare) && len(s.Shared) > 0
+	a.panelWaits = a.panelWaiting(c, now, !hasChores && !hasLANs && !hasShared)
+	// One thing at a time (§6.5): the groups come once the ring has faded
+	// out of the room it kept, the room folding as they open out, the
+	// panel's height going from one to the other in step.
+	ringIn := ui.Animation{Duration: swapOut}
+	if a.panelWaits {
+		// Coming over groups that fold away, it waits for them to.
+		ringIn.Delay = foldTime
+	}
+	ring := body.AnimateTo("panel-ring", map[bool]float32{false: 0, true: 1}[a.panelWaits], ringIn)
+	room := a.panelWaits || ring > 0
+	chores, lans, shared := hasChores && !room, hasLANs && !room, hasShared && !room
 	body.Children(func() {
 		a.panelHead(c, p)
 		a.fold(c, "note-section", note, func() { a.panelNoteRow(c, p) })
 		ui.Scroll(c.Key("panel-scroll")).Shrink(1).Children(func() {
-			a.fold(c, "chores-section", s.Engine && (len(choresOf(s, now)) > 0 || len(a.panelDone) > 0), func() {
+			a.fold(c, "wait-section", room, func() { a.panelWait(c, p, now, ring) })
+			// Come while the ring fades, they are laid out out of sight: the
+			// room it kept goes to the room they take, in step (panelWait),
+			// so that the flyout's height does not jump as they open out.
+			a.fold(c, "chores-section", chores, func() {
 				a.panelChores(c, p, now)
-			})
-			a.fold(c, "lans-section", s.Engine && len(s.LANs) > 0, func() {
+			}, hasChores)
+			a.fold(c, "lans-section", lans, func() {
 				panelLabel(c, p, "局域网")
 				for _, l := range s.LANs {
 					a.panelLAN(c, p, l)
 				}
-			})
-			a.fold(c, "shared-section", s.Engine && s.Can(model.FeatureShare) && len(s.Shared) > 0, func() {
+			}, hasLANs)
+			a.fold(c, "shared-section", shared, func() {
 				// The devices given to me, a row each (DESIGN §6.11).
 				panelLabel(c, p, "共享给我")
 				for _, sh := range s.Shared {
 					a.panelShared(c, p, sh)
 				}
-			})
+			}, hasShared)
 		})
+		a.notePanelRoom(map[string]bool{"chores-section": hasChores, "lans-section": hasLANs, "shared-section": hasShared})
 		a.panelOpen(c, p)
 	})
 	return body
+}
+
+// A row of the panel's groups (a LAN's, a share's), and a group's label
+// over its rows (panelLabel): its words of 12 between 12 over and 4 under.
+const (
+	panelRowHeight   = 48
+	panelLabelTop    = 12
+	panelLabelBottom = 4
+)
+
+// panelRoomFirst is the room the panel keeps for its groups while it waits
+// for them, before it has ever laid them out: two LANs' rows under their
+// label, about (its words' line taken as their size). It need not be
+// exact: once the groups come, the room goes to theirs in step.
+var panelRoomFirst = panelLabelTop + typeScale[0] + panelLabelBottom + 2*panelRowHeight
+
+// panelWaiting reports whether the panel waits for what it shows: none of
+// its groups (empty) because this computer's engine does not answer, or
+// the person's view is not in yet (a window just opened, the engine being
+// changed for the one shipped). Then it keeps the room its groups took
+// last (panelWait) rather than folding to its head, which left the flyout
+// half as tall till they came (the user, 11-17, after updating to 0.1.9:
+// "变得非常扁平，然后过一会就好了"). Past startingPatience still waiting,
+// what is shows: the engine is not running.
+func (a *app) panelWaiting(c *ui.Context, now time.Time, empty bool) bool {
+	s := a.snap
+	if !empty || s.Engine && (!s.LoggedIn || s.Loaded) {
+		a.panelBlankSince = time.Time{}
+		return false
+	}
+	if a.panelBlankSince.IsZero() {
+		a.panelBlankSince = now
+	}
+	left := startingPatience - now.Sub(a.panelBlankSince)
+	if left <= 0 {
+		return false
+	}
+	c.After(left)
+	return true
+}
+
+// panelWait is the room the panel's groups took last, a ring turning in its
+// middle while they come, as opaque as ring.
+func (a *app) panelWait(c *ui.Context, p *palette, now time.Time, ring float32) {
+	room := a.panelRoom
+	if room <= 0 {
+		room = panelRoomFirst
+	}
+	box := ui.Box(c.Key("panel-wait")).Center()
+	// To the room the groups take once it is known, in step.
+	box.Height(box.AnimateTo("room", room, ui.Animation{Duration: fadeTime}))
+	box.Children(func() {
+		ui.Box(c).Opacity(ring).Children(func() { spinner(c, p, now) })
+	})
+}
+
+// notePanelRoom keeps the room the panel's groups take while one shows, as
+// they were last laid out: what panelWait keeps for them.
+func (a *app) notePanelRoom(open map[string]bool) {
+	var room float32
+	for key, on := range open {
+		if on {
+			room += a.foldH[key]
+		}
+	}
+	if room > 0 {
+		a.panelRoom = room
+	}
 }
 
 // panelNote is why something done from the panel did not go through, said
@@ -200,13 +288,15 @@ func (a *app) panelNoteRow(c *ui.Context, p *palette) {
 // fold is a group of the panel that opens out as it comes and folds away
 // as it goes, by its height, the rest of the panel following in step and in
 // place (DESIGN §6.6: nothing jumps). It is built while it shows, or folds.
-func (a *app) fold(c *ui.Context, key string, open bool, build func()) {
+// Given measure, a group folded away is laid out all the same, out of
+// sight in no room, to know the room it takes (foldH) before it opens.
+func (a *app) fold(c *ui.Context, key string, open bool, build func(), measure ...bool) {
 	holder := ui.Column(c.Key(key)).Clip()
-	k := holder.AnimateTo("open", map[bool]float32{false: 0, true: 1}[open], ui.Animation{Duration: 220 * time.Millisecond})
+	k := holder.AnimateTo("open", map[bool]float32{false: 0, true: 1}[open], ui.Animation{Duration: foldTime})
 	if k < 1 {
 		holder.Height(a.foldH[key] * k).Opacity(k)
 	}
-	if k <= 0 {
+	if k <= 0 && (len(measure) == 0 || !measure[0]) {
 		return
 	}
 	holder.Children(func() {
@@ -248,8 +338,15 @@ func (a *app) panelHead(c *ui.Context, p *palette) {
 }
 
 // panelSummary is how things are here, in a few words, and the color of
-// the dot before them.
-func (a *app) panelSummary(p *palette) (ui.Color, string) { return summaryOf(a.snap, p) }
+// the dot before them. While the panel waits for the engine (panelWaiting)
+// it is connecting, not "not running": the engine is most likely just
+// starting, or being changed.
+func (a *app) panelSummary(p *palette) (ui.Color, string) {
+	if a.panelWaits && !a.snap.Engine {
+		return p.ink3, "正在连接…"
+	}
+	return summaryOf(a.snap, p)
+}
 
 // summaryOf is how things are in s, in a few words, and the color of the
 // dot before them: the panel's head, and the first line of the system's
@@ -493,7 +590,7 @@ func (a *app) flushPanel(c *ui.Context) {
 // how it is, and its switch; a click elsewhere on it opens the window on
 // it.
 func (a *app) panelLAN(c *ui.Context, p *palette, l *model.LAN) {
-	row := ui.ButtonBase(c.Key("panel-lan-"+string(l.ID))).Height(48).Padding(0, 8).Gap(12).Radius(12).FocusRing(false)
+	row := ui.ButtonBase(c.Key("panel-lan-"+string(l.ID))).Height(panelRowHeight).Padding(0, 8).Gap(12).Radius(12).FocusRing(false)
 	if row.Hovered() {
 		row.Background(p.well)
 	}
@@ -632,7 +729,7 @@ func (a *app) panelShared(c *ui.Context, p *palette, sh model.SharedDevice) {
 	if m == nil {
 		return
 	}
-	row := ui.ButtonBase(c.Key("panel-shared-"+string(sh.Device))).Height(48).Padding(0, 8).Gap(12).Radius(12).FocusRing(false)
+	row := ui.ButtonBase(c.Key("panel-shared-"+string(sh.Device))).Height(panelRowHeight).Padding(0, 8).Gap(12).Radius(12).FocusRing(false)
 	if row.Hovered() {
 		row.Background(p.well)
 	}
@@ -692,5 +789,5 @@ func (a *app) pathWords(dev model.DeviceID) string {
 // panelLabel names a part of the menu bar's panel: on the rows' edge, 12
 // under the part before it, 4 over its own rows (DESIGN §3.9).
 func panelLabel(c *ui.Context, p *palette, s string) {
-	ui.Text(c, s).FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(12, 8, 4, 8)
+	ui.Text(c, s).FontSize(12).FontWeight(500).TextColor(p.ink3).Padding(panelLabelTop, 8, panelLabelBottom, 8)
 }

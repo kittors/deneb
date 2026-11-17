@@ -450,6 +450,13 @@ type app struct {
 	panelShown  bool
 	systemPanel bool
 
+	// panelRoom is the room the panel's groups took, last they showed;
+	// panelBlankSince, since when the panel has had nothing to show
+	// (panelWaiting).
+	panelRoom       float32
+	panelBlankSince time.Time
+	panelWaits      bool // this frame's panelWaiting
+
 	naming *naming // a new LAN being named in the sidebar
 	// wantLAN is a LAN made or joined here that the snapshot does not have
 	// yet: the canvas goes to it once it has.

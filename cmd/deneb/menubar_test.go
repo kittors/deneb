@@ -353,7 +353,8 @@ func TestM2MenuBarFrames(t *testing.T) {
 // What the panel says while there is little to say: this computer's Deneb
 // not running, no one logged in on it yet, the world on its way. Only the
 // way into the window is left; the mark is an outline while nothing can
-// connect here.
+// connect here. (Its first startingPatience the panel waits for an engine
+// that is just starting, as TestPanelKeepsItsRoomWhileWaiting has it.)
 func TestPanelBeforeTheWorld(t *testing.T) {
 	sample := client.NewDemo().Snapshot()
 	for _, tc := range []struct {
@@ -367,7 +368,7 @@ func TestPanelBeforeTheWorld(t *testing.T) {
 		a := newApp(&fixedStore{&tc.snap}, demoPlaces())
 		tt := ui.NewTester(a.panel, panelWidth, panelMaxHeight)
 		tt.Frame()
-		tt.Advance(400 * time.Millisecond)
+		tt.Advance(startingPatience + 400*time.Millisecond)
 		tt.Frame()
 		if !tt.HasText(tc.line) || !tt.HasText("打开 Deneb") || tt.HasText("局域网") || tt.HasText("要你处理") {
 			t.Errorf("%s: the panel shows %q", tc.name, tt.Texts())
