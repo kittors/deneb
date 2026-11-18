@@ -16,6 +16,9 @@ mkdir -p "$tmp/web/app"
 cp -R web/app/src web/app/build.mjs web/app/index.html "$tmp/web/app/"
 cp web/tokens.json web/tokens.css "$tmp/web/"
 cp -R web/site "$tmp/web/"
+# The LANs' preset pictures, which build.mjs copies into the app.
+mkdir -p "$tmp/cmd/deneb"
+cp -R cmd/deneb/lan-icons "$tmp/cmd/deneb/"
 node "$tmp/web/app/build.mjs"
 rm -rf deploy/web/app
 cp -R "$tmp/web/app/dist" deploy/web/app
