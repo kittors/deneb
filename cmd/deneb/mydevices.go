@@ -81,7 +81,11 @@ func (a *app) myDevicesContent(c *ui.Context, p *palette) {
 		case online == len(devs):
 			line = fmt.Sprintf("%d 台设备，全部在线", len(devs))
 		}
-		ui.Row(c).Height(statusLine).Children(func() { ui.Text(c, line).FontSize(13).TextColor(p.ink2) })
+		// What it says changes one at a time (words.go): a device come,
+		// gone, online or not.
+		ui.Row(c).Height(statusLine).AlignItems(ui.Center).Children(func() {
+			swapWords(c, a.words, "mine-line", line, 13, 400, p.ink2, false)
+		})
 	})
 	// The line under the header shows once the list goes under it.
 	under := float32(0)
@@ -204,8 +208,10 @@ func (a *app) deviceCard(c *ui.Context, p *palette, d *model.Device) {
 					if on {
 						dot = p.ok
 					}
-					ui.Box(c).Size(6, 6).Radius(3).Background(dot)
-					ui.Text(c, status).FontSize(12).TextColor(p.ink3).SingleLine()
+					// Online or not, the dot's color fades and the words take
+					// one another's place one at a time (words.go).
+					ui.Box(c.Key("status-dot")).Size(6, 6).Radius(3).Background(dot).Transition(ui.ElementTransition{Duration: fadeTime, Colors: true})
+					swapWords(c, a.words, "status-"+string(d.ID), status, 12, 400, p.ink3, false)
 				})
 			})
 			if textButton(c, p, "rename", "重命名", false).Label("重命名" + d.Name).Clicked() {
@@ -381,16 +387,26 @@ func (a *app) toggleChip(c *ui.Context, p *palette, key, name, label, tip, off s
 	// Its words keep their width while it grows or shrinks, clipped to it
 	// on the way: laid out at its size on the way, they were cut short,
 	// "✓ 周末联…", and stayed so where the growing stopped a hair short.
-	b.Transition(ui.ElementTransition{Animation: &ui.Smooth, Size: true, Colors: true}).Clip()
+	// Come or gone (a LAN joined, its chip in each service), it fades in or
+	// out where it is.
+	b.Transition(ui.ElementTransition{Animation: &ui.Smooth, Size: true, Colors: true, Enter: &ui.Motion{}, Exit: &ui.Motion{}}).Clip()
 	hover := b.Hovered()
 	asking := st == chipOn && a.armed(c, key)
 	if asking && !hover && !b.Focused() {
 		// Moved off it: the question goes.
 		a.armedKey, asking = "", false
 	}
-	if st == chipOff || st == chipWait || asking {
-		b.Padding(0, 12)
-	}
+	// Its states go over one into another (the user, 11-18: "所有的内容的变
+	// 化都得有微动效"): chosen, the dashed outline fades as the ground comes
+	// (its color, the button's transition), the tick grows in from nothing
+	// before the words, which move over with it, their color fading; the
+	// light under the pointer fades too.
+	chosen := (st == chipOn || st == chipFixed) && !asking
+	k := b.AnimateTo("chosen", map[bool]float32{false: 0, true: 1}[chosen], ui.Animation{Duration: fadeTime})
+	lit := b.AnimateTo("lit", map[bool]float32{false: 0, true: 1}[hover && st != chipFixed], ui.Animation{Duration: fadeTime})
+	// The tick's room, with the gap after it, taken from the padding on its
+	// side as it grows: the words stay where the chip's middle has them.
+	b.Padding(0, 12, 0, 12-4*k).Gap(0)
 	switch {
 	case asking:
 		b.Background(danger.Alpha(0.1))
@@ -399,53 +415,46 @@ func (a *app) toggleChip(c *ui.Context, p *palette, key, name, label, tip, off s
 		// no press; the tooltip says why (AGENTS.md §1.3 禁用).
 		b.Background(p.well2)
 	case st == chipOn:
-		bg := p.primary.Alpha(0.12)
-		if hover {
-			bg = p.primary.Alpha(0.18)
-		}
-		b.Background(bg)
-	default:
+		b.Background(p.primary.Alpha(0.12 + 0.06*lit))
+	}
+	if k < 1 && !asking {
 		wait := st == chipWait
 		b.Draw(func(pt *ui.Painter, r ui.Rect) {
 			var path ui.Path
 			roundRect(&path, r.X+0.75, r.Y+0.75, r.W-1.5, r.H-1.5, (r.H-1.5)/2)
 			path.Dash(0, 4, 3)
 			col := p.ink3.Alpha(0.7)
-			switch {
-			case hover:
-				col = p.primary
-			case wait:
+			if wait {
 				col = p.primary.Alpha(0.5)
 			}
-			pt.StrokePath(&path, 1.5, col)
+			col = col.Mix(p.primary, lit)
+			pt.StrokePath(&path, 1.5, col.Alpha(1-k))
 		})
 	}
 	if st == chipFixed {
 		b.Cursor(ui.CursorDefault)
 	} else {
-		b.AnimatePose(pressPose(b, 0.95), ui.Snappy)
+		b.AnimatePose(pressPose(b, pressGive), ui.Snappy)
 	}
 	b.Children(func() {
-		switch {
-		case asking:
+		if asking {
 			ui.Text(c.Key("ask"), "再点一下，"+off).FontSize(12).FontWeight(500).TextColor(danger).SingleLine().Shrink(0).
-				Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{}, Exit: &ui.Motion{}})
-		case st == chipOn || st == chipFixed:
-			ink := p.primary
-			if st == chipFixed {
-				ink = p.ink2
-			}
-			checkMark(c, ink, 12)
-			ui.Text(c.Key("name"), name).FontSize(12).FontWeight(500).TextColor(ink).MaxWidth(220).SingleLine().Shrink(0)
-		default:
-			ink := p.ink2
-			if hover {
-				ink = p.primary
-			}
-			ui.Text(c.Key("name"), name).FontSize(12).FontWeight(500).TextColor(ink).MaxWidth(220).SingleLine().Shrink(0)
-			if extra != "" {
-				ui.Text(c, extra).FontSize(12).TextColor(p.ink3).SingleLine()
-			}
+				Transition(ui.ElementTransition{Duration: fadeTime, Enter: &ui.Motion{}, Exit: &ui.Motion{}})
+			return
+		}
+		ink := p.ink2.Mix(p.primary, max(k, lit))
+		if st == chipFixed {
+			ink = p.ink2
+		}
+		if k > 0 {
+			// The tick and the gap after it (4), growing in from nothing.
+			ui.Row(c.Key("tick")).Width(16 * k).Height(12).Clip().Shrink(0).AlignItems(ui.Center).Opacity(k).Children(func() {
+				checkMark(c, ink, 12)
+			})
+		}
+		ui.Text(c.Key("name"), name).FontSize(12).FontWeight(500).TextColor(ink).MaxWidth(220).SingleLine().Shrink(0)
+		if extra != "" && k < 1 {
+			ui.Text(c, extra).FontSize(12).TextColor(p.ink3).SingleLine().Margin(0, 0, 0, 4).Opacity(1 - k)
 		}
 	})
 	if !b.Clicked() || st == chipFixed {
@@ -546,87 +555,101 @@ func (a *app) servicesBlock(c *ui.Context, p *palette, d *model.Device, lans []*
 				ui.Text(c, "暂无服务").FontSize(13).TextColor(p.ink3)
 			})
 		}
-		for _, r := range rows {
-			a.serviceRow(c, p, d, in, rows, r)
-		}
-		if h, ok := a.cardHints[d.ID]; ok {
-			if c.Now().Before(h.until) {
-				ui.Text(c.Key("hint-"+h.text), h.text).FontSize(12).TextColor(p.ink3).Transition(ui.ElementTransition{Animation: &ui.Smooth, Enter: &ui.Motion{Y: 4}, Exit: &ui.Motion{}})
-				c.After(h.until.Sub(c.Now()))
-			} else {
-				delete(a.cardHints, d.ID)
+		// The services 12 apart, each its name over its chips 8 apart:
+		// closer within one than between them (AGENTS.md §2.4), as the web's
+		// are. 添加服务 comes after them as one more.
+		ui.Column(c).Gap(12).Children(func() {
+			for _, r := range rows {
+				a.serviceRow(c, p, d, in, rows, r)
 			}
-		}
-		if e := a.svcEdit; e != nil && e.dev == d.ID {
-			a.serviceEditor(c, p, d, in, e)
-		} else {
-			a.addServiceChip(c, p, d)
-		}
+			if h, ok := a.cardHints[d.ID]; ok {
+				if c.Now().Before(h.until) {
+					ui.Text(c.Key("hint-"+h.text), h.text).FontSize(12).TextColor(p.ink3).Transition(ui.ElementTransition{Animation: &ui.Smooth, Enter: &ui.Motion{Y: 4}, Exit: &ui.Motion{}})
+					c.After(h.until.Sub(c.Now()))
+				} else {
+					delete(a.cardHints, d.ID)
+				}
+			}
+			if e := a.svcEdit; e != nil && e.dev == d.ID {
+				a.serviceEditor(c, p, d, in, e)
+			} else {
+				a.addServiceChip(c, p, d)
+			}
+		})
 	})
 }
 
-// serviceRow is a service: its icon and name, then one toggle chip per LAN
-// the device is in (ticked where it is open); on the pointer, × takes it off
-// the device, after asking in place.
+// serviceRow is a service: its icon and name, and × at the line's end on
+// the pointer, taking it off the device after asking in place; under them,
+// one toggle chip per LAN the device is in (ticked where it is open), from
+// the edge the device's LAN chips start at above: one column of chips in
+// the card (the user, 11-18: "和上面'局域网'那一行的胶囊不是从同一列起头").
 func (a *app) serviceRow(c *ui.Context, p *palette, d *model.Device, in []*model.LAN, rows []svcRow, r svcRow) {
-	row := ui.Row(c.Key("svc-" + r.svc.Key)).Gap(12).AlignItems(ui.Start)
+	row := ui.Column(c.Key("svc-" + r.svc.Key)).Gap(8)
 	row.Transition(ui.ElementTransition{Animation: &ui.Smooth, Size: true, Enter: &ui.Motion{Y: 4, Scale: 0.98}, Exit: &ui.Motion{Collapse: true}})
 	hover := row.Hovered()
 	name := svcName(rows, r.svc)
 	row.Children(func() {
-		// A long name takes two lines at most; the row grows for it.
-		ui.Row(c).Width(176).Shrink(0).MinHeight(28).Gap(8).AlignItems(ui.Center).Children(func() {
+		// A long name takes two lines at most; the line grows for it.
+		ui.Row(c).MinHeight(28).Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Icon(c, uiGlyphs[serviceIcon(r.svc.Kind)]).Size(16, 16).TextColor(p.ink2).Shrink(0)
 			ui.Text(c, name).FontSize(13).FontWeight(500).Grow(1).Shrink(1).MaxLines(2)
+			a.serviceRemove(c, p, d, r, name, hover)
 		})
-		ui.Row(c).Grow(1).Shrink(1).Gap(8).Wrap().Children(func() {
+		ui.Row(c).Gap(8).Wrap().Children(func() {
 			for _, l := range in {
 				a.serviceChip(c, p, d, r, name, l)
 			}
 		})
-		if r.local || !a.snap.Can(model.FeatureServiceRemove) {
-			ui.Box(c).Size(28, 28).Shrink(0)
+	})
+}
+
+// serviceRemove is a service's ×, at its name's line's end, shown on the
+// pointer: "再点一下，删除" asks in place (design/components.md). A service
+// that cannot be taken off keeps its room.
+func (a *app) serviceRemove(c *ui.Context, p *palette, d *model.Device, r svcRow, name string, hover bool) {
+	if r.local || !a.snap.Can(model.FeatureServiceRemove) {
+		ui.Box(c).Size(28, 28).Shrink(0)
+		return
+	}
+	// ×, asking in place: "再点一下，删除" (design/components.md).
+	key := "remove-" + string(d.ID) + "-" + r.svc.Key
+	x := ui.ButtonBase(c.Key("remove")).Height(28).MinWidth(28).Radius(999).Center().FocusRing(false).Shrink(0).
+		Label(say("删除", d.Name, "的", name)).Tooltip("删除" + name)
+	x.Transition(ui.ElementTransition{Animation: &ui.Smooth, Size: true, Colors: true})
+	asking := a.armed(c, key)
+	if asking && !x.Hovered() && !x.Focused() {
+		a.armedKey, asking = "", false
+	}
+	shown := float32(0)
+	if hover || x.Focused() || asking {
+		shown = 1
+	}
+	x.Opacity(x.AnimateTo("shown", shown, ui.Animation{Duration: fadeTime}))
+	switch {
+	case asking:
+		x.Padding(0, 12).Background(danger.Alpha(0.1))
+	case x.Hovered():
+		x.Background(p.well2)
+	}
+	x.AnimatePose(pressPose(x, pressGive), ui.Snappy)
+	x.Children(func() {
+		if asking {
+			ui.Text(c.Key("ask"), "再点一下，删除").FontSize(12).FontWeight(500).TextColor(danger).SingleLine().
+				Transition(ui.ElementTransition{Duration: fadeTime, Enter: &ui.Motion{}, Exit: &ui.Motion{}})
 			return
 		}
-		// ×, asking in place: "再点一下，删除" (design/components.md).
-		key := "remove-" + string(d.ID) + "-" + r.svc.Key
-		x := ui.ButtonBase(c.Key("remove")).Height(28).MinWidth(28).Radius(999).Center().FocusRing(false).Shrink(0).
-			Label(say("删除", d.Name, "的", name)).Tooltip("删除" + name)
-		x.Transition(ui.ElementTransition{Animation: &ui.Smooth, Size: true, Colors: true})
-		asking := a.armed(c, key)
-		if asking && !x.Hovered() && !x.Focused() {
-			a.armedKey, asking = "", false
-		}
-		shown := float32(0)
-		if hover || x.Focused() || asking {
-			shown = 1
-		}
-		x.Opacity(x.AnimateTo("shown", shown, ui.Animation{Duration: 160 * time.Millisecond}))
-		switch {
-		case asking:
-			x.Padding(0, 12).Background(danger.Alpha(0.1))
-		case x.Hovered():
-			x.Background(p.well2)
-		}
-		x.AnimatePose(pressPose(x, 0.95), ui.Snappy)
-		x.Children(func() {
-			if asking {
-				ui.Text(c.Key("ask"), "再点一下，删除").FontSize(12).FontWeight(500).TextColor(danger).SingleLine().
-					Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{}, Exit: &ui.Motion{}})
-				return
-			}
-			ui.Icon(c, uiGlyphs["close"]).Size(12, 12).TextColor(p.ink3)
-		})
-		if x.Clicked() {
-			if !asking {
-				a.arm(c, key)
-				return
-			}
-			a.armedKey = ""
-			a.send(c, model.Op{Kind: model.OpServiceRemove, Device: d.ID, Service: r.svc.Key})
-			a.notify(c, nil, "已删除「"+name+"」", nil)
-		}
+		ui.Icon(c, uiGlyphs["close"]).Size(12, 12).TextColor(p.ink3)
 	})
+	if x.Clicked() {
+		if !asking {
+			a.arm(c, key)
+			return
+		}
+		a.armedKey = ""
+		a.send(c, model.Op{Kind: model.OpServiceRemove, Device: d.ID, Service: r.svc.Key})
+		a.notify(c, nil, "已删除「"+name+"」", nil)
+	}
 }
 
 // serviceChip is a service in one LAN: a click opens it there; closing it

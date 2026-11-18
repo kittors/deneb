@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -148,9 +149,10 @@ func (a *app) renameLayer(c *ui.Context, p *palette) {
 			if invalid != "" {
 				msg = invalid
 			}
-			if msg != "" {
-				ui.Text(c, msg).FontSize(12).TextColor(danger)
-			}
+			// What is wrong, as it comes, changes or goes: one at a time
+			// (words.go).
+			// This dialog's own: another one opened starts with none.
+			swapWords(c, a.words, fmt.Sprintf("rename-error-%p", r), msg, 12, 400, danger, false)
 			ui.Spacer(c)
 			ui.Text(c, fmtCount(r.name)).FontSize(11).TextColor(p.ink3)
 		})

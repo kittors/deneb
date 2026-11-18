@@ -1,6 +1,8 @@
 package main
 
 import (
+	"image"
+	"image/draw"
 	"testing"
 	"time"
 
@@ -116,6 +118,11 @@ func TestRenameDismissalKeepsCenter(t *testing.T) {
 	tt := ui.NewTester(a.view, 1180, 740)
 	tt.Frame()
 	tt.Advance(700 * time.Millisecond)
+	// The page alone, before the dialog: where it is white itself (the
+	// gaps between its cards), it shows through as the scrim fades, which
+	// is not the dialog.
+	page := image.NewRGBA(tt.Image().Bounds())
+	draw.Draw(page, page.Bounds(), tt.Image(), image.Point{}, draw.Src)
 	a.beginRename(model.Op{Kind: model.OpDeviceRename, Device: a.snap.Self}, a.snap.Device(a.snap.Self).Name)
 	tt.Frame()
 	tt.Advance(700 * time.Millisecond)
@@ -123,6 +130,9 @@ func TestRenameDismissalKeepsCenter(t *testing.T) {
 		im := tt.Image()
 		top, bottom := -1, -1
 		for y := 120; y < 650; y++ {
+			if p := page.RGBAAt(420, y); p.R > 225 && p.G > 225 && p.B > 225 {
+				continue
+			}
 			px := im.RGBAAt(420, y)
 			if px.R > 225 && px.G > 225 && px.B > 225 {
 				if top < 0 {

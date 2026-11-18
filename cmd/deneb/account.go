@@ -80,6 +80,10 @@ func (a *app) accountLayer(c *ui.Context, p *palette) {
 	})
 }
 
+// accountBall is my ball on the account card, across: the column this
+// computer's tile keeps to under it.
+const accountBall = 40
+
 // accountCard is what the account card says, from the top: who I am; this
 // computer, with "登出"; the privacy notes; deleting the account.
 func (a *app) accountCard(c *ui.Context, p *palette) {
@@ -89,9 +93,11 @@ func (a *app) accountCard(c *ui.Context, p *palette) {
 		name = me.Name
 	}
 	// Me, then this computer, 16 apart: no line between (the user, 11-17).
+	// This computer's tile under my ball, on its middle line, their words
+	// from one edge (the user, 11-18: things of a kind in one column).
 	ui.Column(c).Padding(16).Gap(16).Children(func() {
 		ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
-			ball(c, a.people[a.me], 40, false)
+			ball(c, a.people[a.me], accountBall, false)
 			ui.Column(c).Gap(4).Shrink(1).Children(func() {
 				ui.Text(c, name).FontSize(15).FontWeight(600).SingleLine()
 				ui.Text(c, a.snap.Email).FontSize(12).TextColor(p.ink2).SingleLine()
@@ -99,7 +105,9 @@ func (a *app) accountCard(c *ui.Context, p *palette) {
 		})
 		if d := a.snap.Device(a.snap.Self); d != nil {
 			ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
-				a.profileTile(c, p, d.ID, glyphFor(d.Kind), ownerColors[0], 32, false, 0)
+				ui.Box(c).Width(accountBall).Center().Shrink(0).Children(func() {
+					a.profileTile(c, p, d.ID, glyphFor(d.Kind), ownerColors[0], 32, false, 0)
+				})
 				ui.Column(c).Gap(4).Grow(1).Shrink(1).Children(func() {
 					ui.Text(c, "这台电脑").FontSize(11).TextColor(p.ink3)
 					ui.Text(c, d.Name).FontSize(13).FontWeight(500).SingleLine()
@@ -133,7 +141,8 @@ func (a *app) accountCard(c *ui.Context, p *palette) {
 func menuItem(c *ui.Context, p *palette, key, label, value string, col ui.Color, icon string) ui.Element {
 	return menuItemWith(c, p, key, label, col, icon, func() {
 		if value != "" {
-			ui.Text(c, value).FontSize(12).TextColor(p.ink3).SingleLine()
+			// At the row's end by what shows of it (inkRoom).
+			ui.Text(c, value).FontSize(12).TextColor(p.ink3).SingleLine().Margin(0, -inkRoom(value, 12), 0, 0)
 		}
 	})
 }

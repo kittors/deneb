@@ -329,9 +329,10 @@ func (a *app) panelHead(c *ui.Context, p *palette) {
 			ui.Text(c, name).FontSize(14).FontWeight(600).SingleLine().MaxWidth(220)
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 				dot, line := a.panelSummary(p)
-				ui.Box(c).Size(7, 7).Radius(999).Background(dot).Shadow(0, 0, 0, 3, dot.Alpha(0.18))
-				ui.Text(c.Key("summary-"+line), line).FontSize(12).TextColor(p.ink2).SingleLine().
-					Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Enter: &ui.Motion{}})
+				ui.Box(c.Key("summary-dot")).Size(7, 7).Radius(999).Background(dot).Shadow(0, 0, 0, 3, dot.Alpha(0.18)).
+					Transition(ui.ElementTransition{Duration: fadeTime, Colors: true})
+				// One at a time, as the window's words (words.go).
+				swapWords(c, a.words, "panel-summary", line, 12, 400, p.ink2, false)
 			})
 		})
 	})

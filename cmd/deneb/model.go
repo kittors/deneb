@@ -521,6 +521,11 @@ type app struct {
 	inviting    busy
 	opening     busy
 	openKey     string
+	// words are the window's words that change one at a time (words.go).
+	words changes
+	// titleLed: the header's title shows the LAN's picture before its
+	// name, which the line under it keeps to (lineView).
+	titleLed bool
 	// diagWords is the diagnostics' button or its 正在收集, as they take
 	// turns; diagWork, the package being put together (diagTurn).
 	diagWords swapper
@@ -551,6 +556,7 @@ func newApp(s client.Store, pl *places) *app {
 		places:  pl,
 		people:  map[string]*person{},
 		trayOff: map[string]*ui.Point{},
+		words:   changes{},
 		slots:   map[string]ui.Point{},
 		// M4 (DESIGN §6.12).
 		commands:  map[string]string{},

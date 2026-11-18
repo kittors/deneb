@@ -263,6 +263,8 @@ func demoIcon(name string) model.LANIcon {
 //   - "connect": 阿杰的台式机 is connected to anew: 正在连接… for 2.4 s,
 //     then direct ("connected"), unless the demo is Manual.
 //   - "offline": 阿杰的台式机 goes offline, or comes back.
+//   - "mine-offline": my 我的游戏主机 goes offline, or comes back (My
+//     Devices' "在线", the count of those online).
 //
 // And M2's (DESIGN §6.7–§6.8), each played on the sample as it is:
 //
@@ -443,6 +445,18 @@ func (d *Demo) Simulate(event string) {
 				Addr: "10.67.0.20", FQDN: "desktop.kittors.deneb.internal", Online: true, Refused: map[model.PersonID]bool{}}
 			n.Mine = append(slices.Clone(s.Mine), "pc")
 			n.Paths["pc"] = model.Path{Kind: model.PathDirect, RTT: 6 * time.Millisecond, Since: now}
+		case "mine-offline":
+			dev := *s.Devices["game"]
+			dev.Online = !dev.Online
+			n.Devices = maps(s.Devices)
+			n.Devices["game"] = &dev
+			if dev.Online {
+				dev.LastSeen = time.Time{}
+				n.Paths["game"] = model.Path{Kind: model.PathDirect, RTT: 3 * time.Millisecond, Since: now}
+			} else {
+				dev.LastSeen = now.Add(-2 * time.Hour)
+				n.Paths["game"] = model.Path{Kind: model.PathOffline, Since: now}
+			}
 		case "offline":
 			dev := *s.Devices["jdesk"]
 			dev.Online = !dev.Online

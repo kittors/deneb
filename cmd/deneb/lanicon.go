@@ -34,6 +34,9 @@ const (
 	lanIconPreview = 64
 	lanIconChoice  = 36
 	lanIconCell    = 48 // a choice's button
+	// lanIconRoom is from the title's picture to its words; the line under
+	// the title keeps it too, its dot on the picture's middle line.
+	lanIconRoom = 12
 )
 
 // lanPresets are the presets' pictures, decoded once, by name.

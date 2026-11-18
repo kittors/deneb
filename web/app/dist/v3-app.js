@@ -18,6 +18,33 @@
     t.innerHTML = html.trim();
     return t.content.firstElementChild;
   };
+  // swapText puts words in el one at a time, as the desktop's do (DESIGN §5
+  // Swap; the user, 11-18: "所有的内容的变化都得有微动效"): the shown ones
+  // fade out (--motion-swap-out), then the new ones fade in
+  // (--motion-swap-in). Words asked for on the way take the place of the
+  // ones on the way; the first ones show at once.
+  const motionMs = (name) => parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name)) || 0;
+  function swapText(el, text) {
+    el._want = text;
+    if (el._swapping) return;
+    if (!el.textContent || el.textContent === text) {
+      el.textContent = text;
+      return;
+    }
+    el._swapping = true;
+    // From where it is: words fading in when new ones come go from there.
+    const from = getComputedStyle(el).opacity;
+    for (const an of el.getAnimations()) an.cancel();
+    const out = el.animate([{ opacity: from }, { opacity: 0 }], { duration: motionMs('--motion-swap-out'), easing: 'ease-out', fill: 'forwards' });
+    out.onfinish = () => {
+      el.textContent = el._want;
+      el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: motionMs('--motion-swap-in'), easing: 'ease-out' });
+      out.cancel();
+      el._swapping = false;
+    };
+  }
+  window.swapText = swapText;
+
   // esc: words going into markup stay words. Names here are anyone's (a
   // device's, a person's, a LAN's, a relay's): one with < or & in it shows
   // as typed, never as an element.
@@ -151,11 +178,7 @@
       // A page's picture beside its title is the page's to set again
       // (setTitleIcon): another page's goes.
       this.setTitleIcon('');
-      const st = $('.sub-text', this.win);
-      if (st.textContent && st.textContent !== sub) {
-        st.animate([{ opacity: 0.2 }, { opacity: 1 }], { duration: 260, easing: 'ease-out' });
-      }
-      st.textContent = sub;
+      swapText($('.sub-text', this.win), sub);
       const d = $('.sub .dot', this.win);
       d.dataset.tone = tone;
     }

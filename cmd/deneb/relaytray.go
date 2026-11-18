@@ -160,10 +160,13 @@ func (a *app) trayRelayItems(c *ui.Context, p *palette, w, h float32, kv func(ki
 		a.trayHintNext = "用我自己的服务器当中转站"
 	}
 	plus.Children(func() {
-		ring := p.ink3.Alpha(0.55)
+		// Under the pointer it lights up, fading as the tray's words change
+		// (DESIGN §5: no color changes in one frame).
+		lit := float32(0)
 		if plus.Hovered() {
-			ring = p.primary.Alpha(0.7)
+			lit = 1
 		}
+		ring := p.ink3.Alpha(0.55).Mix(p.primary.Alpha(0.7), plus.AnimateTo("lit", lit, ui.Animation{Duration: fadeTime}))
 		dashedRing(c, p, relaySlotBall, ring, func() {
 			ui.Icon(c, uiGlyphs["plus"]).Size(14, 14).TextColor(ring)
 		})

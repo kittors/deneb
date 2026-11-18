@@ -44,7 +44,13 @@ type laid struct {
 	gapX, gapY  float32
 	radius      float32 // its largest corner
 	panel       bool    // filled, with a round corner: a dialog, a card, a tile
-	children    []*laid
+	// Words: their size, and the baseline of their first line, in the
+	// window (hasBase: there is one).
+	size     float32
+	baseline float32
+	hasBase  bool
+	parent   *laid
+	children []*laid
 }
 
 // glyphInk is, for the marks that stand at a row's end by their strokes
@@ -144,9 +150,21 @@ func readLaid(p reflect.Value) *laid {
 		l.rect = r
 	}
 	l.panel = filled && l.radius >= 12 && l.kind == 0 && l.radius < l.rect.H/2-1 // not a pill
+	if l.kind == 1 {
+		// MyGo's own text layout: its first line's baseline, below the
+		// words' content box (layout.go's boxBaseline).
+		if tl := n.FieldByName("tl"); !tl.IsNil() {
+			if lines := tl.Elem().FieldByName("Lines"); lines.Len() > 0 {
+				l.baseline = l.rect.Y + l.pad[0] + float32(n.FieldByName("border").Index(0).Float()) + float32(lines.Index(0).FieldByName("Baseline").Float())
+				l.hasBase = true
+			}
+		}
+		l.size = float32(n.FieldByName("ts").FieldByName("size").Float())
+	}
 
 	for c := n.FieldByName("first"); !c.IsNil(); c = c.Elem().FieldByName("next") {
 		if k := readLaid(c); k != nil {
+			k.parent = l
 			l.children = append(l.children, k)
 		}
 	}
@@ -407,6 +425,7 @@ func edgesOff(root *laid, w, h float32) []offCenter {
 		if !e.row && e.kind == 0 && (e.align == 0 || e.align == 3 || e.align == 8) && onScreen {
 			type part struct {
 				r, alt ui.Rect // its ink; and its things', a band's light aside
+				left   float32 // where it starts besides its ink (alt's, or its lead column's)
 				what   string
 				kids   *laid
 			}
@@ -429,7 +448,15 @@ func edgesOff(root *laid, w, h float32) []offCenter {
 					continue
 				}
 				if ok && r.W >= 2 {
-					parts = append(parts, part{r, alt, firstWords(c.words(), 24), c})
+					// A row led by a mark in a column of its own (a ring under
+					// numbers, a tile under a ball, a dot under a picture: the
+					// mark on the column's middle line) starts where that
+					// column does.
+					left := alt.X
+					if lead, ok := c.leadColumn(); ok {
+						left = lead.X
+					}
+					parts = append(parts, part{r, alt, left, firstWords(c.words(), 24), c})
 				}
 			}
 			if len(parts) > 1 {
@@ -438,19 +465,19 @@ func edgesOff(root *laid, w, h float32) []offCenter {
 				near := func(x float32) bool { return x > start-16 && x < start+16 }
 				var starts []part
 				for _, p := range parts {
-					if near(p.r.X) || near(p.alt.X) {
+					if near(p.r.X) || near(p.left) {
 						starts = append(starts, p)
 					}
 				}
 				if len(starts) > 1 {
 					lefts := make([][2]float32, len(starts))
 					for i, p := range starts {
-						lefts[i] = [2]float32{p.r.X, p.alt.X}
+						lefts[i] = [2]float32{p.r.X, p.left}
 					}
 					if spread := offOneEdge(lefts); spread > 0.5 {
 						oc := offCenter{row: "left edges of " + firstWords(e.words(), 60), spread: spread}
 						for _, p := range starts {
-							oc.parts = append(oc.parts, fmt.Sprintf("%q from %.1f%s", p.what, p.r.X, also(p.alt.X, p.r.X, "from")))
+							oc.parts = append(oc.parts, fmt.Sprintf("%q from %.1f%s", p.what, p.r.X, also(p.left, p.r.X, "from")))
 						}
 						out = append(out, oc)
 					}
@@ -626,7 +653,10 @@ func spacingOff(root *laid, w, h float32) []offCenter {
 			if !four(e.pad[i]) && !e.toggle {
 				bad = append(bad, fmt.Sprintf("padding %s %g", side, e.pad[i]))
 			}
-			if !four(e.margin[i]) {
+			// Words at a row's end reach past their box by what their last
+			// glyph keeps clear (inkRoom, under 2 at the sizes rows end
+			// in): not room between things.
+			if !four(e.margin[i]) && !(side == "right" && e.margin[i] < 0 && e.margin[i] > -2) {
 				bad = append(bad, fmt.Sprintf("margin %s %g", side, e.margin[i]))
 			}
 		}
@@ -693,6 +723,8 @@ func spacingOff(root *laid, w, h float32) []offCenter {
 // one), and the first words of what it is about, as the report says them.
 var layoutAllowed = []struct{ kind, state, row, why string }{
 	{"edge", "账号", "left edges of Deneb", "the account card open, the sidebar's account button is lit: its round light stands 4 out of the ball, which keeps to the edge"},
+	{"mark", "", "marks leading rows, off one middle line: Deneb", "the sidebar's head is Deneb's mark and name, its lockup (DESIGN §15), not a row of the list: its star keeps the left edge the rows' marks start at (DESIGN §3.9)"},
+	{"mark", "", "words after leading marks, off one edge: Deneb", "the same: Deneb's name keeps the lockup's room from its star"},
 }
 
 func layoutAllows(kind, state, row string) bool {
@@ -719,11 +751,15 @@ func layoutFindings(t *testing.T, tt *ui.Tester, w, h float32) []layoutFinding {
 	t.Helper()
 	tt.Frame()
 	tree := layoutOf(t, tt)
+	img := tt.Image()
+	scale := float32(img.Bounds().Dx()) / w
 	var out []layoutFinding
 	for _, k := range []struct {
 		kind string
 		find func(*laid, float32, float32) []offCenter
-	}{{"row", rowsOffCenter}, {"edge", edgesOff}, {"spacing", spacingOff}} {
+	}{{"row", rowsOffCenter}, {"edge", edgesOff}, {"spacing", spacingOff},
+		{"mark", marksOff}, {"chips", chipsOff}, {"baseline", baselinesOff},
+		{"end", func(l *laid, w, h float32) []offCenter { return endsOff(l, img, scale, w, h) }}} {
 		bad := k.find(tree, w, h)
 		sort.SliceStable(bad, func(i, j int) bool { return bad[i].spread > bad[j].spread })
 		for _, b := range bad {

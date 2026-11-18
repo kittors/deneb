@@ -215,20 +215,32 @@ func (a *app) addOneLayer(c *ui.Context, p *palette) {
 		if o.came != "" {
 			waiting = 0
 		}
-		wait := ui.Row(c.Key("waiting")).Gap(8).AlignItems(ui.Center).Padding(4, 0, 0, 0)
-		wait.Opacity(wait.AnimateTo("shown", waiting, ui.Animation{Duration: 160 * time.Millisecond}))
+		wait := ui.Row(c.Key("waiting")).Gap(stepRoom).AlignItems(ui.Center).Padding(4, 0, 0, 0)
+		wait.Opacity(wait.AnimateTo("shown", waiting, ui.Animation{Duration: fadeTime}))
 		wait.Children(func() {
-			spinner(c, p, now)
+			// Under the steps' numbers, on their middle line, its words from
+			// the edge theirs start at (the user, 11-18: the ring was off
+			// their line, its words 12 left of theirs).
+			ui.Box(c).Width(stepDotSize).Center().Shrink(0).Children(func() { spinner(c, p, now) })
 			ui.Text(c, "等待设备上线…").FontSize(12).TextColor(p.ink3)
 		})
 	})
 }
 
+// stepDotSize is a step's number, across; stepRoom, from it to the step's
+// words. What follows the steps under them (the ring of 等待设备上线) keeps
+// to the same: its mark on the numbers' middle line, its words from where
+// theirs start.
+const (
+	stepDotSize = 24
+	stepRoom    = 12
+)
+
 // addStep is one numbered step: a blue number, or a green tick once done.
 func addStep(c *ui.Context, p *palette, n int, done bool, body func()) {
-	ui.Row(c).Gap(12).AlignItems(ui.Start).Children(func() {
+	ui.Row(c).Gap(stepRoom).AlignItems(ui.Start).Children(func() {
 		// The number on the middle of the step's first line (28 high).
-		holder := ui.Box(c).Size(24, 28).Center().Shrink(0)
+		holder := ui.Box(c).Size(stepDotSize, 28).Center().Shrink(0)
 		holder.Children(func() { stepDot(c, p, n, done) })
 		ui.Column(c).Grow(1).Shrink(1).Gap(8).Children(body)
 	})
@@ -236,7 +248,7 @@ func addStep(c *ui.Context, p *palette, n int, done bool, body func()) {
 
 // stepDot is a step's number, a green tick once done.
 func stepDot(c *ui.Context, p *palette, n int, done bool) {
-	dot := ui.Box(c.Key("n")).Size(24, 24).Radius(999).Center().Shrink(0)
+	dot := ui.Box(c.Key("n")).Size(stepDotSize, stepDotSize).Radius(999).Center().Shrink(0)
 	dot.Transition(ui.ElementTransition{Animation: &ui.Snappy, Colors: true})
 	if done {
 		dot.Background(p.ok)

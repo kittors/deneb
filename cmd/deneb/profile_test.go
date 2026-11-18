@@ -598,6 +598,8 @@ func TestMyDevicesLongNamesAndEmptyList(t *testing.T) {
 	a.snap.Mine = nil
 	a.myDevicesOpen = true
 	tt.Frame()
+	// The header's line takes the last one's place one at a time (words.go).
+	tt.Advance(300 * time.Millisecond)
 	if !tt.HasText("暂无设备") {
 		t.Fatalf("empty list not shown: %v", tt.Texts())
 	}

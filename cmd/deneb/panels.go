@@ -390,10 +390,10 @@ func (a *app) trayView(c *ui.Context, p *palette, w, h float32, now time.Time) {
 				room = max(room, trayWordsWide(c, wm, wt))
 			}
 			wide := pill.AnimateTo("words", room+1, soft)
-			// Within a few DIPs of their width they may start: they come
-			// in from nothing, and the room has them whole before they
-			// show.
-			if want == shownKey && wide < tw-6 {
+			// They start once the room has them whole: started a few DIPs
+			// short, their last word showed cut and then not (the user,
+			// 11-18: the tray's words changed in a cut).
+			if want == shownKey && wide < tw+0.5 {
 				a.trayWords.hold(now)
 				alpha, busy = 0, true
 			}

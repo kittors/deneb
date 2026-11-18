@@ -962,7 +962,7 @@ body {
   grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-8);
 }
 .sheet .svc-x {
   grid-row: 1;
@@ -1376,11 +1376,18 @@ body {
   overflow-x: auto;
   scrollbar-width: none;
 }
+/* Under the steps, as one of them: its ring in their numbers' column, on
+   their middle line, its words from where theirs start (the user, 11-18:
+   the ring off their line, its words 12 left of theirs; as the desktop's). */
 .sheet .add-wait {
-  display: flex;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: var(--space-12);
   align-items: center;
-  gap: 8px;
-  margin: 16px 0 0;
+  margin: var(--space-16) 0 0;
   font-size: 12px;
   color: var(--ink-3);
+}
+.sheet .add-wait .spin {
+  justify-self: center;
 }

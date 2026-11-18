@@ -82,12 +82,21 @@ func (a *app) updateValue(c *ui.Context, p *palette, now time.Time) {
 	if moving {
 		c.AnimationFrame()
 	}
-	ui.Box(c.Key("update-value")).Opacity(alpha).Children(func() {
+	words := shown
+	switch {
+	case strings.HasPrefix(shown, "\x00"):
+		words = shown[1:]
+	case shown != "":
+		words = shown[strings.Index(shown, "\x01")+1:]
+	}
+	// At the row's end by what shows of it, as the ↗ under it is
+	// (inkRoom).
+	ui.Box(c.Key("update-value")).Opacity(alpha).Margin(0, -inkRoom(words, 12), 0, 0).Children(func() {
 		switch {
 		case strings.HasPrefix(shown, "\x00"):
-			busyValue(c, shown[1:], p.ink3, now)
+			busyValue(c, words, p.ink3, now)
 		case shown != "":
-			ui.Text(c, shown[strings.Index(shown, "\x01")+1:]).FontSize(12).TextColor(p.ink3).SingleLine()
+			ui.Text(c, words).FontSize(12).TextColor(p.ink3).SingleLine()
 		}
 	})
 }

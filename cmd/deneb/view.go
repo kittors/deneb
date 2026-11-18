@@ -2,9 +2,12 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/kittors/deneb/client/model"
@@ -215,7 +218,7 @@ func (a *app) sidebar(c *ui.Context, p *palette, bar ui.TitleBar) {
 			// Something waits for me there: a small blue dot at the row's end,
 			// until I let it in or turn it away (DESIGN §6.7).
 			waits := l.Owner == a.snap.Me && len(l.Pending)+len(l.PendingMembers) > 0
-			o := rowOpts{count: count, flash: a.flash(c, l.ID), dot: waits, ring: a.personOver == l.ID, at: a.rowAt(l.ID), nav: &a.sw}
+			o := rowOpts{count: count, flash: a.flash(c, l.ID), dot: waits, ring: a.personOver == l.ID, at: a.rowAt(l.ID), nav: &a.sw, words: a.words}
 			if !l.Waiting && l.Has(a.snap.Self) {
 				// Its switch: on, it connects; off, it is paused on this
 				// computer, which must be in it (scene 3).
@@ -261,7 +264,7 @@ func (a *app) sidebar(c *ui.Context, p *palette, bar ui.TitleBar) {
 		a.newLANRow(c, p)
 		ui.Box(c).Height(16)
 		group(c, p, "设备")
-		if navRowWith(c, p, "我的设备", "我的设备", a.myDevicesOpen, func() { ui.Icon(c, uiGlyphs["home"]).Size(18, 18).TextColor(p.ink3) }, rowOpts{count: fmt.Sprint(len(a.snap.Mine)), nav: &a.sw}) {
+		if navRowWith(c, p, "我的设备", "我的设备", a.myDevicesOpen, func() { ui.Icon(c, uiGlyphs["home"]).Size(18, 18).TextColor(p.ink3) }, rowOpts{count: fmt.Sprint(len(a.snap.Mine)), nav: &a.sw, words: a.words}) {
 			a.setMyDevices(true)
 			a.accountOpen = false
 		}
@@ -271,7 +274,7 @@ func (a *app) sidebar(c *ui.Context, p *palette, bar ui.TitleBar) {
 		}
 		// The devices given to me, on a canvas of their own (DESIGN §6.11).
 		inbox := func() { ui.Icon(c, uiGlyphs["inbox"]).Size(18, 18).TextColor(p.ink3) }
-		if navRowWith(c, p, "共享给我", "共享给我", a.shared() && !a.myDevicesOpen, inbox, rowOpts{count: shared, flash: a.flash(c, model.SharedLANID), nav: &a.sw}) &&
+		if navRowWith(c, p, "共享给我", "共享给我", a.shared() && !a.myDevicesOpen, inbox, rowOpts{count: shared, flash: a.flash(c, model.SharedLANID), nav: &a.sw, words: a.words}) &&
 			a.snap.Can(model.FeatureShare) {
 			a.show(c, model.SharedLANID, false)
 		}
@@ -327,6 +330,9 @@ type rowOpts struct {
 	// nav: the sidebar's choice, whose white ground travels from row to
 	// row (switchmotion.go).
 	nav *switchMotion
+	// words: the window's words that change, its count among them, one at
+	// a time (words.go); nil, the count just changes.
+	words changes
 }
 
 // navRowWith is a row of the sidebar as o asks.
@@ -382,9 +388,7 @@ func navRowWith(c *ui.Context, p *palette, key, label string, on bool, lead func
 	row.Children(func() {
 		lead()
 		ui.Text(c, label).FontSize(13).FontWeight(500).TextColor(color).Grow(1).SingleLine()
-		if count != "" {
-			ui.Text(c, count).FontSize(12).TextColor(p.ink3)
-		}
+		swapWords(c, o.words, key+"-count", count, 12, 400, p.ink3, true)
 		if dot {
 			ui.Box(c.Key("dot")).Size(7, 7).Radius(999).Background(p.primary).
 				Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: &ui.Motion{Scale: 0.3}, Exit: &ui.Motion{Scale: 0.3}})
@@ -418,6 +422,29 @@ const (
 	glyphRoom      = 4
 )
 
+// inkRoom is how far the system font's last glyph of words keeps clear of
+// the end of their box, measured in the frames' pixels (the 16th batch):
+// a digit or a letter about inkLatin of the size ("4" at 12, half a point),
+// a Chinese character about inkHan ("本", "查" at 12, 1.1 to 1.3). Words at
+// a row's end, where the marks keep their strokes on the edge, reach past
+// their box by it, so that what shows of both ends on one edge (the user,
+// 11-18: "已是最新版本" ended short of the ↗ under it). It goes by quarter
+// points, half a pixel on a Retina screen: off them, words came out a
+// half pixel this way or that, a count by turns.
+func inkRoom(words string, size float32) float32 {
+	r, _ := utf8.DecodeLastRuneInString(words)
+	k := float32(inkLatin)
+	if unicode.Is(unicode.Han, r) {
+		k = inkHan
+	}
+	return float32(math.Round(float64(k*size*4))) / 4
+}
+
+const (
+	inkLatin = 0.04
+	inkHan   = 0.1
+)
+
 // pressPose shrinks what the pointer presses, so a press answers at once.
 func pressPose(e ui.Element, scale float32) ui.Pose {
 	if e.Pressed() {
@@ -431,6 +458,7 @@ func (a *app) header(c *ui.Context, p *palette) {
 	if l == nil {
 		// No LAN: the header keeps its place, with nothing in it; the last
 		// LAN's words and balls fade out of it (switchmotion.go).
+		a.titleLed = false
 		ui.Column(c).Height(headerHeight).Padding(headerTop, 24, 0, 28).Gap(4).DragWindow().Children(func() {
 			ui.Row(c).Height(titleLine).Gap(16).Children(func() {
 				title := ui.ButtonBase(c.Key("lan-title")).FocusRing(false)
@@ -455,8 +483,9 @@ func (a *app) header(c *ui.Context, p *palette) {
 			// then in (switchmotion.go).
 			shownLAN, shown, alpha := a.titleStep(c, l.ID, name)
 			pic, iconed := a.lanPic(shownLAN)
+			a.titleLed = iconed
 			if iconed {
-				title.Gap(12).AlignItems(ui.Center)
+				title.Gap(lanIconRoom).AlignItems(ui.Center)
 			}
 			title.Children(func() {
 				if iconed {
@@ -682,7 +711,9 @@ func (a *app) summaryLine(c *ui.Context, p *palette) {
 // view's, takes this one's place one at a time too, with the title
 // (switchmotion.go). With no words, the dot goes with them.
 func (a *app) lineView(c *ui.Context, p *palette, dot ui.Color, line string) {
-	want := map[bool]string{false: "0", true: "1"}[dot == p.ok] + line
+	// What it says, with its dot's color and whether the title over it is
+	// led by the LAN's picture: all three change together, one at a time.
+	want := map[bool]string{false: "0", true: "1"}[dot == p.ok] + map[bool]string{false: "-", true: "L"}[a.titleLed] + line
 	shown, alpha, busy := a.lineWords.step(want, c.Now())
 	if busy {
 		c.AnimationFrame()
@@ -697,20 +728,34 @@ func (a *app) lineView(c *ui.Context, p *palette, dot ui.Color, line string) {
 	}
 	dotAlpha := float32(1)
 	switch {
-	case shown[1:] == "":
+	case shown[2:] == "":
 		dotAlpha = 0
-	case want[1:] == "" || len(a.sw.lineBefore) < 2:
+	case want[2:] == "" || len(a.sw.lineBefore) < 3:
 		// Going to no words, or coming from none: the dot fades with the
 		// words.
 		dotAlpha = alpha
 	}
-	ui.Row(c).Height(statusLine).Gap(8).Children(func() {
-		d := ui.Box(c.Key("summary-dot")).Size(7, 7).Radius(999).Background(dot).Shadow(0, 0, 0, 3, dot.Alpha(0.18))
-		d.Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Colors: true})
-		if dotAlpha < 1 {
-			d.Opacity(dotAlpha)
+	led := shown[1:2] == "L"
+	room := float32(8)
+	if led {
+		room = lanIconRoom
+	}
+	ui.Row(c).Height(statusLine).Gap(room).Children(func() {
+		// Under a title led by the LAN's picture, the dot on the picture's
+		// middle line and the words from where the title's start (the user,
+		// 11-18: things of a kind in one column).
+		lead := ui.Box(c.Key("summary-lead")).Center().Shrink(0)
+		if led {
+			lead.Width(lanIconTitle)
 		}
-		ui.Text(c.Key("summary-line"), shown[1:]).FontSize(13).TextColor(p.ink2).Opacity(alpha)
+		lead.Children(func() {
+			d := ui.Box(c.Key("summary-dot")).Size(7, 7).Radius(999).Background(dot).Shadow(0, 0, 0, 3, dot.Alpha(0.18))
+			d.Transition(ui.ElementTransition{Duration: fadeTime, Colors: true})
+			if dotAlpha < 1 {
+				d.Opacity(dotAlpha)
+			}
+		})
+		ui.Text(c.Key("summary-line"), shown[2:]).FontSize(13).TextColor(p.ink2).Opacity(alpha)
 	})
 }
 

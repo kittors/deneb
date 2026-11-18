@@ -675,6 +675,7 @@ func (a *app) allHeader(c *ui.Context, p *palette) {
 	// it is there beside the balls and "邀请朋友".
 	// Built as a LAN's header is, so that going between them its words and
 	// what is on its right fade one at a time (switchmotion.go).
+	a.titleLed = false
 	ui.Column(c).Height(headerHeight).Padding(headerTop, 24, 0, 28).Gap(4).DragWindow().Children(func() {
 		ui.Row(c).Height(titleLine).Gap(16).Children(func() {
 			title := ui.ButtonBase(c.Key("lan-title")).FocusRing(false)
