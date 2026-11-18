@@ -43,6 +43,7 @@ type mock struct {
 	seq      int
 	now      func() time.Time
 	console  *opsWorld // the deployment's console (M7 batch 3, mock_ops.go)
+	stun     []*mstun  // the STUN servers (0.1.11, mock_stun.go)
 }
 
 type mdev struct {
@@ -231,6 +232,7 @@ func newMock() *mock {
 	m.invites["k3xQ9"] = &minvite{id: "i_k3xQ9", lan: "l_weekend", inviter: "p_kittors", state: proto.InvitePending, expires: now.Add(7 * 24 * time.Hour)}
 	m.invites["old42"] = &minvite{id: "i_old42", lan: "l_weekend", inviter: "p_kittors", state: proto.InviteExpired, expires: now.Add(-24 * time.Hour)}
 	m.console = newOpsWorld(now)
+	m.stun = stunScene("one", now)
 	return m
 }
 
@@ -346,7 +348,7 @@ func (m *mock) bump() {
 // view is the person's UserView: what the device API would send them, less
 // "this device".
 func (m *mock) view(me proto.PersonID) *proto.UserView {
-	v := &proto.UserView{Version: m.version, Me: me, Features: append(slices.Clone(proto.M4Features), proto.FeatureLANIcon)}
+	v := &proto.UserView{Version: m.version, Me: me, Features: append(slices.Clone(proto.M4Features), proto.FeatureLANIcon, proto.FeatureSTUN)}
 	seen := map[proto.PersonID]bool{me: true}
 	shown := map[proto.DeviceID]bool{}
 	for _, l := range m.lans {
@@ -479,6 +481,7 @@ func (m *mock) view(me proto.PersonID) *proto.UserView {
 				ov.Relays = append(ov.Relays, r.v)
 			}
 		}
+		ov.STUN = m.stunView()
 		v.Operator = ov
 	}
 	return v
@@ -762,6 +765,10 @@ func (m *mock) apply(me proto.PersonID, op proto.Op) (*proto.OpOutput, *opError)
 		m.joins = append(m.joins, j)
 		out.RelayJoin = &proto.RelayJoin{ID: j.v.ID, Code: code, Relay: a.Relay, ExpiresAt: j.v.ExpiresAt,
 			Command: "docker run -d --name deneb-relay --restart unless-stopped --network host -v deneb-relay:/data deneb-relay:v0 --join " + code + " --region auto"}
+	case proto.OpSTUNAdd, proto.OpSTUNRemove:
+		if e := m.stunOp(me, op.Op, a); e != nil {
+			return nil, e
+		}
 	case proto.OpRelayRevokeJoin:
 		n := len(m.joins)
 		m.joins = slices.DeleteFunc(m.joins, func(j *mjoin) bool { return j.v.ID == a.Join && j.owner == me })
@@ -917,6 +924,8 @@ func (m *mock) handler() http.Handler {
 	mux.Handle("POST /api/v1/_mock/relay-up", post(m.authed(m.relayUp)))
 	mux.Handle("POST /api/v1/_mock/share", post(m.authed(m.shareMe)))
 	mux.Handle("POST /api/v1/_mock/seed", post(m.authed(m.seedMe)))
+	mux.Handle("POST /api/v1/_mock/stun", post(m.authed(m.stunSceneHandler)))
+	mux.Handle("POST /api/v1/_mock/stun-go", post(m.authed(m.stunGo)))
 	m.opsRoutes(mux, post)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fail(404, proto.ErrNotFound, "没有这个接口"))
@@ -1126,6 +1135,9 @@ func (m *mock) ops(w http.ResponseWriter, r *http.Request, me proto.PersonID) {
 	var op proto.Op
 	if !decode(w, r, &op) {
 		return
+	}
+	if op.Op == proto.OpSTUNAdd {
+		stunWait() // the server looks the name up first
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()

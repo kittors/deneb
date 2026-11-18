@@ -5294,7 +5294,7 @@ body {
   left: 448px;
   width: 172px;
 }
-.relays-page .rwell.ops {
+.relays-page .rwell:is(.ops, .stun) {
   left: 28px;
   width: 592px;
 }
@@ -5739,6 +5739,265 @@ body {
   color: var(--ink);
   cursor: default;
   transform: none;
+}
+
+/* stun.css */
+/* 查外网地址的服务 on the public relays' page (design/plan/stun-servers-20261118.md
+   §4, stun.ts): a second well under the public relays', the same well and
+   label; a row a server, a status dot as the console's (green found, amber
+   kept from before, grey none yet), and "加一个" at the end. */
+
+/* The page scrolls when its wells are taller than the window; the toast and
+   the card stay on the canvas. --ops-end is the last well's foot. */
+.relays-page.ops-scroll {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+}
+.relays-page.ops-scroll::after {
+  content: '';
+  position: absolute;
+  top: var(--ops-end, 0);
+  width: 1px;
+  height: var(--space-24);
+}
+.relays-page .rwell.stun {
+  top: var(--stun-top, 0);
+  --stun-danger: #ef4444; /* the console's red (console.css), not a token yet */
+}
+
+.stun-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.stun-row {
+  display: grid;
+  grid-template-columns: var(--space-16) minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  column-gap: var(--space-12);
+  align-items: center;
+  padding: var(--space-8) var(--space-4);
+  border-radius: var(--radius-8);
+  font-size: var(--type-13);
+  line-height: var(--leading-13);
+}
+/* The dot's left edge on the label's, centred on the name's line. */
+.stun-row > .cons-dot {
+  grid-row: 1;
+  justify-self: start;
+  transition: background-color var(--motion-fade) ease-out;
+}
+.stun-row > .cons-dot.off {
+  background: var(--ink-3);
+}
+.stun-row > .cons-dot.warn {
+  background: var(--warn);
+}
+.stun-name {
+  grid-row: 1;
+  grid-column: 2;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  color: var(--ink);
+}
+.stun-sub {
+  grid-row: 2;
+  grid-column: 2;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--type-12);
+  line-height: var(--leading-12);
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.stun-sub.danger {
+  color: var(--stun-danger);
+}
+
+/* "去掉": a text button at the row's end, there on hover, on focus and on a
+   screen with no hover; "再点一下，去掉" in red while it waits. */
+.stun-rm {
+  grid-row: 1 / span 2;
+  grid-column: 3;
+  height: var(--space-32);
+  /* The words on the content's right edge, the colour reaching out
+     (design/components.md 按钮: 文字按钮). */
+  padding: 0 var(--space-12);
+  margin-right: calc(-1 * var(--space-12));
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  font: inherit;
+  font-size: var(--type-12);
+  color: var(--ink-2);
+  white-space: nowrap;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--motion-fade) ease-out,
+    background-color var(--motion-fade) ease-out,
+    color var(--motion-fade) ease-out,
+    transform var(--motion-fade) ease-out;
+}
+.stun-row:hover .stun-rm,
+.stun-row:focus-within .stun-rm,
+.stun-rm.arm {
+  opacity: 1;
+}
+.stun-rm:hover {
+  background: var(--well-2);
+  color: var(--ink);
+}
+.stun-rm:active {
+  background: var(--press);
+  transform: scale(var(--motion-press));
+}
+.stun-rm.arm,
+.stun-rm.arm:hover {
+  color: var(--stun-danger);
+}
+@media (hover: none) {
+  .stun-rm {
+    opacity: 1;
+  }
+}
+
+/* "加一个": the whole row is the button; it opens into the field in place.
+   Both are 40 high, so opening it moves nothing. */
+.stun-add {
+  display: grid;
+  grid-template-columns: var(--space-16) minmax(0, 1fr) auto auto;
+  column-gap: var(--space-12);
+  align-items: center;
+  min-height: calc(var(--space-32) + 2 * var(--space-4));
+  padding: var(--space-4);
+  border-radius: var(--radius-8);
+  font-size: var(--type-13);
+  line-height: var(--leading-13);
+  color: var(--ink-2);
+  outline: none;
+  transition:
+    background-color var(--motion-fade) ease-out,
+    color var(--motion-fade) ease-out;
+}
+.stun-add:not(.editing):not([aria-disabled='true']) {
+  cursor: pointer;
+}
+.stun-add:not(.editing):not([aria-disabled='true']):hover {
+  background: var(--well-2);
+  color: var(--ink);
+}
+.stun-add:not(.editing):not([aria-disabled='true']):active {
+  background: var(--press);
+}
+.stun-add:focus-visible {
+  box-shadow: 0 0 0 2px var(--primary);
+}
+.stun-add[aria-disabled='true'] {
+  color: var(--ink-3);
+}
+.stun-plus {
+  display: block;
+  width: var(--space-12);
+  height: var(--space-12);
+  color: inherit;
+}
+.stun-add-word {
+  grid-column: 2 / span 3;
+}
+.stun-field {
+  min-width: 0;
+  height: var(--space-32);
+  padding: 0 var(--space-12);
+  border: 0;
+  border-radius: var(--radius-8);
+  outline: none;
+  background: var(--bg);
+  box-shadow: 0 0 0 1px var(--line-2);
+  font: inherit;
+  font-size: var(--type-13);
+  color: var(--ink);
+  transition: box-shadow var(--motion-fade) ease-out;
+}
+[data-theme='dark'] .stun-field {
+  background: var(--well-2);
+}
+.stun-field::placeholder {
+  color: var(--ink-3);
+}
+.stun-field:focus {
+  box-shadow: 0 0 0 1.5px var(--primary);
+}
+.stun-field.bad {
+  box-shadow: 0 0 0 1.5px var(--stun-danger);
+}
+.stun-go {
+  position: relative;
+  justify-content: center;
+  height: var(--space-32);
+  padding: 0 var(--space-16);
+}
+.stun-go .spin {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+}
+.stun-cancel {
+  height: var(--space-32);
+  padding: 0 var(--space-12);
+  margin-right: calc(-1 * var(--space-12));
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  font: inherit;
+  font-size: var(--type-13);
+  color: var(--ink-2);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fade) ease-out,
+    color var(--motion-fade) ease-out,
+    transform var(--motion-fade) ease-out;
+}
+.stun-cancel:hover {
+  background: var(--well-2);
+  color: var(--ink);
+}
+.stun-cancel:active {
+  background: var(--press);
+  transform: scale(var(--motion-press));
+}
+/* What went wrong, under the field. */
+.stun-err {
+  margin: 0;
+  padding: 0 var(--space-4) var(--space-4) calc(var(--space-4) + var(--space-16) + var(--space-12));
+  font-size: var(--type-12);
+  line-height: var(--leading-12);
+  color: var(--stun-danger);
+}
+
+/* None: one sentence where the rows go, then "加一个". */
+.stun-empty {
+  padding: var(--space-8) var(--space-4);
+  font-size: var(--type-13);
+  line-height: var(--leading-13);
+  color: var(--ink-2);
+}
+
+/* A narrow screen: the canvas scrolls, the wells stack (canvas.css). */
+@media (max-width: 767px) {
+  .win.full .canvas .relays-page.ops-scroll {
+    position: static;
+    overflow: visible;
+  }
+  .win.full .canvas .relays-page.ops-scroll::after {
+    content: none;
+  }
 }
 
 /* welcome.css */

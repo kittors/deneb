@@ -35,7 +35,8 @@ const theme = opt('theme', 'dark');
 const scale = Number(opt('scale', 1));
 const deliver = opt('deliver', false);
 const sheetN = Number(opt('sheet', 12));
-const W = 1440, H = 900, FPS = 60, STEP = 1000 / FPS;
+// --w, --h: the window's size (narrow, middle and wide windows, AGENTS §1.3).
+const W = Number(opt('w', 1440)), H = Number(opt('h', 900)), FPS = 60, STEP = 1000 / FPS;
 const name = isURL ? opt('name', 'web') : basename(scene, '.html');
 const outDir = resolve(opt('out', join(tmpdir(), 'deneb-rec', `${name}-${theme}`)));
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -223,6 +224,8 @@ for (const a of plan.actions) {
   if (a.down) steps.push({ at, run: () => press('mousePressed') });
   if (a.up) steps.push({ at, run: () => press('mouseReleased') });
   if (a.key) steps.push({ at, run: () => key(a.key) });
+  // type: words typed into what has the focus, as the keyboard would.
+  if (a.type) steps.push({ at, run: () => S('Input.insertText', { text: a.type }) });
   if (a.js) steps.push({ at, run: () => evaluate(a.js) });
   if (a.tab?.open) steps.push({ at, run: () => openSide(a.tab.open) });
   if (a.tab?.js) steps.push({ at, run: () => sideEval(a.tab.js) });
@@ -321,7 +324,7 @@ try {
 
 // ---- Video and contact sheet --------------------------------------------------------
 const mp4 = join(outDir, `${name}_${theme}.mp4`);
-execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-framerate', String(FPS), '-i', join(outDir, 'frames', '%05d.jpg'), '-vf', 'scale=1920:-2:flags=lanczos', '-c:v', 'libx264', '-threads', '2', '-preset', 'medium', '-crf', '18', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', mp4]);
+execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-framerate', String(FPS), '-i', join(outDir, 'frames', '%05d.jpg'), '-vf', `scale=${Math.min(1920, W * 2)}:-2:flags=lanczos`, '-c:v', 'libx264', '-threads', '2', '-preset', 'medium', '-crf', '18', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', mp4]);
 
 const sheet = join(outDir, `${name}_${theme}_sheet.jpg`);
 const sheetStep = Math.max(STEP, (to - from) / Math.max(1, sheetN - 1));

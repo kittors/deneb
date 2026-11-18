@@ -11,6 +11,7 @@ import { frame, clear, follow, App, G, esc, spaced, nameOf } from './shell.js';
 import { D } from './clock.js';
 import { api, ApiError } from './api.js';
 import { hold } from './ops.js';
+import { stunBlock } from './stun.js';
 import { colorIndex } from './model.js';
 import tokens from './tokens.js';
                                      
@@ -34,7 +35,7 @@ export function operatePage(root             , ctx     , _route       )         
   clear();
   app.setStack([]);
   const cv              = app.canvas;
-  const traced = ['.relays-page .rwell', '.relays-page .rcell', '.relays-page .wseg'];
+  const traced = ['.relays-page .rwell', '.relays-page .rcell', '.relays-page .wseg', '.relays-page .stun-row', '.relays-page .stun-addbox', '.relays-page .stun-empty'];
   app.o.trace = (app.o.trace || []).concat(traced);
 
   let v           = ctx.view();
@@ -89,6 +90,10 @@ export function operatePage(root             , ctx     , _route       )         
   );
   cv.appendChild(page);
   const $ = (s        , r             = page) => r.querySelector(s)               ;
+  // 查外网地址的服务 (0.1.11, stun.ts): a second well under this one, on a
+  // server that has them; the page scrolls when both are taller than it.
+  const stun = (v.features || []).includes('stun') ? stunBlock(app, ctx, page, $('.rwell.ops'), { parent: cv, x: TX }) : null;
+  if (stun) page.classList.add('ops-scroll');
   const subOf = (p     )         => {
     if (!p.v.online) return '连不上';
     // The numbers not here yet: the line waits for them (no word to take back).
@@ -435,7 +440,11 @@ export function operatePage(root             , ctx     , _route       )         
 
   draw({ still: true });
   loop();
-  if (D.recording && new URLSearchParams(location.search).get('record') === 'ops') import('./rec-ops.js').then(() => ((window                                      ).__ready = true));
+  const rec = D.recording ? new URLSearchParams(location.search).get('record') : null;
+  const ready = () => ((window                                      ).__ready = true);
+  if (rec === 'ops') import('./rec-ops.js').then(ready);
+  else if (rec === 'stun') import('./rec-stun.js').then(ready);
+  else if (rec === 'stun-states') import('./rec-stun-states.js').then(ready);
 
   // ---- The server's word: a new one comes in as standby -----------------------------------------
   const off = ctx.onView((nv) => {
@@ -463,10 +472,12 @@ export function operatePage(root             , ctx     , _route       )         
     }
     if (fresh.length) void refresh();
     else again();
+    stun?.update(nv);
   });
 
   return () => {
     gone = true;
+    stun?.destroy();
     off();
     timer?.cancel();
     app.o.trace = (app.o.trace || []).filter((s        ) => !traced.includes(s));

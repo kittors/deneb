@@ -186,6 +186,30 @@ type OperatorView struct {
 	// Joins are the join codes for public relays not used yet, oldest
 	// first: "等待安装", each with relay.revokeJoin to take it back.
 	Joins []RelayJoinView `json:"joins"`
+	// STUN are the STUN servers devices ask for their public address
+	// besides the relays (NetMap.STUN), in the list's order, with how
+	// their last lookup went: "查外网地址的服务" on the public relays'
+	// page. (0.1.11, FeatureSTUN)
+	STUN []OperatorSTUN `json:"stun,omitempty"`
+}
+
+// OperatorSTUN is one of the deployment's STUN servers, as the public
+// relays' page lists it (FeatureSTUN). IPv4 and IPv6 are what the last
+// lookup that worked found; devices get the server only when it has one.
+type OperatorSTUN struct {
+	// Server is the name and port, "stun.cloudflare.com:3478": what
+	// stun.remove takes.
+	Server   string     `json:"server"`
+	HostName string     `json:"hostName"`
+	Port     uint16     `json:"port"`
+	IPv4     netip.Addr `json:"ipv4,omitzero"`
+	IPv6     netip.Addr `json:"ipv6,omitzero"`
+	AddedAt  time.Time  `json:"addedAt,omitzero"`
+	// LookedUp is when its name was last looked up, zero before the first
+	// since the server started; LookupError what that lookup said, empty
+	// when it found an address.
+	LookedUp    time.Time `json:"lookedUp,omitzero"`
+	LookupError string    `json:"lookupError,omitempty"`
 }
 
 // OperatorUsage is the public relays' month and now, for the ops page

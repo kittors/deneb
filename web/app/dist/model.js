@@ -303,6 +303,22 @@
                                
                       
                          
+                                                                      
+                                                   
+                        
+ 
+
+// One STUN server on the public relays' page: what its last lookup on the
+// server found (an address it keeps while lookups fail), and how it went.
+                               
+                                                                       
+                   
+               
+                
+                
+                   
+                    
+                       
  
 
 // What the operators' page counts: people and devices on the public relays
@@ -327,7 +343,7 @@
                                                                                                           
                                                                                                                   
                                                                                                 
-                                       
+                                                                    
 
                          
               
@@ -354,6 +370,8 @@
                    
                                     
                    
+                                                           
+                
  
 
                      

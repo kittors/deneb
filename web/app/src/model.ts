@@ -303,6 +303,22 @@ export interface PersonBytes {
 export interface OperatorView {
   relays: RelayView[];
   joins: RelayJoinView[];
+  // The STUN servers devices ask for their public address besides the
+  // relays, in order (0.1.11, the "stun" feature).
+  stun?: OperatorSTUN[];
+}
+
+// One STUN server on the public relays' page: what its last lookup on the
+// server found (an address it keeps while lookups fail), and how it went.
+export interface OperatorSTUN {
+  server: string; // "stun.cloudflare.com:3478", what stun.remove takes
+  hostName: string;
+  port: number;
+  ipv4?: string;
+  ipv6?: string;
+  addedAt?: string;
+  lookedUp?: string;
+  lookupError?: string;
 }
 
 // What the operators' page counts: people and devices on the public relays
@@ -327,7 +343,7 @@ export type OpType =
   | 'share.create' | 'share.revoke' | 'share.release' | 'share.leave' | 'lan.setMode' | 'device.setPublic'
   | 'relay.create' | 'relay.token' | 'relay.rename' | 'relay.delete' | 'relay.add' | 'relay.remove' | 'relay.join'
   | 'relay.revokeJoin' | 'relay.setWeight' | 'relay.setCapacity' | 'relay.kick' | 'relay.unkick'
-  | 'device.delete' | 'account.delete';
+  | 'device.delete' | 'account.delete' | 'stun.add' | 'stun.remove';
 
 export interface OpArgs {
   lan?: LANID;
@@ -354,6 +370,8 @@ export interface OpArgs {
   dryRun?: boolean;
   ownedLANs?: 'transfer' | 'delete';
   confirm?: string;
+  // stun.add, stun.remove: "host" or "host:port" (0.1.11).
+  stun?: string;
 }
 
 export interface Op {

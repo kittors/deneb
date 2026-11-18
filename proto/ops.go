@@ -63,6 +63,10 @@ type OpArgs struct {
 	// Icon is lan.setIcon's new picture: one of LANIconPresets by name, or
 	// a picture. (M7)
 	Icon *LANIcon `json:"icon,omitempty"`
+
+	// STUN is the STUN server stun.add and stun.remove are about: "host"
+	// or "host:port", 3478 when it has none. (0.1.11)
+	STUN string `json:"stun,omitempty"`
 }
 
 // account.delete's choices for the LANs the person owns with others in.
@@ -273,6 +277,16 @@ const (
 	// LAN, Icon: a preset of LANIconPresets, or a picture, which the server
 	// takes as NormalizeLANIcon does. The LAN's owner only.
 	OpLANSetIcon OpType = "lan.setIcon"
+
+	// 0.1.11, FeatureSTUN.
+
+	// STUN. The deployment's operators: the STUN server goes at the end of
+	// the list once the server has looked its name up; one it cannot is
+	// not added (ErrInvalid, saying so). Eight at most.
+	OpSTUNAdd OpType = "stun.add"
+	// STUN. The deployment's operators: off the list; devices stop asking
+	// it with their next map.
+	OpSTUNRemove OpType = "stun.remove"
 )
 
 // OpResult is the answer to an op that went through. One that did not

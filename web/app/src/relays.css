@@ -21,7 +21,7 @@
   left: 448px;
   width: 172px;
 }
-.relays-page .rwell.ops {
+.relays-page .rwell:is(.ops, .stun) {
   left: 28px;
   width: 592px;
 }
