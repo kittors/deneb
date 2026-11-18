@@ -119,6 +119,15 @@ func (e *Engine) stateLocked() *apitype.State {
 	for _, ep := range e.ms.Endpoints() {
 		s.Engine.Endpoints = append(s.Engine.Endpoints, ep.String())
 	}
+	for _, pa := range e.ms.PublicAddrs() {
+		p := apitype.PublicAddr{Addr: pa.Addr.String(), Relay: apitype.RelayID(pa.Relay), Server: pa.Server}
+		if pa.Relay != "" && e.nm != nil {
+			if i := slices.IndexFunc(e.nm.Relays, func(r proto.Relay) bool { return r.ID == pa.Relay }); i >= 0 {
+				p.RelayName = e.nm.Relays[i].Name
+			}
+		}
+		s.Engine.Public = append(s.Engine.Public, p)
+	}
 	for _, p := range e.problems {
 		s.Engine.Problems = append(s.Engine.Problems, p)
 	}

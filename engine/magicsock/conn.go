@@ -224,10 +224,13 @@ type Conn struct {
 	peers      map[proto.NodePublic]*peerState
 	byDisco    map[proto.DiscoPublic]*peerState
 	byAddr     map[netip.AddrPort]*peerState
-	stunTx     map[stun.TxID]proto.RelayID
-	stunAddr   map[proto.RelayID]netip.AddrPort
+	stunTx     map[stun.TxID]stunReq
+	stunAddr   map[stunFrom]netip.AddrPort // what each STUN answer said
 	pongSelf   netip.AddrPort
 	lastEps    []netip.AddrPort
+	// stunServers are the network map's STUN servers, asked besides the
+	// relays (SetSTUNServers).
+	stunServers []proto.STUNServer
 	// viaTunnel are the public relays a connection last reached by their
 	// tunnel, and since when: a new connection starts there (tunnel.go).
 	viaTunnel map[proto.RelayID]time.Time
@@ -311,8 +314,8 @@ func New(nodePriv key.NodePrivate, discoPriv [32]byte, opts Options) (*Conn, err
 		peers:     map[proto.NodePublic]*peerState{},
 		byDisco:   map[proto.DiscoPublic]*peerState{},
 		byAddr:    map[netip.AddrPort]*peerState{},
-		stunTx:    map[stun.TxID]proto.RelayID{},
-		stunAddr:  map[proto.RelayID]netip.AddrPort{},
+		stunTx:    map[stun.TxID]stunReq{},
+		stunAddr:  map[stunFrom]netip.AddrPort{},
 		rx:        make(chan rxPacket, 1024),
 	}
 	c.discoPub = DiscoPublic(discoPriv)
@@ -461,6 +464,7 @@ func (c *Conn) ResetPaths(reason string) {
 	}
 	c.pongSelf = netip.AddrPort{}
 	clear(c.stunAddr)
+	clear(c.stunTx) // an answer from the old network would bring its address back
 	start, prefs, changed := c.chooseRelaysLocked(now)
 	c.mu.Unlock()
 	c.logf("[net] %s: redialing the relays and probing %d peers", reason, len(peers))
@@ -787,7 +791,7 @@ func (c *Conn) closeRelayLocked(id proto.RelayID, rc *relayConn) {
 	// the dial's whole timeout.
 	go rc.client.Close()
 	delete(c.relays, id)
-	delete(c.stunAddr, id)
+	delete(c.stunAddr, stunFrom{relay: id})
 }
 
 // relayLocked returns the open connection to relay id, opening it if the
@@ -1697,34 +1701,89 @@ func (c *Conn) stunLoop() {
 	}
 }
 
+// stunFrom is whose STUN answered: a relay's own, or one of the network
+// map's STUN servers.
+type stunFrom struct {
+	relay  proto.RelayID
+	server string // "stun.cloudflare.com:3478"; "" for a relay
+}
+
+// stunReq is a STUN request waiting for its answer.
+type stunReq struct {
+	from stunFrom
+	to   netip.AddrPort
+	at   time.Time
+}
+
+// stunAnswerWait is how long an answer may take; a later one is not
+// waited for (the next round asks again).
+const stunAnswerWait = 15 * time.Second
+
+// SetSTUNServers replaces the STUN servers asked besides the relays: the
+// network map's (proto.STUNServer), such as Cloudflare's, which still
+// answer where a relay's address is blocked. A new list is asked at once,
+// and what a server no longer on it saw is forgotten.
+func (c *Conn) SetSTUNServers(ss []proto.STUNServer) {
+	c.mu.Lock()
+	if slices.Equal(ss, c.stunServers) {
+		c.mu.Unlock()
+		return
+	}
+	c.stunServers = slices.Clone(ss)
+	keep := map[string]bool{}
+	for _, s := range ss {
+		keep[s.String()] = true
+	}
+	dropped := false
+	for f := range c.stunAddr {
+		if f.server != "" && !keep[f.server] {
+			delete(c.stunAddr, f)
+			dropped = true
+		}
+	}
+	c.mu.Unlock()
+	go c.stunOnce()
+	if dropped {
+		c.noteEndpoints()
+	}
+}
+
+// stunOnce asks every connected relay's STUN and every STUN server of the
+// map where this device is seen from. A server is asked at the IPv4
+// address the control server found for it, on the same socket (the one
+// pinned to the physical interface): its name is never looked up here,
+// and the socket is IPv4's.
 func (c *Conn) stunOnce() {
 	if c.opts.RelayOnly {
 		return // a public address is for direct paths
 	}
+	now := time.Now()
 	c.mu.Lock()
-	type target struct {
-		id   proto.RelayID
-		addr netip.AddrPort
-	}
-	var ts []target
+	var reqs []stunReq
 	for id, rc := range c.relays {
 		if rc.relay.STUNPort != 0 && rc.relay.IPv4.IsValid() {
-			ts = append(ts, target{id, netip.AddrPortFrom(rc.relay.IPv4, rc.relay.STUNPort)})
+			reqs = append(reqs, stunReq{stunFrom{relay: id}, netip.AddrPortFrom(rc.relay.IPv4, rc.relay.STUNPort), now})
 		}
 	}
-	if len(c.stunTx) > 64 {
-		// Answers that never came: forget them rather than grow forever.
-		clear(c.stunTx)
+	for _, s := range c.stunServers {
+		if s.Port != 0 && s.IPv4.Is4() {
+			reqs = append(reqs, stunReq{stunFrom{server: s.String()}, netip.AddrPortFrom(s.IPv4, s.Port), now})
+		}
 	}
-	reqs := make([][]byte, len(ts))
-	for i, t := range ts {
+	for tx, r := range c.stunTx {
+		if now.Sub(r.at) > stunAnswerWait {
+			delete(c.stunTx, tx) // never answered
+		}
+	}
+	msgs := make([][]byte, len(reqs))
+	for i, r := range reqs {
 		tx := stun.NewTxID()
-		c.stunTx[tx] = t.id
-		reqs[i] = stun.Request(tx)
+		c.stunTx[tx] = r
+		msgs[i] = stun.Request(tx)
 	}
 	c.mu.Unlock()
-	for i, t := range ts {
-		c.sock().WriteToUDPAddrPort(reqs[i], t.addr)
+	for i, r := range reqs {
+		c.sock().WriteToUDPAddrPort(msgs[i], r.to)
 	}
 }
 
@@ -1734,27 +1793,75 @@ func (c *Conn) handleSTUN(b []byte) {
 		return
 	}
 	c.mu.Lock()
-	id, ok := c.stunTx[tx]
+	r, ok := c.stunTx[tx]
 	if !ok {
 		c.mu.Unlock()
 		return
 	}
 	delete(c.stunTx, tx)
+	// One that went away since it was asked: its answer is not kept.
+	if r.from.relay != "" && c.relays[r.from.relay] == nil ||
+		r.from.server != "" && !slices.ContainsFunc(c.stunServers, func(s proto.STUNServer) bool { return s.String() == r.from.server }) {
+		c.mu.Unlock()
+		return
+	}
 	addr = netip.AddrPortFrom(addr.Addr().Unmap(), addr.Port())
-	changed := c.stunAddr[id] != addr
-	c.stunAddr[id] = addr
+	changed := c.stunAddr[r.from] != addr
+	c.stunAddr[r.from] = addr
+	who := r.from.server
+	if r.from.relay != "" {
+		who = fmt.Sprintf("relay %s (%s)", r.from.relay, c.relayCfg[r.from.relay].Name)
+	}
 	c.mu.Unlock()
 	if changed {
-		c.logf("[stun] public address as the relay sees it: %s", addr)
+		c.logf("[stun] public address as %s at %s sees it: %s", who, r.to, addr)
 		c.noteEndpoints()
 	}
 }
 
-// Endpoints lists where peers might reach this device: what STUN saw, what
-// peers saw in their pongs, the local interfaces' addresses, and any static
-// ones. Addresses of other tunnels (Tailscale's 100.64/10, a proxy's
-// 198.18/15) and of container bridges are left out: offering them only makes
-// peers ping into someone else's network.
+// PublicAddr is this device's address as one STUN answer saw it: a
+// relay's, or a STUN server's of the network map.
+type PublicAddr struct {
+	Addr   netip.AddrPort
+	Relay  proto.RelayID
+	Server string // "stun.cloudflare.com:3478", when not a relay's
+}
+
+// PublicAddrs is what each STUN answer last said: the relays' by ID, then
+// the map's STUN servers in its order. Empty until one answers, and again
+// from a change of network until one does.
+func (c *Conn) PublicAddrs() []PublicAddr {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.publicAddrsLocked()
+}
+
+func (c *Conn) publicAddrsLocked() []PublicAddr {
+	var out []PublicAddr
+	var ids []proto.RelayID
+	for f := range c.stunAddr {
+		if f.relay != "" {
+			ids = append(ids, f.relay)
+		}
+	}
+	slices.Sort(ids)
+	for _, id := range ids {
+		out = append(out, PublicAddr{Addr: c.stunAddr[stunFrom{relay: id}], Relay: id})
+	}
+	for _, s := range c.stunServers {
+		if a, ok := c.stunAddr[stunFrom{server: s.String()}]; ok {
+			out = append(out, PublicAddr{Addr: a, Server: s.String()})
+		}
+	}
+	return out
+}
+
+// Endpoints lists where peers might reach this device: what STUN saw (the
+// relays', then the map's STUN servers'), what peers saw in their pongs,
+// the local interfaces' addresses, and any static ones. Addresses of other
+// tunnels (Tailscale's 100.64/10, a proxy's 198.18/15) and of container
+// bridges are left out: offering them only makes peers ping into someone
+// else's network.
 func (c *Conn) Endpoints() []netip.AddrPort {
 	if c.opts.RelayOnly {
 		return nil // nowhere: the relays only
@@ -1768,13 +1875,8 @@ func (c *Conn) Endpoints() []netip.AddrPort {
 		}
 	}
 	c.mu.Lock()
-	ids := make([]proto.RelayID, 0, len(c.stunAddr))
-	for id := range c.stunAddr {
-		ids = append(ids, id)
-	}
-	slices.Sort(ids)
-	for _, id := range ids {
-		add(c.stunAddr[id])
+	for _, pa := range c.publicAddrsLocked() {
+		add(pa.Addr)
 	}
 	add(c.pongSelf)
 	c.mu.Unlock()

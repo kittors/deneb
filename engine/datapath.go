@@ -255,6 +255,9 @@ func (e *Engine) applyNetmapLocked(nm *proto.NetMap, version uint64) {
 		}
 	}
 	e.ms.SetRelays(nm.Relays, lists, e.opts.HomeRelay)
+	// And the STUN servers besides the relays, by the addresses the map
+	// gives (0.1.11).
+	e.ms.SetSTUNServers(nm.STUN)
 	e.ms.SetPeers(msPeers)
 	e.configureWGLocked(want)
 	e.nm = nm

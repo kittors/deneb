@@ -249,6 +249,40 @@ func whoami(st *apitype.State) string {
 	return string(st.SelfDeviceID)
 }
 
+// publicLine says where the STUN answers saw this device from, and who
+// saw it: "203.0.113.7:41641（stun.cloudflare.com、中转站“香港”看到的）".
+// A NAT that maps each server its own port gives several.
+func publicLine(ps []apitype.PublicAddr) string {
+	if len(ps) == 0 {
+		return "还没查到"
+	}
+	var addrs []string
+	by := map[string][]string{}
+	for _, p := range ps {
+		who := strings.TrimSuffix(p.Server, ":3478")
+		if p.Relay != "" {
+			name := p.RelayName
+			if name == "" {
+				name = string(p.Relay)
+			}
+			who = "中转站“" + name + "”"
+		}
+		if by[p.Addr] == nil {
+			addrs = append(addrs, p.Addr)
+		}
+		by[p.Addr] = append(by[p.Addr], who)
+	}
+	var out []string
+	for _, a := range addrs {
+		who := strings.Join(by[a], "、")
+		if last := who[len(who)-1]; last < 0x80 {
+			who += " " // "stun.cloudflare.com 看到的"
+		}
+		out = append(out, a+"（"+who+"看到的）")
+	}
+	return strings.Join(out, "；")
+}
+
 var kindWords = map[apitype.PathKind]string{
 	apitype.PathDirect:      "直接连上",
 	apitype.PathRelay:       "经中转",
@@ -307,6 +341,9 @@ func (c *cmd) status(ctx context.Context, args []string) error {
 		fmt.Fprintf(c.out, "，SOCKS5 %s", st.Engine.SOCKS)
 	}
 	fmt.Fprintln(c.out)
+	if !st.Engine.RelayOnly {
+		fmt.Fprintf(c.out, "外网地址：%s\n", publicLine(st.Engine.Public))
+	}
 	for _, r := range st.Relays {
 		state := "连着"
 		if !r.Connected {

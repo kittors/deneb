@@ -246,12 +246,26 @@ type EngineInfo struct {
 	SOCKS         string    `json:"socks,omitempty"`         // userspace mode: SOCKS5 for local apps
 	Endpoints     []string  `json:"endpoints,omitempty"`     // where peers may reach this device
 	Problems      []Problem `json:"problems,omitempty"`
+	// Public is this device's address on the internet as each STUN answer
+	// saw it, the relays' and the control server's STUN servers' (0.1.11).
+	// Empty until one answers; none for a RelayOnly engine.
+	Public []PublicAddr `json:"public,omitempty"`
 	// Watchers is how many /v1/watch streams are open: the desktop client
 	// holds one while its window is open, so a script can wait for it.
 	Watchers int `json:"watchers"`
 	// RelayOnly: no UDP port on the network, peers through relays only
 	// (the Windows window's own engine; ListenPort is 0).
 	RelayOnly bool `json:"relayOnly,omitempty"`
+}
+
+// PublicAddr is where one STUN answer saw this device from: a relay's STUN
+// (Relay and its name) or one of the STUN servers the control server lists
+// (Server, "stun.cloudflare.com:3478").
+type PublicAddr struct {
+	Addr      string  `json:"addr"` // "203.0.113.7:41641"
+	Relay     RelayID `json:"relay,omitempty"`
+	RelayName string  `json:"relayName,omitempty"`
+	Server    string  `json:"server,omitempty"`
 }
 
 // Problem is something the person may need to know, in one sentence.
