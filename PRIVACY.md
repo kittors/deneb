@@ -182,6 +182,12 @@ The server container's own log (kept by Docker) only has the few lines from befo
   - Cloudflare cannot see the content: what passes through a relay is packets the devices encrypted, and the keys are only on the devices at both ends.
   - It sees your device's IP address, when it connects, whom it sends to (only devices' public keys, not names) and how much it sends. On a direct connection, only the relay, that is the operator, sees these.
   - The relay gets your IP address from the `CF-Connecting-IP` header that Cloudflare adds, so its admission checks and its log see the same as on a direct connection.
+- **Finding your public address**: to connect two devices directly, each one has to know the address and port it has on the internet.
+  - Current versions ask the relays they are connected to (section 4). They also ask the public STUN services that the control server lists. By default the list has only Cloudflare's, `stun.cloudflare.com`.
+  - About every 20 seconds, and when the network changes, the device sends each service a short standard STUN request. The service answers with the address and port the request came from.
+  - The service sees your device's IP address and port, and when it asks. The request carries nothing else: no account, no device name and no key. Cloudflare handles this under its own privacy policy.
+  - The control server looks up each service's address and sends it with the network map, so your device does not ask your DNS server for it.
+  - The operator can change the list or empty it. With an empty list, devices only ask the relays.
 
 ## 7. How long things are kept
 
