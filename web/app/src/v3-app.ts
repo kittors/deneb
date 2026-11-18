@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { morph } from './morph.ts';
 // design/demos/v3/app.js as it is: the desktop's look, drawn as the design's demos draw it.
 // The app frame every scene shares (DESIGN.md §7, §9): window, sidebar,
 // header, canvas with device tiles and links, the device card, the tray,
@@ -66,9 +67,11 @@
     { file: '04-device-share.html', title: '管理员把设备分给某个人' },
     { file: '05-lan-members.html', title: '局域网里各管各的设备' },
   ];
+  // data-ball keys a ball when its row is drawn anew (morph.ts): one
+  // person's ball is not turned into another's.
   const ball = (k, cls = '') => {
     const p = PEOPLE[k];
-    return `<span class="ball ${cls}" style="--c:${p.c}">${esc(p.ch)}</span>`;
+    return `<span class="ball ${cls}" data-ball="${esc(k)}" style="--c:${p.c}">${esc(p.ch)}</span>`;
   };
   const dot = (c) => `<span class="ball" style="--c:${c}"></span>`;
 
@@ -174,7 +177,9 @@
     }
     setTitle(title, sub, tone = 'ok') {
       if (!this.win) return;
-      $('.title', this.win).textContent = title;
+      // A new name (a LAN renamed) takes the old one's place one at a time,
+      // as the line under it does (the 19th batch).
+      swapText($('.title', this.win), title);
       // A page's picture beside its title is the page's to set again
       // (setTitleIcon): another page's goes.
       this.setTitleIcon('');
@@ -194,7 +199,9 @@
     }
     setStack(keys) {
       if (!this.win) return;
-      $('.stack', this.win).innerHTML = keys.map((k) => ball(k)).join('');
+      // Someone come or gone: their ball fades in or out, the others stay
+      // (morph.ts).
+      morph($('.stack', this.win), keys.map((k) => ball(k)).join(''));
     }
     nav(id) {
       return this.win && $(`.nav[data-id="${id}"]`, this.win);
@@ -333,10 +340,14 @@
       const n = this.nodes[id];
       if (!n) return;
       const sm = $('.name small', n.el);
-      if (sm.textContent === text) return;
-      sm.textContent = text;
-      sm.animate([{ opacity: 0, transform: 'translateY(2px)' }, { opacity: 1, transform: 'none' }], { duration: 260, easing: 'ease-out' });
+      if (sm.__want === text || (!sm.__want && sm.textContent === text)) return;
+      sm.__want = text;
+      // One at a time: the old words fade out, then the new in (the 19th
+      // batch; the new ones used to show at once, the old gone in a frame).
+      swapText(sm, text);
       this.dirty = true;
+      // Laid out again once the new words are in (their width).
+      D.after(motionMs('--motion-swap-out') + 20, () => (this.dirty = true));
     }
     move(id, x, y) {
       const n = this.nodes[id];
@@ -838,7 +849,10 @@
     // opens; refreshing it (a status changed) swaps the words in place,
     // and switching to another device fades the content briefly. An open
     // "更多" stays open.
-    sheet(html, key) {
+    // o.morph: the page's card drawn anew in place, when it is the same
+    // card refreshed: what is on both stays, what changes changes one at a
+    // time (morph.ts). Its handlers must be idempotent (set as on*).
+    sheet(html, key, o = {}) {
       const s = this.sheetEl;
       if (s.__closing) {
         // Reopened while closing: it stays, as it is.
@@ -853,7 +867,8 @@
       // the new words' own, not that change's mid-way value.)
       if (s.__h) s.__h.cancel(), (s.__h = null);
       this.sheetKey = key;
-      s.innerHTML = html;
+      if (sameKey && o.morph) morph(s, html);
+      else s.innerHTML = html;
       s.style.display = '';
       // Opening, it grows out of its top right corner (0.96 → 1, about
       // 200ms). Another device: the new words show at once and fade in
@@ -862,7 +877,12 @@
       else if (!sameKey && key != null) for (const c of s.children) c.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 150, easing: 'ease-out' });
       const close = $('.sheet-close', s);
       if (close) close.onclick = () => this.closeSheet();
-      for (const sw of s.querySelectorAll('.sw:not([data-own])')) sw.addEventListener('click', () => sw.classList.toggle('on'));
+      for (const sw of s.querySelectorAll('.sw:not([data-own])'))
+        if (!sw.__toggles) {
+          // Once: a card drawn anew in place keeps its switches.
+          sw.__toggles = true;
+          sw.addEventListener('click', () => sw.classList.toggle('on'));
+        }
       const more = $('.more', s), det = $('.detail', s);
       if (more && moreOpen && sameKey) {
         more.classList.add('open');

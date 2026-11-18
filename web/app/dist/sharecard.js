@@ -245,11 +245,13 @@ export function wireShare(app     , ctx     , view                , el          
       pick = '';
       redraw();
     };
-    chip.addEventListener('click', (e) => {
+    // Set, not added: a card drawn anew in place (morph.ts) keeps its
+    // elements, and must not get them twice.
+    chip.onclick = (e) => {
       if ((e.target           ).closest('.x')) return;
       toggle();
-    });
-    chip.addEventListener('keydown', (e) => (e                 ).key === 'Enter' && toggle());
+    };
+    chip.onkeydown = (e) => e.key === 'Enter' && toggle();
     (chip.querySelector('.x')               ).onclick = (e) => {
       e.stopPropagation();
       const d = dev(chip.dataset.dev          );
@@ -377,15 +379,20 @@ export function seatCard(v          , inviteHere         )         {
 }
 
 export function wireSeats(app     , ctx     , view                , el             , redraw            , invite            , at     = {})       {
-  (el.querySelector('[data-act="free"]')                      )?.addEventListener('click', () => {
+  // Set, not added (as wireShare's).
+  const on = (act        , fn            ) => {
+    const b = el.querySelector(`[data-act="${act}"]`)                      ;
+    if (b) b.onclick = fn;
+  };
+  on('free', () => {
     seatState.freeing = true;
     redraw();
   });
-  (el.querySelector('[data-act="done"]')                      )?.addEventListener('click', () => {
+  on('done', () => {
     seatState.freeing = false;
     redraw();
   });
-  (el.querySelector('[data-act="invite"]')                      )?.addEventListener('click', () => {
+  on('invite', () => {
     seatState.freeing = false;
     seatState.forWho = '';
     app.closeSheet();

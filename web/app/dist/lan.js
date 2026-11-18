@@ -111,10 +111,19 @@ export function lanPage(root             , ctx     , route       )             {
     el.classList.toggle('wait', !!d.wait);
     el.classList.toggle('off', !dashed && !!(d.off || d.note === '登录过期了'));
     const tile = el.querySelector('.tile')               ;
-    const dash = tile.querySelector('svg.dash');
-    if (dashed && !dash) tile.insertAdjacentHTML('afterbegin', DASH);
-    if (!dashed && dash) dash.remove();
-    let x = el.querySelector(':scope > .x')                      ;
+    // What comes or goes on it fades (the 19th batch: in one frame before).
+    const come = (e                ) => e?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160, easing: 'ease-out' });
+    const go = (e         ) => {
+      e.classList.add('going');
+      e.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 160, easing: 'ease-out', fill: 'forwards' }).finished.then(() => e.remove(), () => e.remove());
+    };
+    const dash = tile.querySelector('svg.dash:not(.going)');
+    if (dashed && !dash) {
+      tile.insertAdjacentHTML('afterbegin', DASH);
+      come(tile.querySelector('svg.dash'));
+    }
+    if (!dashed && dash) go(dash);
+    let x = el.querySelector(':scope > .x:not(.going)')                      ;
     if (d.wait && !x) {
       x = App.h(`<button class="x" type="button" aria-label="${lan .owner === v.me ? '拒绝' : '撤回'}">${G.ui('close', 10)}</button>`)               ;
       x.addEventListener('pointerdown', (e) => e.stopPropagation());
@@ -123,8 +132,9 @@ export function lanPage(root             , ctx     , route       )             {
         turnAway(id);
       });
       el.appendChild(x);
-    } else if (!d.wait && x) x.remove();
-    let r = el.querySelector(':scope > .renew')                      ;
+      come(x);
+    } else if (!d.wait && x) go(x);
+    let r = el.querySelector(':scope > .renew:not(.going)')                      ;
     if (d.renew && !r) {
       r = App.h(`<button class="renew" type="button" aria-label="续上" title="续上"></button>`)               ;
       r.addEventListener('pointerdown', (e) => e.stopPropagation());
@@ -133,7 +143,8 @@ export function lanPage(root             , ctx     , route       )             {
         renew(id);
       });
       el.appendChild(r);
-    } else if (!d.renew && r) r.remove();
+      come(r);
+    } else if (!d.renew && r) go(r);
     app.setSub(id, statusOf(id));
     el.setAttribute('aria-label', `${d.name}，${statusOf(id)}`);
   }
@@ -671,7 +682,9 @@ export function lanPage(root             , ctx     , route       )             {
   }
   function drawPerson(who        )       {
     const role = lan .owner === who ? `${lan .name}的拥有者` : `${lan .name}的成员`;
-    const s = app.sheet(personCard(v, who, role), 'person:' + who);
+    // Drawn anew in place as the view changes (morph.ts): what changes,
+    // one at a time.
+    const s = app.sheet(personCard(v, who, role), 'person:' + who, { morph: true });
     wireShare(app, ctx, () => v, s, () => drawPerson(who), at0());
     wireGiven(ctx, s);
   }
@@ -682,7 +695,7 @@ export function lanPage(root             , ctx     , route       )             {
     drawSeats();
   }
   function drawSeats()       {
-    const s = app.sheet(seatCard(v, true), 'seats');
+    const s = app.sheet(seatCard(v, true), 'seats', { morph: true });
     wireSeats(app, ctx, () => v, s, () => {
       drawSeats();
       headLine();
@@ -715,7 +728,7 @@ export function lanPage(root             , ctx     , route       )             {
       html +=
         `<div class="label">设备共享</div><div class="rows"><div class="row"><span>成员只用分到的设备</span><button class="sw ${mode === 'share' ? 'on' : ''}" data-own data-mode role="switch" aria-checked="${mode === 'share'}" aria-label="成员只用分到的设备"></button></div></div>` +
         `<div class="hint">${mode === 'share' ? '关掉后，成员要自己把设备拖进来' : '打开后，成员的设备移出去，你把设备拖到成员身上分给他'}</div>`;
-    const s = app.sheet(html, 'lan');
+    const s = app.sheet(html, 'lan', { morph: true });
     for (const sw of s.querySelectorAll('.sw[data-ap]')                           )
       sw.onclick = () => {
         const on = !sw.classList.contains('on');
@@ -850,7 +863,7 @@ export function lanPage(root             , ctx     , route       )             {
       who +
       share +
       `<div class="card-foot"><button class="more">更多${G.ui('chevron', 14)}</button>${mine ? `<button class="out-btn">${d.wait ? '不加了' : '移出这个局域网'}</button>` : ''}</div><div class="detail"><p>${esc(addrs ? '地址 ' + addrs : '')}</p></div>`;
-    const s = app.sheet(head(id, st) + body, id);
+    const s = app.sheet(head(id, st) + body, id, { morph: true });
     if (share) wireShare(app, ctx, () => v, s, () => openCard(id), at0());
     const act = s.querySelector('.st-act')                      ;
     if (act)
@@ -973,6 +986,8 @@ export function lanPage(root             , ctx     , route       )             {
       }
       if (!DEVS[id].x) Object.assign(DEVS[id], { x: cv.clientWidth - 120, y: 120 });
       const n = mount(id, { keep: false });
+      // It fades in as it comes (the 19th batch: it was there in one frame).
+      n.el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 220, easing: 'ease-out' });
       app.settle(n, app.freeSpot(id, { x: DEVS[id].x, y: DEVS[id].y }), D.Bouncy);
     }
     for (const id of Object.keys(DEVS)) {

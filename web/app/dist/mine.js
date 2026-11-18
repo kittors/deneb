@@ -152,6 +152,8 @@ export function minePage(root             , ctx     , _route       )            
         `<div class="del-row"><button class="del-btn" type="button">${G.ui('trash', 14)}删除这台设备</button>` +
         `<p>彻底删掉：${d.out ? '' : '马上登出，'}再登录是新设备、新地址。<br>${d.out ? '留着的话，在它上面再登录，地址不变。' : '只是暂时不用，在它上面登出就行，地址不变。'}</p></div></div>`,
       id,
+      // Drawn anew in place as the view changes (morph.ts).
+      { morph: true },
     );
     for (const b of sh.querySelectorAll('.lan-chips .schip')                           ) {
       const l = lans.find((x) => x.id === b.dataset.l);

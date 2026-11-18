@@ -142,7 +142,9 @@ button {
   font-weight: 500;
   color: var(--ink-2);
   cursor: default;
-  transition: background 0.16s ease-out, color 0.16s ease-out;
+  /* The chosen row's white and its shadow come and go together (the 19th
+     batch: the shadow came in one frame). */
+  transition: background 0.16s ease-out, color 0.16s ease-out, box-shadow 0.16s ease-out;
 }
 .nav:hover {
   background: var(--well-2);
@@ -346,6 +348,8 @@ button {
   border-radius: 50%;
   background: var(--ok);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent);
+  /* Online or not: its color fades (the 19th batch). */
+  transition: background var(--motion-fade) ease-out, box-shadow var(--motion-fade) ease-out;
 }
 .head .right {
   margin-left: auto;
@@ -402,7 +406,9 @@ button {
   place-items: center;
   background: linear-gradient(180deg, color-mix(in oklab, var(--c) 80%, white) 0%, var(--c) 58%, color-mix(in oklab, var(--c) 90%, black) 100%);
   box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.45), inset 0 -2px 6px rgba(0, 0, 0, 0.12), 0 8px 18px color-mix(in srgb, var(--c) 30%, transparent), 0 1px 2px rgba(0, 0, 0, 0.1);
-  transition: transform 0.4s cubic-bezier(0.3, 1.35, 0.5, 1), box-shadow 0.3s ease-out;
+  /* --c fades too (registered as a color, canvas.css): a device going
+     offline greys over a moment, not in one frame (the 19th batch). */
+  transition: transform 0.4s cubic-bezier(0.3, 1.35, 0.5, 1), box-shadow 0.3s ease-out, --c 0.16s ease-out;
 }
 .tile::before {
   content: '';
@@ -419,6 +425,7 @@ button {
   position: relative;
   fill: #fff;
   filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.16));
+  transition: opacity 0.16s ease-out;
 }
 .dev:hover .tile {
   transform: translateY(-2px);

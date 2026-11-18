@@ -13,6 +13,7 @@ import { LAN_ICON_ROW, lanIconHTML, lanIcons } from './lanicon.js';
                                                                              
 import { ApiError } from './api.js';
 import { D } from './clock.js';
+import { morph } from './morph.js';
                                      
 
 // The design's drawing lives on window: App (the frame, canvas, drag,
@@ -268,13 +269,27 @@ function side(v          , sel        , ctx     )       {
       row('ops', '公共中转站', G.ui('relayLine', 18)) +
       row('ops-log', '记录', OPS_LOG);
   }
+  // Drawn anew in place (morph.ts): the rows on both stay, a count that
+  // changes takes the old one's place one at a time, a row that comes or
+  // goes fades in or out, and the one under the pointer keeps its hover
+  // (the 19th batch: it was written whole, and every change showed in one
+  // frame). 新建局域网 while its name is typed stays as it is.
   const list = app.win.querySelector('.side-list');
-  list.innerHTML = html;
+  morph(list, html, { keep: (el) => el.classList.contains('naming') });
+  // Each row's handlers once (it stays from one drawing to the next), going
+  // by the page as it is when clicked.
   const nl = list.querySelector('.new-lan')               ;
-  nl.addEventListener('click', () => naming(nl, ctx));
-  nl.addEventListener('keydown', (e       ) => ((e                 ).key === 'Enter' && !nl.classList.contains('naming') ? naming(nl, ctx) : undefined));
+  if (!wired.has(nl)) {
+    wired.add(nl);
+    nl.addEventListener('click', () => current && naming(nl, current.ctx));
+    nl.addEventListener('keydown', (e       ) => ((e                 ).key === 'Enter' && current && !nl.classList.contains('naming') ? naming(nl, current.ctx) : undefined));
+  }
   for (const nav of list.querySelectorAll('.nav[data-id]')) {
+    if (wired.has(nav)) continue;
+    wired.add(nav);
     const go = () => {
+      if (!current) return;
+      const ctx = current.ctx;
       const id = (nav               ).dataset.id          ;
       const [kind, arg] = id.includes(':') ? [id.slice(0, id.indexOf(':')), id.slice(id.indexOf(':') + 1)] : [id, ''];
       if (kind === 'invitation') return showInvitation(arg, ctx);
@@ -285,6 +300,8 @@ function side(v          , sel        , ctx     )       {
     nav.addEventListener('keydown', (e       ) => ((e                 ).key === 'Enter' ? go() : undefined));
   }
 }
+// wired: the sidebar's rows whose handlers are on.
+const wired = new WeakSet         ();
 
 // naming is 新建局域网's row as a field for the name (§14.14, the desktop's
 // views.go): Enter, or leaving it with a name, makes the LAN, which the
@@ -420,8 +437,9 @@ export function follow(v          )       {
   for (const id of ids) seenShares?.add(id);
   if (fresh.length) {
     const r = app.win.querySelector('.nav[data-id="shared"]');
-    // (It ends on the row's own background, white when it is chosen.)
+    // (It starts and ends on the row's own background, white when it is
+    // chosen: the tint comes in and goes, never in one frame.)
     const tint = 'color-mix(in srgb, var(--primary) 14%, transparent)';
-    r?.animate([{ background: tint }, { background: tint, offset: 0.3 }], { duration: 1200, easing: 'ease-out' });
+    r?.animate([{ background: tint, offset: 0.15 }, { background: tint, offset: 0.35 }], { duration: 1200, easing: 'ease-out' });
   }
 }

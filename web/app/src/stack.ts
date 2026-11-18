@@ -94,14 +94,21 @@ export class Stack {
       el.setAttribute('aria-label', label);
       if (fresh || old !== b.how) el.innerHTML = App.ball(b.id) + (b.how !== 'member' ? `<span class="dash" style="--c:${App.PEOPLE[b.id]?.c}">${esc(App.PEOPLE[b.id]?.ch || '')}</span><button class="x" type="button" aria-label="${b.how === 'waits' ? '拒绝' : '收回邀请'}">${G.ui('close', 10)}</button>` : '');
       if (prev ? prev.nextSibling !== el : this.el.firstChild !== el) this.el.insertBefore(el, prev ? prev.nextSibling : this.el.firstChild);
-      if (fresh && !first) el.animate([{ transform: 'scale(0.5)', opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 420, easing: 'cubic-bezier(0.3, 1.3, 0.5, 1)' });
+      if (fresh && !first) {
+        el.animate([{ transform: 'scale(0.5)', opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 420, easing: 'cubic-bezier(0.3, 1.3, 0.5, 1)' });
+        // Its room opens as it comes, so that the balls beside it move along
+        // rather than jump over by one (the 19th batch).
+        el.animate([{ marginLeft: -el.offsetWidth + 'px' }, { marginLeft: getComputedStyle(el).marginLeft }], { duration: 250, easing: 'cubic-bezier(0.3, 0.3, 0.2, 1)' });
+      }
       else if (old === 'waits' && b.how === 'member') el.animate([{ transform: 'scale(0.88)' }, { transform: 'scale(1.08)', offset: 0.5 }, { transform: 'none' }], { duration: 560, easing: 'cubic-bezier(0.3, 1.2, 0.5, 1)' });
       prev = el;
     }
     for (const [k, el] of was)
       if (!keep.has(k) && !el.classList.contains('leaving')) {
         el.classList.add('leaving');
-        el.animate([{ transform: 'none', opacity: 1 }, { transform: 'scale(0.5)', opacity: 0 }], { duration: 220, easing: 'ease-in', fill: 'forwards' }).finished.then(() => el.remove());
+        // Its room closes as it goes, the others moving over (the 19th
+        // batch: they jumped when it was taken out).
+        el.animate([{ transform: 'none', opacity: 1, marginLeft: getComputedStyle(el).marginLeft }, { transform: 'scale(0.5)', opacity: 0, marginLeft: -el.offsetWidth + 'px' }], { duration: 220, easing: 'ease-in', fill: 'forwards' }).finished.then(() => el.remove());
       }
     this.balls = balls;
   }

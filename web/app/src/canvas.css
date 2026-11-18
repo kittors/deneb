@@ -1,3 +1,11 @@
+/* --c, a device's or a person's color, is a color the browser can fade
+   between (a tile going grey, the 19th batch). */
+@property --c {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: transparent;
+}
+
 /* The app's own look on top of the design's (a-v3.css): the frame filling
    the page, scene 4's console (as design/demos/04-device-share.html), the
    dashed "this computer", the download card and the relays page (as
@@ -988,13 +996,17 @@ body {
   color: var(--ink);
 }
 .schip {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 5px;
   height: 28px;
   max-width: 100%;
   padding: 0 11px;
-  border: 1.5px dashed color-mix(in srgb, var(--ink) 22%, transparent);
+  /* The dashed outline is drawn over it (::before), to fade as the chip is
+     chosen, its ground coming in: a dashed border turning solid changed in
+     one frame (the 19th batch). */
+  border: 1.5px solid transparent;
   border-radius: 999px;
   background: transparent;
   color: var(--ink-2);
@@ -1002,7 +1014,16 @@ body {
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  transition: transform 0.2s cubic-bezier(0.3, 1.5, 0.5, 1), background 0.15s, color 0.15s, border-color 0.15s;
+  transition: transform 0.2s cubic-bezier(0.3, 1.5, 0.5, 1), background 0.15s, color 0.15s, padding 0.15s;
+}
+.schip::before {
+  content: '';
+  position: absolute;
+  inset: -1.5px;
+  border: 1.5px dashed color-mix(in srgb, var(--ink) 22%, transparent);
+  border-radius: inherit;
+  pointer-events: none;
+  transition: opacity 0.15s, border-color 0.15s;
 }
 /* A part of the services that comes fades in; one that goes fades out and
    folds (mine.ts motion): drawn again mid-way, it goes on from there. */
@@ -1089,17 +1110,22 @@ body {
   white-space: nowrap;
 }
 .schip:hover {
-  border-color: var(--primary);
   color: var(--primary);
+}
+.schip:hover::before {
+  border-color: var(--primary);
 }
 .schip:active {
   transform: scale(0.94);
 }
 .schip.on {
   padding: 0 12px 0 8px;
-  border: 1.5px solid transparent;
   background: color-mix(in srgb, var(--primary) 12%, transparent);
   color: var(--primary);
+}
+.schip.on::before,
+.sheet .schip.asking::before {
+  opacity: 0;
 }
 .schip.on:hover {
   background: color-mix(in srgb, var(--primary) 18%, transparent);
@@ -1109,7 +1135,7 @@ body {
   padding: 0 12px 0 8px;
 }
 /* Asked, waiting for the LAN's owner: dashed in blue, "等待同意" after. */
-.schip.wait {
+.schip.wait::before {
   border-color: color-mix(in srgb, var(--primary) 50%, transparent);
 }
 .schip-x {

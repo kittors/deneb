@@ -926,6 +926,9 @@ func (m *mock) handler() http.Handler {
 	mux.Handle("POST /api/v1/_mock/seed", post(m.authed(m.seedMe)))
 	mux.Handle("POST /api/v1/_mock/stun", post(m.authed(m.stunSceneHandler)))
 	mux.Handle("POST /api/v1/_mock/stun-go", post(m.authed(m.stunGo)))
+	mux.Handle("POST /api/v1/_mock/online", post(m.authed(m.onlineSet)))
+	mux.Handle("POST /api/v1/_mock/lan-name", post(m.authed(m.lanName)))
+	mux.Handle("POST /api/v1/_mock/member", post(m.authed(m.memberSet)))
 	m.opsRoutes(mux, post)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fail(404, proto.ErrNotFound, "没有这个接口"))
