@@ -172,6 +172,13 @@ func (w *World) netMap(id proto.DeviceID, version uint64, isOnline online) *prot
 		}
 	}
 	slices.SortFunc(nm.Relays, func(a, b proto.Relay) int { return cmp.Compare(a.ID, b.ID) })
+	// The STUN servers besides the relays, the ones with an address
+	// (stun.go).
+	for _, s := range w.stun {
+		if s.IPv4.IsValid() || s.IPv6.IsValid() {
+			nm.STUN = append(nm.STUN, s.STUNServer)
+		}
+	}
 	return nm
 }
 
@@ -296,8 +303,9 @@ func (w *World) userView(me proto.PersonID, version uint64, isOnline online, now
 		LANs:    []proto.LANView{},
 		Devices: []proto.DeviceView{},
 		Relays:  []proto.Relay{},
-		// And the LANs' pictures (M7, lanicon.go).
-		Features: append(slices.Clone(proto.M4Features), proto.FeatureLANIcon),
+		// And the LANs' pictures (M7, lanicon.go), the STUN servers
+		// (0.1.11, stun.go).
+		Features: append(slices.Clone(proto.M4Features), proto.FeatureLANIcon, proto.FeatureSTUN),
 	}
 
 	// My LANs, in the order I joined them, or asked to: the ones I wait

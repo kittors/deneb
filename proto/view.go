@@ -117,6 +117,10 @@ const (
 	// a new LAN gets a preset at random. A client sees the members' balls
 	// without it. (M7)
 	FeatureLANIcon = "lanIcon"
+
+	// FeatureSTUN: the network map's STUN servers (NetMap.STUN), which
+	// the operators list, add and remove. (0.1.11)
+	FeatureSTUN = "stun"
 )
 
 // M2Features are the features of an M2 server.

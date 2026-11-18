@@ -59,7 +59,7 @@ func TestApproveDevices(t *testing.T) {
 	s := w.s
 	// The server says what it can do beyond M1, so a client shows the
 	// controls for it.
-	if f := w.mac.view().Features; !slices.Equal(f, append(slices.Clone(proto.M4Features), proto.FeatureLANIcon)) {
+	if f := w.mac.view().Features; !slices.Equal(f, append(slices.Clone(proto.M4Features), proto.FeatureLANIcon, proto.FeatureSTUN)) {
 		t.Fatalf("features %v", f)
 	}
 	// New LANs want both approved (the plan's §0.2, which the user took);

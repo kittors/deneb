@@ -2,6 +2,7 @@ package proto
 
 import (
 	"fmt"
+	"net"
 	"net/netip"
 	"slices"
 	"strconv"
@@ -32,6 +33,36 @@ type NetMap struct {
 	// Relays are the ones the scopes use and the ones the peers call home,
 	// sorted by ID: a packet to a peer goes through the peer's home relay.
 	Relays []Relay `json:"relays"`
+	// STUN are the STUN servers a device asks for its public address
+	// besides the relays, in the deployment's order: Cloudflare's unless
+	// the operators changed it. Only the ones the control server found an
+	// address for; none from a server without FeatureSTUN. (0.1.11)
+	STUN []STUNServer `json:"stun,omitempty"`
+}
+
+// STUNServer is a STUN service of someone else's, such as
+// stun.cloudflare.com:3478 (FeatureSTUN). A device sends it a plain RFC 5389
+// Binding request, as it does a relay's STUN, and learns the address and
+// port it is seen from; the service sees that and nothing else
+// (PRIVACY.md). Where a relay's address is blocked its STUN goes
+// unanswered, and this one still tells the device where peers can reach
+// it.
+//
+// The control server looks HostName up and sends what it found. A device
+// sends to IPv4 and IPv6 as they are and never looks the name up itself,
+// as for Relay: the local DNS may be a proxy's fake-ip mode
+// (multi-lan-tech §6.5). HostName is for the logs.
+type STUNServer struct {
+	HostName string     `json:"hostName"`
+	Port     uint16     `json:"port"`
+	IPv4     netip.Addr `json:"ipv4,omitzero"`
+	IPv6     netip.Addr `json:"ipv6,omitzero"`
+}
+
+// String is the server as the logs and the commands write it:
+// "stun.cloudflare.com:3478".
+func (s STUNServer) String() string {
+	return net.JoinHostPort(s.HostName, strconv.Itoa(int(s.Port)))
 }
 
 // Network is the deployment's address space, the same for every device.

@@ -320,6 +320,20 @@ var migrations = []string{
 		WHEN 4 THEN 'fluent3d/rabbit' WHEN 5 THEN 'fluent3d/frog' WHEN 6 THEN 'fluent3d/penguin' WHEN 7 THEN 'fluent3d/whale'
 		WHEN 8 THEN 'fluent3d/mushroom' WHEN 9 THEN 'fluent3d/cactus' WHEN 10 THEN 'fluent3d/rainbow' WHEN 11 THEN 'fluent3d/planet'
 		WHEN 12 THEN 'fluent3d/gamepad' WHEN 13 THEN 'fluent3d/house' WHEN 14 THEN 'fluent3d/sunflower' ELSE 'fluent3d/rocket' END;`,
+	// 15 (0.1.11): the STUN servers devices ask for their public address
+	// besides the relays (stun.go), in the operators' order, Cloudflare's
+	// to begin with; ipv4 and ipv6 are what the last lookup here found,
+	// '' before the first.
+	`CREATE TABLE stun_servers (
+		host     TEXT NOT NULL,
+		port     INTEGER NOT NULL,
+		pos      INTEGER NOT NULL,
+		ipv4     TEXT NOT NULL DEFAULT '',
+		ipv6     TEXT NOT NULL DEFAULT '',
+		added_at INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (host, port)
+	);
+	INSERT INTO stun_servers (host, port, pos) VALUES ('stun.cloudflare.com', 3478, 0);`,
 }
 
 func migrate(db *sql.DB) error {

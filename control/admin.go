@@ -92,6 +92,7 @@ func (s *Server) ServeAdmin(ctx context.Context, path string) error {
 	m.HandleFunc("GET /operators", s.handleAdminOperators)
 	m.HandleFunc("POST /operators", s.handleAdminSetOperator)
 	s.adminRelayRoutes(m)
+	s.adminSTUNRoutes(m)
 	hs := &http.Server{Handler: m, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()

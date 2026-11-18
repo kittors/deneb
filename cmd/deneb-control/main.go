@@ -19,6 +19,7 @@
 //	deneb-control approve -code <code or link> -email <a seed test account>
 //	deneb-control expire -device <id> -in 72h             # a test: move a login's expiry
 //	deneb-control operators [-add|-remove <email>]       # who manages the public relays (the ops page)
+//	deneb-control stun [-add|-remove <host[:port]>]       # where devices ask for their public address, besides the relays
 //	deneb-control sessions [-revoke <email>]              # browsers logged in; log all of one account's out
 //	deneb-control backups                                 # the database's daily copies (<data>/backup)
 //	deneb-control devices [-person <email>]               # the devices, and in what state
@@ -100,6 +101,8 @@ func main() {
 			os.Exit(runSeats(os.Args[2:]))
 		case "operators":
 			os.Exit(runOperators(os.Args[2:]))
+		case "stun":
+			os.Exit(runSTUN(os.Args[2:]))
 		case "sessions":
 			os.Exit(runSessions(os.Args[2:]))
 		case "backups":
@@ -300,6 +303,7 @@ func main() {
 		RelayScript:   *relayScript,
 		ProbeRelay:    probe.Relay,
 		ProbeSecret:   probeSecret,
+		LookupIP:      net.DefaultResolver.LookupNetIP,
 		LogDir:        *logDir,
 		Mailer:        mailer,
 		OpenSignup:    *openSignup,
@@ -317,6 +321,7 @@ func main() {
 	defer stop()
 	go srv.RunBackups(ctx)
 	go srv.RunMaintenance(ctx)
+	go srv.RunSTUN(ctx)
 	go func() {
 		if err := srv.ServeAdmin(ctx, filepath.Join(*dataDir, control.AdminSocketName)); err != nil {
 			log.Printf("admin socket: %v", err)
@@ -1025,6 +1030,64 @@ func runOperators(args []string) int {
 		fmt.Printf("%s  %s\n", o.Email, o.DisplayName)
 	}
 	return 0
+}
+
+// runSTUN lists the STUN servers devices ask for their public address
+// besides the relays, or adds one at the end (-add) or removes one
+// (-remove), on the running server: the devices get the list with their
+// next map, at once.
+func runSTUN(args []string) int {
+	var add, remove *string
+	socket, fs := adminFlags("stun", args, func(fs *flag.FlagSet) {
+		add = fs.String("add", "", "add this STUN server, host or host:port (port 3478 if none); its name is looked up first")
+		remove = fs.String("remove", "", "remove this STUN server, host or host:port")
+	})
+	var ss []control.AdminSTUN
+	var err error
+	switch {
+	case *add != "" && *remove != "":
+		fs.Usage()
+		return 2
+	case *add != "":
+		ss, err = control.AdminSetSTUN(socket, control.AdminSTUNRequest{Add: *add})
+	case *remove != "":
+		ss, err = control.AdminSetSTUN(socket, control.AdminSTUNRequest{Remove: *remove})
+	default:
+		ss, err = control.AdminSTUNServers(socket)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	if len(ss) == 0 {
+		fmt.Println("没有查外网地址的服务：设备只问中转站")
+	}
+	for _, s := range ss {
+		fmt.Println(stunLine(s))
+	}
+	return 0
+}
+
+// stunLine is one STUN server: where it is, and how its last lookup went.
+func stunLine(s control.AdminSTUN) string {
+	var addrs []string
+	for _, a := range []netip.Addr{s.IPv4, s.IPv6} {
+		if a.IsValid() {
+			addrs = append(addrs, a.String())
+		}
+	}
+	if len(addrs) == 0 {
+		addrs = []string{"还没有地址"}
+	}
+	looked := "这次启动以后还没查过"
+	switch {
+	case s.LookedUp.IsZero():
+	case s.Error == "":
+		looked = s.LookedUp.Local().Format("01-02 15:04") + " 查过"
+	default:
+		looked = s.LookedUp.Local().Format("01-02 15:04") + " 没查到：" + s.Error
+	}
+	return s.Server + "  " + strings.Join(addrs, "  ") + "  " + looked
 }
 
 // runSessions lists who is logged in in a browser (the Web app), or logs

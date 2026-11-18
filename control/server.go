@@ -56,6 +56,11 @@ type Config struct {
 	// proto/probe.go): the watchdog on another machine, with the same
 	// secret in its file. Empty, relays are checked from here only.
 	ProbeSecret string
+	// LookupIP looks the STUN servers' names up (stun.go), as
+	// net.DefaultResolver.LookupNetIP does; nil looks nothing up, and a
+	// server given by its address is the only kind that gets one (the
+	// tests, which set their own).
+	LookupIP func(ctx context.Context, network, host string) ([]netip.Addr, error)
 	// RelayDownload is the download site's folder of relay programs
 	// (relayinstall.go), as https://deneb.app/download/relay/: from the
 	// deployment's settings, never the repository. Empty, the install
@@ -172,6 +177,8 @@ type Server struct {
 	relayBuild    relayBuild
 	relayClient   *http.Client // reads the download site; nil: the default (tests set it)
 	deviceSamples deviceSamples
+	// stunLooks is how the STUN servers' lookups went (stun.go).
+	stunLooks stunLooks
 	// versions wakes the relays' watches at every change (M4).
 	versions *versionWaiter
 	// keepAlive is how often a stream sends a keep-alive frame

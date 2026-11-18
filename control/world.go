@@ -63,6 +63,9 @@ type World struct {
 	shares       map[string]*share // every share, revoked ones too
 	// seatLimit is the deployment's seats per person; 0 means no limit.
 	seatLimit int
+	// stun is the deployment's STUN servers in order (stun.go), with the
+	// addresses the last lookup found.
+	stun []stunServer
 }
 
 // share is one device shared with one person (M3).
@@ -651,6 +654,24 @@ func loadWorld(q querier, network proto.Network, publicURL string, now time.Time
 		k.At, k.LiftedAt = fromMS(at), fromMS(lifted)
 		w.kicks[k.ID] = &k
 		w.indexKick(&k)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	err = each(`SELECT host, port, ipv4, ipv6, added_at FROM stun_servers ORDER BY pos, host, port`, func(r *sql.Rows) error {
+		var s stunServer
+		var v4, v6 string
+		var added int64
+		if err := r.Scan(&s.HostName, &s.Port, &v4, &v6, &added); err != nil {
+			return err
+		}
+		s.AddedAt = fromMS(added)
+		// An address that does not read is left out rather than the whole
+		// server down: the next lookup writes it again.
+		s.IPv4, _ = netip.ParseAddr(v4)
+		s.IPv6, _ = netip.ParseAddr(v6)
+		w.stun = append(w.stun, s)
 		return nil
 	})
 	if err != nil {
