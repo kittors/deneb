@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/kittors/deneb/client"
 )
 
 // TestChangeFrames records the window's words and numbers as they change,
@@ -16,7 +18,9 @@ import (
 // frames, a 60th of a second apart, go to <theme>-<scene>/, the stills
 // beside them, and marks.txt the frames the changes start in; cut-check.py
 // (design/tools) finds what changes in one frame there. DENEB_CHANGES_ONLY
-// picks scenes; DENEB_CHANGES_THEMES the themes (light by default).
+// picks scenes; DENEB_CHANGES_THEMES the themes (light by default);
+// DENEB_CHANGES_SIZES the windows' sizes, as 980x640,1440x900, each then
+// in <theme>-<w>x<h>-<scene>/ (the usual 1180x740 alone by default).
 func TestChangeFrames(t *testing.T) {
 	root := os.Getenv("DENEB_CHANGES")
 	if root == "" {
@@ -32,22 +36,62 @@ func TestChangeFrames(t *testing.T) {
 	if themes[0] == "" {
 		themes = []string{"light"}
 	}
+	sizes := strings.Split(os.Getenv("DENEB_CHANGES_SIZES"), ",")
 	for _, theme := range themes {
-		for _, sc := range changeScenes {
-			if len(only) > 0 && !only[sc.key] {
-				continue
-			}
-			w := newWaitRig(t, root, theme, theme == "dark", sc.key, false)
-			sc.play(w)
-			if w.dir != "" {
-				os.WriteFile(filepath.Join(w.dir, "marks.txt"), []byte(strings.Join(w.marks, "\n")+"\n"), 0o644)
+		for _, size := range sizes {
+			for _, sc := range changeScenes {
+				if len(only) > 0 && !only[sc.key] {
+					continue
+				}
+				var w *waitRig
+				if size == "" {
+					w = newWaitRig(t, root, theme, theme == "dark", sc.key, false)
+				} else {
+					var ww, wh int
+					if _, err := fmt.Sscanf(size, "%dx%d", &ww, &wh); err != nil {
+						t.Fatalf("DENEB_CHANGES_SIZES: %q is not <w>x<h>", size)
+					}
+					w = newSizedRig(t, root, theme, sc.key, ww, wh)
+				}
+				sc.play(w)
+				if w.dir != "" {
+					os.WriteFile(filepath.Join(w.dir, "marks.txt"), []byte(strings.Join(w.marks, "\n")+"\n"), 0o644)
+				}
 			}
 		}
 	}
 }
 
-// rec starts the recording, the store answering at once.
+// newSizedRig is newWaitRig with a window w by h, recording into
+// <root>/<theme>-<w>x<h>-<key>/.
+func newSizedRig(t *testing.T, root, theme, key string, w, h int) *waitRig {
+	t.Helper()
+	d := client.NewDemo()
+	d.Manual()
+	for _, e := range []string{"m3", "m4", "m5", "m6", "m7"} {
+		d.Simulate(e)
+	}
+	s := &slowStore{d: d}
+	a := newApp(s, demoPlaces())
+	s.a = a
+	r := &m3rig{t: t, a: a, d: d, tt: ui.NewTester(a.view, w, h)}
+	r.tt.SetDark(theme == "dark")
+	r.a.selected, r.a.more = "", false
+	r.move(float32(w-180), float32(h-80))
+	r.run(1200 * time.Millisecond)
+	return &waitRig{m3rig: r, s: s, root: root, key: fmt.Sprintf("%s-%dx%d-%s", theme, w, h, key)}
+}
+
+// flip presses what s labels, noting the frame it lets go in as a change.
+func (w *waitRig) flip(s string) {
+	w.press(s)
+	w.mark("change")
+}
+
+// rec starts the recording, the store answering at once; what was noted
+// before it is not of it.
 func (w *waitRig) rec() {
+	w.marks = nil
 	w.dir = filepath.Join(w.root, w.key)
 	w.still = w.dir
 	reset(w.t, w.dir)
@@ -129,6 +173,34 @@ var changeScenes = []struct {
 		w.mark("change")
 		w.tt.Key(0, ui.KeyBackspace)
 		w.run(1200 * time.Millisecond)
+	}},
+	// 周末联机 paused on this computer from its switch, then on again: its
+	// links drawn back into this computer, then out again (the 19th batch).
+	{"pause", func(w *waitRig) {
+		w.rec()
+		w.flip("暂停周末联机")
+		w.run(1500 * time.Millisecond)
+		w.shot("paused")
+		w.flip("暂停周末联机")
+		w.run(1800 * time.Millisecond)
+	}},
+	// From 周末联机 to 工作室, to 全部 and back, 我的游戏主机 put in 工作室
+	// too first: the links on both pages run on as their devices move, the
+	// others' fade with theirs (the 19th batch).
+	{"lan-switch", func(w *waitRig) {
+		w.openWords("我的设备")
+		w.press("把我的游戏主机加入工作室")
+		w.run(900 * time.Millisecond)
+		w.openWords("周末联机")
+		w.rec()
+		w.flip("工作室")
+		w.run(1800 * time.Millisecond)
+		w.shot("studio")
+		w.flip("全部")
+		w.run(1800 * time.Millisecond)
+		w.shot("all")
+		w.flip("周末联机")
+		w.run(1800 * time.Millisecond)
 	}},
 	// My Devices: a LAN chosen for a device, 工作室 for 我的游戏主机.
 	{"chip", func(w *waitRig) {

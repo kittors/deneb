@@ -105,8 +105,17 @@ type device struct {
 	lastRelay, fromRelay model.RelayID
 	pathAt               time.Time
 	// oldGeo is the shape of the link it had before it went from direct to
-	// the relay, or back: it fades as the new one grows out.
-	oldGeo *linkGeo
+	// the relay, or back: it fades as the new one grows out. oldBeams is the
+	// light that ran on it, which runs on there as it fades.
+	oldGeo   *linkGeo
+	oldBeams *beamRun
+	// wasGeo is the shape its link had on the page before, which this page
+	// draws another way (through the relay or straight: "全部" shows no
+	// relay), kept as it fades out and the new one fades in (reshaped,
+	// when); wasBeams the light that ran on it.
+	wasGeo   *linkGeo
+	wasBeams *beamRun
+	reshaped time.Time
 	// waited: it was waiting to be let in as the canvas was last brought to
 	// the snapshot; approved is when it was let in, to spring up full.
 	waited   bool

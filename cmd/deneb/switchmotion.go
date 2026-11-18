@@ -324,11 +324,22 @@ func (a *app) carryOver(c *ui.Context, w *canvasWas) {
 		nd.line, nd.lineText = od.line, od.lineText
 		// Its light runs on as it was.
 		run := w.beams[od.id]
+		og := w.geos[od.id]
 		if k.ghost {
-			run = od.ghostBeam
+			run, og = od.ghostBeam, od.ghostGeo
 		}
 		if run != nil {
 			a.beams[nd.id] = run
+		}
+		// Its link drawn another way on this page (through the relay or
+		// straight): the old shape fades out with its light, then the new
+		// fades in (paintLinks; the 19th batch).
+		if og != nil && og.relay != a.viaRelay(nd) {
+			nd.wasGeo, nd.reshaped = og, now
+			if run != nil {
+				copied := *run
+				nd.wasBeams = &copied
+			}
 		}
 	}
 	// What is left of the old fades out where it is, its link with it.
@@ -537,7 +548,9 @@ func (a *app) ghostsView(c *ui.Context, p *palette, w, h float32) {
 		live[d.key()] = true
 	}
 	a.sw.ghosts = slices.DeleteFunc(a.sw.ghosts, func(g *device) bool { return live[g.key()] })
-	a.sw.ghostRelays = slices.DeleteFunc(a.sw.ghostRelays, func(g *relayStop) bool { return a.stopOf(g.id) != nil })
+	// "全部" shows no relay: there the page before's fade out still, rather
+	// than go at once (the 19th batch).
+	a.sw.ghostRelays = slices.DeleteFunc(a.sw.ghostRelays, func(g *relayStop) bool { return !a.all() && a.stopOf(g.id) != nil })
 	for _, g := range slices.Clone(a.sw.ghosts) {
 		a.deviceView(c, p, g, w, h)
 	}

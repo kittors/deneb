@@ -536,6 +536,13 @@ func (a *app) deviceView(c *ui.Context, p *palette, d *device, w, h float32) {
 			}
 		}
 	}
+	if d.shifting || ghost {
+		// On its way to its place on this page from where it showed on the
+		// one before, or fading out where it was: not held inside this
+		// page's bounds at once, which put it at its region's edge, or up
+		// from below the tray's band, in one frame (the 19th batch).
+		bounds = nil
+	}
 	opts := ui.DraggableOptions{Bounds: bounds, Rigid: true, Animation: ui.Snappy}
 	if d.shifting {
 		// On both pages: to its place on the new one, as a layout moves.
@@ -883,7 +890,12 @@ func (a *app) relayView(c *ui.Context, p *palette, r *relayStop, w, h float32) {
 	if r.ghost {
 		el.PassThrough()
 	}
-	el.Draggable(&r.off, ui.DraggableOptions{Bounds: a.dragBounds(r.base, out, w, h), Rigid: true, Animation: anim})
+	bounds := a.dragBounds(r.base, out, w, h)
+	if r.shifting {
+		// As a device on its way (deviceView).
+		bounds = nil
+	}
+	el.Draggable(&r.off, ui.DraggableOptions{Bounds: bounds, Rigid: true, Animation: anim})
 	if _, _, ok := el.DragEnded(); ok && r.ghost {
 	} else if ok && out && a.overTray(r.at(), w, h) {
 		// Let go over the tray: this LAN no longer uses it (DESIGN §6.12).

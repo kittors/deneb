@@ -580,12 +580,14 @@ func (a *app) repath(c *ui.Context, d *device) {
 	if d.path == "self" || was == "self" {
 		return
 	}
+	// The link's shape as it was, and its light: what goes, goes from where
+	// it showed. From direct to the relay or back, the old way's light runs
+	// on there as it fades and its track fades as the new way grows out
+	// (scene 1); stopping, its track goes back along it; starting again,
+	// the line it waited with fades where it was (the 19th batch: no light,
+	// no line moved or gone in one frame).
+	d.oldGeo, d.oldBeams = a.geos[d.id], a.beams[d.id]
 	if linked(d.path) {
-		if linked(was) {
-			// From direct to the relay, or back: the old way's light stops,
-			// and its track fades as the new way grows out (scene 1).
-			d.oldGeo = a.geos[d.id]
-		}
 		d.joined = c.Now()
 		delete(a.beams, d.id)
 	}

@@ -127,16 +127,23 @@ func beamAt(u float64, i int, L, mid float32) (head, tail float32, ok bool) {
 
 // newRun starts the light of a link: spread along it for the links there
 // when the window opens, and, for one just drawn out, setting off from
-// both ends at once.
+// both ends at once, the second beam each way half a run later. None of
+// the fresh light is somewhere along the link at first: the second waits
+// past the end (on a long link half a run before its turn was still on
+// the way, and showed in the middle at once; the 19th batch).
 func newRun(id string, L float32, viaRelay, fresh bool) *beamRun {
 	var r beamRun
 	for i := range r {
 		total := cycle(id, i, L, viaRelay)
+		hold := 0.0
+		if viaRelay {
+			hold = relayHold * beamSpeed
+		}
 		switch {
 		case fresh && i%2 == 0:
 			r[i] = 0
 		case fresh:
-			r[i] = total - float64(L+beamTail)/2
+			r[i] = max(total-float64(L+beamTail)/2, float64(L+beamTail)+hold+1)
 		default:
 			r[i] = math.Mod((hash01(id, i)+float64(i%2)/2)*total, total)
 		}
@@ -157,11 +164,10 @@ type linkGeo struct {
 // geo returns the shape of the link to d, made anew only when its ends,
 // or the relay it goes through, moved.
 func (a *app) geo(d *device, me, o ui.Point) *linkGeo {
-	stop := a.stopFor(d)
-	relay := d.path == "relay" && !a.all() && stop != nil
+	relay := a.viaRelay(d)
 	var via ui.Point
 	if relay {
-		via = stop.live
+		via = a.stopFor(d).live
 	}
 	g := a.geos[d.id]
 	if g != nil && g.me == me && g.d == d.live && g.via == via && g.o == o && g.relay == relay {
@@ -180,6 +186,12 @@ func (a *app) geo(d *device, me, o ui.Point) *linkGeo {
 	g.dots.Dash(0, 0.01, 7)
 	g.cv.pathInto(&g.wait, 0, L, o)
 	return g
+}
+
+// viaRelay reports whether d's link is drawn through its relay: it goes
+// through one, and the page shows it ("全部" shows none).
+func (a *app) viaRelay(d *device) bool {
+	return d.path == "relay" && !a.all() && a.stopFor(d) != nil
 }
 
 // pathInto draws the part of the curve from s0 to s1 into path, offset by
@@ -237,7 +249,12 @@ func (a *app) paintLinks(pt *ui.Painter, r ui.Rect, p *palette, grow map[string]
 		if d.ghost {
 			g, ok = 1, true
 		}
-		if d == me || !ok || g <= 0 || d.unplaced || d.pending && d.leaving.IsZero() || d.vis <= 0 {
+		// Its path just changed (repath): in the first frame the new way
+		// has nothing drawn yet, but what went before still shows (the old
+		// way's track and light, the line it waited with), never nothing for
+		// a frame (the 19th batch).
+		changed := !d.pathAt.IsZero() && d.pathAt.Equal(d.joined) && now.Sub(d.pathAt) < trackIn
+		if d == me || !ok || g <= 0 && !changed || d.unplaced || d.pending && d.leaving.IsZero() || d.vis <= 0 {
 			continue
 		}
 		// Dimmed with its region while another LAN has the focus: its light
@@ -246,11 +263,35 @@ func (a *app) paintLinks(pt *ui.Painter, r ui.Rect, p *palette, grow map[string]
 		// This computer held up in the header: every link of its all but
 		// goes, rather than run up there (DESIGN §6.11).
 		fk *= 1 - 0.92*me.up
-		if old := d.oldGeo; old != nil {
-			if k := float32(now.Sub(d.pathAt)) / float32(trackIn); k < 1 && linked(d.path) {
-				pt.StrokePath(&old.track, 3, p.track.Alpha(fk*(1-ui.EaseInOut(max(0, k)))))
+		// Drawn another way than on the page before (through the relay or
+		// straight): the old shape and its light fade out first, then this
+		// one fades in, one at a time (the 19th batch).
+		if old := d.wasGeo; old != nil {
+			t := now.Sub(d.reshaped)
+			if t >= swapOut+swapIn {
+				d.wasGeo, d.wasBeams = nil, nil
 			} else {
-				d.oldGeo = nil
+				if t < swapOut {
+					out := fk * (1 - ui.EaseOut(float32(t)/float32(swapOut)))
+					pt.StrokePath(&old.track, 3, p.track.Alpha(out))
+					if d.wasBeams != nil {
+						a.paintBeams(pt, d, me, old, d.wasBeams, out, glow, dt, o)
+					}
+				}
+				fk *= ui.EaseOut(max(0, float32(t-swapOut)/float32(swapIn)))
+			}
+		}
+		// The shape the link had before its path changed (repath), kept
+		// while what was drawn on it goes.
+		was := d.oldGeo
+		if k := float32(now.Sub(d.pathAt)) / float32(trackIn); was != nil && k >= 1 {
+			d.oldGeo, d.oldBeams, was = nil, nil, nil
+		} else if was != nil && linked(d.path) && linked(d.fromPath) {
+			pt.StrokePath(&was.track, 3, p.track.Alpha(fk*(1-ui.EaseInOut(max(0, k)))))
+			// Its light runs on where it was as it fades, rather than go at
+			// once.
+			if f := float32(now.Sub(d.pathAt)) / float32(fadeTime); d.oldBeams != nil && f < 1 {
+				a.paintBeams(pt, d, me, was, d.oldBeams, fk*(1-ui.EaseOut(max(0, f))), glow, dt, o)
 			}
 		}
 		geo := d.ghostGeo
@@ -260,11 +301,17 @@ func (a *app) paintLinks(pt *ui.Painter, r ui.Rect, p *palette, grow map[string]
 		cv := geo.cv
 		L := cv.length()
 		if !linked(d.path) {
-			a.paintWaiting(pt, geo, d, g, fk, p, now, o)
+			// What it stopped carrying goes along the way it went: through
+			// the relay, if it did, not along the line it waits with.
+			went := geo
+			if was != nil {
+				went = was
+			}
+			a.paintWaiting(pt, geo, went, d, g, fk, p, now, o)
 			// Its light fades out as it stops, rather than go at once
 			// (switchmotion.go: the LAN's switch, a device gone offline).
 			if k := float32(now.Sub(d.pathAt)) / float32(fadeTime); !d.pathAt.IsZero() && k < 1 && linked(d.fromPath) {
-				a.paintBeams(pt, d, me, geo, fk*(1-ui.EaseOut(max(0, k))), glow, dt, o)
+				a.paintBeams(pt, d, me, went, a.beamRunOf(d, went), fk*(1-ui.EaseOut(max(0, k))), glow, dt, o)
 				pt.AnimationFrameRate(60)
 			}
 			continue
@@ -274,20 +321,29 @@ func (a *app) paintLinks(pt *ui.Painter, r ui.Rect, p *palette, grow map[string]
 			// the track growing out, which fades as the track meets: the
 			// link never shows nothing in between (scene 1).
 			if !d.pathAt.IsZero() && d.pathAt.Equal(d.joined) && d.fromPath != "" && !linked(d.fromPath) && d.fromPath != "self" {
-				a.paintWaitLine(pt, geo, d.fromPath, (1-g)*fk, p, now)
+				// Where it waited: the line it waited with goes from there.
+				line := geo
+				if was != nil {
+					line = was
+				}
+				a.paintWaitLine(pt, line, d.fromPath, (1-g)*fk, p, now)
 			}
 			if d.fromPath == "paused" && d.pathAt.Equal(d.joined) {
 				// Resumed: the track grows back out of this computer, a spot
 				// of light at its end (scene 3).
 				h := L * g
-				pt.StrokePath(cv.pathInto(&a.beamPath, 0, h, o), 3, p.track.Alpha(fk))
+				if h > 0.5 {
+					pt.StrokePath(cv.pathInto(&a.beamPath, 0, h, o), 3, p.track.Alpha(fk))
+				}
 				a.paintSpot(pt, cv, me, d, h, L, fk, o)
 				continue
 			}
 			// Drawn out from both ends, meeting in the middle (or back).
 			h := L / 2 * g
-			pt.StrokePath(cv.pathInto(&a.beamPath, 0, h, o), 3, p.track.Alpha(fk))
-			pt.StrokePath(cv.pathInto(&a.beamPath, L-h, L, o), 3, p.track.Alpha(fk))
+			if h > 0.5 {
+				pt.StrokePath(cv.pathInto(&a.beamPath, 0, h, o), 3, p.track.Alpha(fk))
+				pt.StrokePath(cv.pathInto(&a.beamPath, L-h, L, o), 3, p.track.Alpha(fk))
+			}
 			// A device that pops in or shrinks away where it is leaves its end
 			// of the track bare, which a tile in flight covers: the glow at
 			// the track's ends comes and goes with the track, rather than
@@ -308,6 +364,17 @@ func (a *app) paintLinks(pt *ui.Painter, r ui.Rect, p *palette, grow map[string]
 			}
 			continue
 		}
+		// Drawn out from both ends, its two spots of light met in the
+		// middle: they fade there as its light sets off from the ends,
+		// rather than go at once (the 19th batch). (Grown out of this
+		// computer, its one spot ended under the device.)
+		if !d.joined.IsZero() && !(d.fromPath == "paused" && d.pathAt.Equal(d.joined)) {
+			if k := float32(now.Sub(d.joined)-trackIn) / float32(fadeTime); k >= 0 && k < 1 {
+				spot := fk * (1 - ui.EaseOut(k))
+				a.paintSpot(pt, cv, me, d, L/2, L, spot, o)
+				a.paintSpot(pt, cv, me, d, L/2, L, spot, o)
+			}
+		}
 		// Held over the tray, it fades, to say that letting go cuts it;
 		// cut, it is a dotted line.
 		if live := fk * (1 - 0.6*d.dim) * (1 - 0.92*d.up) * (1 - d.cut); live > 0 {
@@ -317,7 +384,7 @@ func (a *app) paintLinks(pt *ui.Painter, r ui.Rect, p *palette, grow map[string]
 			pt.StrokePath(&geo.dots, 3, p.track.Alpha(fk*min(1, 2.2*d.cut)))
 		}
 		light := fk * (1 - 0.75*d.dim) * (1 - d.up) * (1 - d.cut)
-		a.paintBeams(pt, d, me, geo, light, glow, dt, o)
+		a.paintBeams(pt, d, me, geo, a.beamRunOf(d, geo), light, glow, dt, o)
 		if k := float32(now.Sub(d.closedAt)) / float32(closedRun); d.closed != "" && k >= 0 && k < 1 {
 			a.paintClosed(pt, cv, L, k, fk*(1-0.65*d.dim), glow, o)
 		}
@@ -371,24 +438,25 @@ func (a *app) paintClosed(pt *ui.Painter, cv curve, L, k, alpha, glow float32, o
 // to (正在连接…), and a still, dashed one while it cannot be (连不上, 不在线,
 // 已暂停) (DESIGN §3.5, scene 1). g draws it out and back in as the device
 // comes and goes; a link that just stopped carrying light fades its track
-// out as the line fades in.
-func (a *app) paintWaiting(pt *ui.Painter, geo *linkGeo, d *device, g, fk float32, p *palette, now time.Time, o ui.Point) {
+// out as the line fades in, its track along went, the way it went (through
+// the relay, if it did; the line goes straight).
+func (a *app) paintWaiting(pt *ui.Painter, geo, went *linkGeo, d *device, g, fk float32, p *palette, now time.Time, o ui.Point) {
 	alpha := g * fk
 	if k := float32(now.Sub(d.pathAt)) / float32(trackIn); d.path == "paused" && !d.pathAt.IsZero() && k < 1 && linked(d.fromPath) {
 		// Paused: the track goes back into this computer, carrying a spot
 		// of light home, and the dots stay where it was (scene 3).
 		e := ui.EaseInOut(max(0, k))
-		L := geo.cv.length()
+		L := went.cv.length()
 		h := L * (1 - e)
-		pt.StrokePath(geo.cv.pathInto(&a.beamPath, 0, h, o), 3, p.track.Alpha(alpha))
+		pt.StrokePath(went.cv.pathInto(&a.beamPath, 0, h, o), 3, p.track.Alpha(alpha))
 		if me := a.device(a.self); me != nil {
-			a.paintSpot(pt, geo.cv, me, d, h, L, alpha, o)
+			a.paintSpot(pt, went.cv, me, d, h, L, alpha, o)
 		}
 		a.paintWaitLine(pt, geo, d.path, alpha*e, p, now)
 		return
 	}
 	if k := float32(now.Sub(d.pathAt)) / float32(waitFade); !d.pathAt.IsZero() && k < 1 && linked(d.fromPath) {
-		pt.StrokePath(&geo.track, 3, p.track.Alpha(fk*(1-k)))
+		pt.StrokePath(&went.track, 3, p.track.Alpha(fk*(1-k)))
 		alpha *= max(0, k)
 	}
 	a.paintWaitLine(pt, geo, d.path, alpha, p, now)
@@ -436,23 +504,29 @@ func bendFor(id string) float32 {
 	return 0.08
 }
 
-// paintBeams draws the light running along a device's link, light as
-// strong as it is, and moves it on by dt.
-func (a *app) paintBeams(pt *ui.Painter, d, me *device, geo *linkGeo, light, glow float32, dt float64, o ui.Point) {
-	cv := geo.cv
-	L := cv.length()
+// beamRunOf is the light of d's link on geo, kept from frame to frame: its
+// own, or a ghost's, started anew when it has none.
+func (a *app) beamRunOf(d *device, geo *linkGeo) *beamRun {
 	run := a.beams[d.id]
 	if d.ghost {
 		run = d.ghostBeam
 	}
 	if run == nil {
-		run = newRun(d.id, L, geo.relay, !d.joined.IsZero())
+		run = newRun(d.id, geo.cv.length(), geo.relay, !d.joined.IsZero())
 		if d.ghost {
 			d.ghostBeam = run
 		} else {
 			a.beams[d.id] = run
 		}
 	}
+	return run
+}
+
+// paintBeams draws the light run along a device's link on geo, light as
+// strong as it is, and moves it on by dt.
+func (a *app) paintBeams(pt *ui.Painter, d, me *device, geo *linkGeo, run *beamRun, light, glow float32, dt float64, o ui.Point) {
+	cv := geo.cv
+	L := cv.length()
 	ca, cb := a.people[me.owner].color, a.people[d.owner].color
 	for i := range run {
 		run[i] = math.Mod(run[i]+dt*beamSpeed, cycle(d.id, i, L, geo.relay))
