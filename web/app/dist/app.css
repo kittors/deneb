@@ -5858,8 +5858,8 @@ body {
   background: var(--press);
   transform: scale(var(--motion-press));
 }
-.stun-rm.arm,
-.stun-rm.arm:hover {
+.stun-rm.red,
+.stun-rm.red:hover {
   color: var(--stun-danger);
 }
 @media (hover: none) {

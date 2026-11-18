@@ -78,7 +78,7 @@ func (w *World) publicRelays() []proto.RelayID {
 // cards and their codes waiting to be used (a public relay's code is no
 // one's: Owner empty).
 func (w *World) operatorView(now time.Time, isOnline online) *proto.OperatorView {
-	v := &proto.OperatorView{Relays: []proto.RelayView{}, Joins: w.myJoins("", now)}
+	v := &proto.OperatorView{Relays: []proto.RelayView{}, Joins: w.myJoins("", now), STUN: w.operatorSTUN()}
 	for _, id := range w.publicRelays() {
 		v.Relays = append(v.Relays, w.relayView(id, "", now, isOnline))
 	}

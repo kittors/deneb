@@ -367,6 +367,7 @@ func (s *Server) load(q querier, network proto.Network) (*World, error) {
 	w.relayStatus = s.relayLive.status
 	w.relayOffline, w.relayFull = s.relayLive.offline, s.relayLive.isFull
 	w.relayChecked, w.probeAny = s.checks.snapshot, s.cfg.Dev
+	w.stunLook = s.stunLooks.get
 	return w, nil
 }
 

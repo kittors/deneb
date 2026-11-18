@@ -296,10 +296,14 @@ func (s *Server) handleWebOps(w http.ResponseWriter, r *http.Request, ws *webSes
 	}
 	key := "web\x00" + ws.id + "\x00" + op.ID
 	now := s.now()
+	var prep any
+	if s.opNeedsPrep(key, op, now) {
+		prep = s.prepareOp(ws.person, op)
+	}
 	s.mu.Lock()
 	e, ok := s.ops.get(key, now)
 	if !ok {
-		e = s.applyOp("", ws.person, op)
+		e = s.applyOpWith("", ws.person, op, prep)
 		if e.status < 500 {
 			s.ops.put(key, e)
 		}

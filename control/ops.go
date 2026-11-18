@@ -78,10 +78,15 @@ func (s *Server) handleOps(w http.ResponseWriter, r *http.Request, c *caller) {
 	key := string(c.dev.ID) + "\x00" + op.ID
 	now := s.now()
 
+	// What must happen outside the lock, unless this is a retry.
+	var prep any
+	if s.opNeedsPrep(key, op, now) {
+		prep = s.prepareOp(c.dev.Owner, op)
+	}
 	s.mu.Lock()
 	e, ok := s.ops.get(key, now)
 	if !ok {
-		e = s.applyOp(c.dev.ID, "", op)
+		e = s.applyOpWith(c.dev.ID, "", op, prep)
 		if e.status < 500 {
 			s.ops.put(key, e)
 		}
@@ -97,6 +102,11 @@ func (s *Server) handleOps(w http.ResponseWriter, r *http.Request, c *caller) {
 // applyOp runs one op for the person logged in on device from, or, from
 // a browser (/api/v1), for person with no device; s.mu is held.
 func (s *Server) applyOp(from proto.DeviceID, person proto.PersonID, op proto.Op) opEntry {
+	return s.applyOpWith(from, person, op, nil)
+}
+
+// applyOpWith is applyOp with what prepareOp did before the lock.
+func (s *Server) applyOpWith(from proto.DeviceID, person proto.PersonID, op proto.Op, prep any) opEntry {
 	now := s.now()
 	var out proto.OpOutput
 	var ctx *opCtx
@@ -116,7 +126,7 @@ func (s *Server) applyOp(from proto.DeviceID, person proto.PersonID, op proto.Op
 		if h == nil {
 			return errInvalid("不认识的操作：" + string(op.Op))
 		}
-		ctx = &opCtx{s: s, tx: tx, w: w, dev: dev, me: person, now: now}
+		ctx = &opCtx{s: s, tx: tx, w: w, dev: dev, me: person, now: now, prep: prep}
 		return h(ctx, op.Args, &out)
 	})
 	if err == nil && ctx != nil {
@@ -167,6 +177,9 @@ type opCtx struct {
 	// after runs once the change is in the new world, for what must not
 	// happen before it is: waking someone who will look at it.
 	after []func()
+	// prep is what prepareOp did before the server's lock (stun.add's
+	// lookup); nil for the others.
+	prep any
 }
 
 func (c *opCtx) exec(q string, args ...any) error {
@@ -342,6 +355,21 @@ var opHandlers = map[proto.OpType]opHandler{
 	proto.OpRelayKick:        opRelayKick,
 	proto.OpRelayUnkick:      opRelayUnkick,
 	proto.OpRelayCheck:       opRelayCheck,
+
+	proto.OpSTUNAdd:    opSTUNAdd,
+	proto.OpSTUNRemove: opSTUNRemove,
+}
+
+// opNeedsPrep says whether op wants prepareOp first: one that has some, and
+// is not a retry with its answer kept.
+func (s *Server) opNeedsPrep(key string, op proto.Op, now time.Time) bool {
+	if op.Op != proto.OpSTUNAdd {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.ops.get(key, now)
+	return !ok
 }
 
 func opShareRelease(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {

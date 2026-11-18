@@ -139,6 +139,9 @@ func TestNoOneActsOnOthers(t *testing.T) {
 		{w.jdesk, proto.OpRelayUnkick, proto.OpArgs{Kick: kick}},
 		{mia, proto.OpRelayCheck, proto.OpArgs{Relay: relay}},
 		{w.jdesk, proto.OpRelayCheck, proto.OpArgs{Relay: relay}},
+		// The deployment's STUN servers are its operators' (0.1.11).
+		{mia, proto.OpSTUNAdd, proto.OpArgs{STUN: "stun.example.com"}},
+		{w.mac, proto.OpSTUNRemove, proto.OpArgs{STUN: "stun.cloudflare.com"}},
 	}
 	// Ops with nothing of anyone else's to name: they make the asker's
 	// own (a LAN, a relay) or delete the asker's account (TestAccountDelete);

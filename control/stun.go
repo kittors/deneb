@@ -218,7 +218,9 @@ func (s *Server) RunSTUN(ctx context.Context) {
 }
 
 // refreshSTUN looks every server up once and writes the addresses that
-// changed, all in one change: the devices get one new map.
+// changed, all in one change: the devices get one new map. Even with none
+// changed it publishes, for the operators' "6 分钟前查过": the streams whose
+// frames are the same (every device's) are sent nothing (hub.deliver).
 func (s *Server) refreshSTUN(ctx context.Context) {
 	var found []proto.STUNServer
 	for _, sv := range s.state.Load().w.stun {
@@ -236,6 +238,9 @@ func (s *Server) refreshSTUN(ctx context.Context) {
 		}
 	}
 	if len(found) == 0 {
+		if _, err := s.change("", func(*sql.Tx, *World) error { return nil }); err != nil {
+			s.logf("stun: publishing the lookups: %v", err)
+		}
 		return
 	}
 	var moved []string
@@ -255,10 +260,7 @@ func (s *Server) refreshSTUN(ctx context.Context) {
 			}
 			moved = append(moved, fmt.Sprintf("%s is at %s now, was %s", f, stunAddrs(f), stunAddrs(was)))
 		}
-		if len(moved) == 0 {
-			return errNoChange
-		}
-		return nil
+		return nil // with none moved (removed meanwhile), still the lookups to publish
 	})
 	if err != nil {
 		s.logf("stun: writing the addresses found: %v", err)
@@ -269,77 +271,182 @@ func (s *Server) refreshSTUN(ctx context.Context) {
 	}
 }
 
-// opsAddSTUN puts a STUN server at the end of the list. Its name is looked
-// up first, and one that cannot be is not added: what is on the list is
-// what the devices ask. by nil is the admin socket.
-func (s *Server) opsAddSTUN(by *person, spec string) (proto.STUNServer, error) {
+// stunAdd is a STUN server on its way onto the list: read, checked against
+// the list as it was, and looked up, all before the server's lock (a lookup
+// may take seconds). err is why it cannot go on.
+type stunAdd struct {
+	sv  proto.STUNServer // its name and port, and the addresses found
+	err error
+}
+
+// prepareSTUNAdd reads spec ("host" or "host:port") and looks the name up.
+// One that cannot be looked up is not added: what is on the list is what
+// the devices ask. The lookup's own words go to the log; the person is told
+// plainly.
+func (s *Server) prepareSTUNAdd(spec string) *stunAdd {
 	host, port, err := parseSTUN(spec)
 	if err != nil {
-		return proto.STUNServer{}, err
+		return &stunAdd{err: err}
 	}
 	sv := proto.STUNServer{HostName: host, Port: port}
-	there := func(w *World) error {
-		if findSTUN(w, host, port) >= 0 {
-			return errConflict(pangu("已经有" + sv.String() + "了"))
-		}
-		if len(w.stun) >= maxSTUN {
-			return errConflict(pangu(fmt.Sprintf("最多%d个，先去掉一个", maxSTUN)))
-		}
-		return nil
-	}
-	if err := there(s.state.Load().w); err != nil {
-		return sv, err
+	if err := stunRoom(s.state.Load().w, sv); err != nil {
+		return &stunAdd{sv: sv, err: err}
 	}
 	v4, v6, err := s.lookupSTUN(context.Background(), host, sv)
 	s.stunLooks.set(sv.String(), s.now(), err)
 	if err != nil {
-		return sv, errInvalid(pangu(fmt.Sprintf("查不到%s的地址，没有加（%v）", host, err)))
+		s.logf("stun: looking %s up to add it: %v", sv, err)
+		return &stunAdd{sv: sv, err: errInvalid(pangu(fmt.Sprintf("查不到%s的地址，没有加", host)))}
 	}
 	sv.IPv4, sv.IPv6 = v4, v6
+	return &stunAdd{sv: sv}
+}
+
+// stunRoom says whether sv may go onto w's list: not there yet, and room.
+func stunRoom(w *World, sv proto.STUNServer) error {
+	if findSTUN(w, sv.HostName, sv.Port) >= 0 {
+		return errConflict(pangu("已经有" + sv.String() + "了"))
+	}
+	if len(w.stun) >= maxSTUN {
+		return errConflict(pangu(fmt.Sprintf("最多%d个，先去掉一个", maxSTUN)))
+	}
+	return nil
+}
+
+// insert puts the server at the end of the list in tx, with its line of the
+// operators' record; the list is checked again, as it is now.
+func (a *stunAdd) insert(tx *sql.Tx, w *World, now time.Time, by opsActor) (string, error) {
+	if a.err != nil {
+		return "", a.err
+	}
+	if err := stunRoom(w, a.sv); err != nil {
+		return "", err
+	}
+	if _, err := tx.Exec(`INSERT INTO stun_servers (host, port, pos, ipv4, ipv6, added_at)
+		VALUES (?, ?, (SELECT COALESCE(MAX(pos), -1) + 1 FROM stun_servers), ?, ?, ?)`,
+		a.sv.HostName, a.sv.Port, addrText(a.sv.IPv4), addrText(a.sv.IPv6), ms(now)); err != nil {
+		return "", err
+	}
+	text := pangu("加了查外网地址的服务" + a.sv.String())
+	return text, recordOps(tx, now, by, "stun.add", a.sv.String(), text, "")
+}
+
+// stunRemove takes the server spec names off w's list in tx, with its line
+// of the record.
+func stunRemove(tx *sql.Tx, w *World, now time.Time, by opsActor, spec string) (string, error) {
+	host, port, err := parseSTUN(spec)
+	if err != nil {
+		return "", err
+	}
+	key := proto.STUNServer{HostName: host, Port: port}.String()
+	if findSTUN(w, host, port) < 0 {
+		return "", errNotFound(pangu("没有" + key))
+	}
+	if _, err := tx.Exec(`DELETE FROM stun_servers WHERE host = ? AND port = ?`, host, port); err != nil {
+		return "", err
+	}
+	text := pangu("去掉了查外网地址的服务" + key)
+	return text, recordOps(tx, now, by, "stun.remove", key, text, "")
+}
+
+// opsAddSTUN puts a STUN server at the end of the list, from the admin
+// socket (by nil) or an operator.
+func (s *Server) opsAddSTUN(by *person, spec string) (proto.STUNServer, error) {
+	a := s.prepareSTUNAdd(spec)
+	if a.err != nil {
+		return a.sv, a.err
+	}
 	actor := actorOf(by)
-	text := pangu("加了查外网地址的服务" + sv.String())
-	_, err = s.change("", func(tx *sql.Tx, w *World) error {
-		if err := there(w); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(`INSERT INTO stun_servers (host, port, pos, ipv4, ipv6, added_at)
-			VALUES (?, ?, (SELECT COALESCE(MAX(pos), -1) + 1 FROM stun_servers), ?, ?, ?)`,
-			host, port, addrText(v4), addrText(v6), ms(s.now())); err != nil {
-			return err
-		}
-		return recordOps(tx, s.now(), actor, "stun.add", sv.String(), text, "")
+	var text string
+	_, err := s.change("", func(tx *sql.Tx, w *World) error {
+		var err error
+		text, err = a.insert(tx, w, s.now(), actor)
+		return err
 	})
 	if err != nil {
-		return sv, err
+		return a.sv, err
 	}
 	s.logOps(actor, "stun.add", text)
-	return sv, nil
+	return a.sv, nil
 }
 
 // opsRemoveSTUN takes a STUN server off the list: the devices stop asking
 // it with their next map. by nil is the admin socket.
 func (s *Server) opsRemoveSTUN(by *person, spec string) error {
-	host, port, err := parseSTUN(spec)
-	if err != nil {
-		return err
-	}
-	key := proto.STUNServer{HostName: host, Port: port}.String()
 	actor := actorOf(by)
-	text := pangu("去掉了查外网地址的服务" + key)
-	_, err = s.change("", func(tx *sql.Tx, w *World) error {
-		if findSTUN(w, host, port) < 0 {
-			return errNotFound(pangu("没有" + key))
-		}
-		if _, err := tx.Exec(`DELETE FROM stun_servers WHERE host = ? AND port = ?`, host, port); err != nil {
-			return err
-		}
-		return recordOps(tx, s.now(), actor, "stun.remove", key, text, "")
+	var text string
+	_, err := s.change("", func(tx *sql.Tx, w *World) error {
+		var err error
+		text, err = stunRemove(tx, w, s.now(), actor, spec)
+		return err
 	})
 	if err != nil {
 		return err
 	}
 	s.logOps(actor, "stun.remove", text)
 	return nil
+}
+
+// The ops page's way (FeatureSTUN): stun.add and stun.remove as ops, the
+// deployment's operators only. stun.add's lookup runs before the op, outside
+// the server's lock (prepareOp); undo is the page's: it sends stun.remove
+// only once its toast is gone (ops.ts hold), so the server has none to do.
+
+// prepareOp does what an op needs done before the server's lock: for an
+// operator's stun.add, the lookup. Anyone else's op needs nothing.
+func (s *Server) prepareOp(person proto.PersonID, op proto.Op) any {
+	if op.Op != proto.OpSTUNAdd {
+		return nil
+	}
+	if p := s.state.Load().w.people[person]; p == nil || !p.Operator {
+		return nil // refused in the op: no lookups for others
+	}
+	return s.prepareSTUNAdd(op.Args.STUN)
+}
+
+func opSTUNAdd(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
+	if !c.operator() {
+		return errForbidden("只有部署管理员能改查外网地址的服务")
+	}
+	add, _ := c.prep.(*stunAdd)
+	if add == nil {
+		return errInvalid("没能查这个名字，再试一次")
+	}
+	by := actorOf(c.w.people[c.me])
+	text, err := add.insert(c.tx, c.w, c.now, by)
+	if err != nil {
+		return err
+	}
+	c.after = append(c.after, func() { c.s.logOps(by, "stun.add", text) })
+	return nil
+}
+
+func opSTUNRemove(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
+	if !c.operator() {
+		return errForbidden("只有部署管理员能改查外网地址的服务")
+	}
+	by := actorOf(c.w.people[c.me])
+	text, err := stunRemove(c.tx, c.w, c.now, by, a.STUN)
+	if err != nil {
+		return err
+	}
+	c.after = append(c.after, func() { c.s.logOps(by, "stun.remove", text) })
+	return nil
+}
+
+// operatorSTUN is the list as the ops page shows it: each server with what
+// its last lookup here found and when (stunLook, the server's memory).
+func (w *World) operatorSTUN() []proto.OperatorSTUN {
+	out := []proto.OperatorSTUN{}
+	for _, sv := range w.stun {
+		o := proto.OperatorSTUN{Server: sv.String(), HostName: sv.HostName, Port: sv.Port, IPv4: sv.IPv4, IPv6: sv.IPv6, AddedAt: sv.AddedAt}
+		if w.stunLook != nil {
+			l := w.stunLook(sv.String())
+			o.LookedUp, o.LookupError = l.at, l.err
+		}
+		out = append(out, o)
+	}
+	return out
 }
 
 // AdminSTUN is one STUN server, as deneb-control stun lists it.

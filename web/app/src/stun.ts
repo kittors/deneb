@@ -78,28 +78,20 @@ function itemOf(s: OperatorSTUN): Item {
   return { key: s.server, name: nameOf(s), tone, sub: spaced(sub), tip };
 }
 
-// swap changes an element's words one thing at a time (design/components.md
-// 换字): the old fade out, then the new fade in; from nothing, the new at once.
+// swap changes an element's words one thing at a time, with the frame's
+// swapText (v3-app.ts, design/components.md 换字): the old fade out, then
+// the new fade in; from nothing, the new at once. Not animated, they are
+// simply set (the first drawing).
+const swapText = (window as unknown as { swapText: (el: HTMLElement, text: string) => void }).swapText;
 function swap(el: HTMLElement, text: string, anim: boolean): void {
-  const w = el as HTMLElement & { __to?: string; __out?: Animation | null };
-  if ((w.__to ?? el.textContent) === text) return;
-  w.__to = text;
-  if (!anim || !el.textContent) {
-    w.__out?.cancel();
-    w.__out = null;
+  if (anim) swapText(el, text);
+  else {
+    for (const a of el.getAnimations()) a.cancel();
+    const w = el as HTMLElement & { _want?: string; _swapping?: boolean };
+    w._want = text;
+    w._swapping = false; // a swap cut off here would wait for its end forever
     el.textContent = text;
-    if (anim) el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: SWAP_IN, easing: 'ease-out' });
-    return;
   }
-  if (w.__out) return; // the old one is on its way out; the newest goes in
-  const out = el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: SWAP_OUT, easing: 'ease-in', fill: 'forwards' });
-  w.__out = out;
-  out.onfinish = () => {
-    w.__out = null;
-    el.textContent = w.__to as string;
-    out.cancel();
-    el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: SWAP_IN, easing: 'ease-out' });
-  };
 }
 
 export interface StunBlock {
@@ -356,11 +348,12 @@ export function stunBlock(app: { toast: (t: string, o: object) => HTMLElement },
     const row = listEl.querySelector<HTMLElement>(`.stun-row[data-k="${CSS.escape(key)}"]`);
     if (!row) return;
     const b = row.querySelector('.stun-rm') as HTMLElement;
-    b.classList.add('arm');
+    b.classList.add('arm'); // stays shown while it waits
     swap(b, '再点一下，去掉', true);
     const sub = row.querySelector('.stun-sub') as HTMLElement;
-    sub.classList.add('danger');
     swap(sub, '去掉以后，设备只问中转站', true);
+    // Red with the new words, not on the old ones fading out.
+    D.after(SWAP_OUT, () => armed === key && (b.classList.add('red'), sub.classList.add('danger')));
     armTimer?.cancel();
     armTimer = D.after(ARM_FOR, () => disarm());
   }
@@ -377,8 +370,8 @@ export function stunBlock(app: { toast: (t: string, o: object) => HTMLElement },
     b.classList.remove('arm');
     swap(b, '去掉', true);
     const sub = row.querySelector('.stun-sub') as HTMLElement;
-    sub.classList.remove('danger');
     swap(sub, itemOf(s).sub, true);
+    D.after(SWAP_OUT, () => armed !== key && (b.classList.remove('red'), sub.classList.remove('danger')));
   }
 
   // ---- Drawing --------------------------------------------------------------------------------

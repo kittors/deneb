@@ -64,8 +64,10 @@ type World struct {
 	// seatLimit is the deployment's seats per person; 0 means no limit.
 	seatLimit int
 	// stun is the deployment's STUN servers in order (stun.go), with the
-	// addresses the last lookup found.
-	stun []stunServer
+	// addresses the last lookup found; stunLook is how each one's last
+	// lookup went, the server's memory (nil in a test world).
+	stun     []stunServer
+	stunLook func(key string) stunLook
 }
 
 // share is one device shared with one person (M3).
