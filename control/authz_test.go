@@ -59,6 +59,8 @@ func TestNoOneActsOnOthers(t *testing.T) {
 	tries := []try{
 		{mia, proto.OpLANRename, proto.OpArgs{LAN: w.studio, Name: "我的了"}},
 		{w.mac, proto.OpLANRename, proto.OpArgs{LAN: w.weekend, Name: "我的了"}},
+		{mia, proto.OpLANSetIcon, proto.OpArgs{LAN: w.studio, Icon: &proto.LANIcon{Preset: "fluent3d/rocket"}}},
+		{w.mac, proto.OpLANSetIcon, proto.OpArgs{LAN: w.weekend, Icon: &proto.LANIcon{Preset: "fluent3d/rocket"}}},
 		{mia, proto.OpLANDelete, proto.OpArgs{LAN: w.weekend}},
 		{w.mac, proto.OpLANDelete, proto.OpArgs{LAN: w.weekend}},
 		{mia, proto.OpLANInvite, proto.OpArgs{LAN: w.studio}},

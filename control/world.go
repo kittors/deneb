@@ -121,11 +121,15 @@ type lan struct {
 	ApproveMembers bool
 	// Mode is how the LAN works (M3): proto.LANModeShare holds only the
 	// owner's devices and its public devices; members get shares.
-	Mode      proto.LANMode
-	members   []*member // in the order they joined, every state
-	memberOf  map[proto.PersonID]*member
-	devices   []*lanDevice // in, in the order they joined
-	hasDevice map[proto.DeviceID]*lanDevice
+	Mode proto.LANMode
+	// IconPreset or IconImage is the LAN's picture (lanicon.go): a preset's
+	// name, or its owner's own PNG; one of the two.
+	IconPreset string
+	IconImage  []byte
+	members    []*member // in the order they joined, every state
+	memberOf   map[proto.PersonID]*member
+	devices    []*lanDevice // in, in the order they joined
+	hasDevice  map[proto.DeviceID]*lanDevice
 	// pending are the devices waiting for the owner. They are kept apart
 	// from devices so nothing that computes a network map can count them.
 	pending    []*lanDevice
@@ -314,14 +318,14 @@ func loadWorld(q querier, network proto.Network, publicURL string, now time.Time
 		return nil, err
 	}
 
-	err = each(`SELECT id, name, owner, created_at, approve_devices, approve_members, mode FROM lans`, func(r *sql.Rows) error {
+	err = each(`SELECT id, name, owner, created_at, approve_devices, approve_members, mode, icon_preset, icon_image FROM lans`, func(r *sql.Rows) error {
 		l := &lan{
 			memberOf:   map[proto.PersonID]*member{},
 			hasDevice:  map[proto.DeviceID]*lanDevice{},
 			hasPending: map[proto.DeviceID]*lanDevice{},
 		}
 		var created int64
-		if err := r.Scan(&l.ID, &l.Name, &l.Owner, &created, &l.ApproveDevices, &l.ApproveMembers, &l.Mode); err != nil {
+		if err := r.Scan(&l.ID, &l.Name, &l.Owner, &created, &l.ApproveDevices, &l.ApproveMembers, &l.Mode, &l.IconPreset, &l.IconImage); err != nil {
 			return err
 		}
 		l.CreatedAt = fromMS(created)

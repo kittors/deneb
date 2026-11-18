@@ -307,6 +307,19 @@ var migrations = []string{
 		why         TEXT NOT NULL, -- deleted, uninstalled
 		at          INTEGER NOT NULL
 	);`,
+	// 14 (M7): a LAN's picture (design/plan/m7/switch-motion.md §5.4): a
+	// preset's name (proto.LANIconPresets), or its owner's own, a 128×128
+	// PNG (proto.NormalizeLANIcon). The LANs made before get one of the
+	// first 16 presets at random, here, once, as a new LAN does when it is
+	// made; it stays until the owner changes it. (random() & 15: abs() of
+	// the least integer would overflow.)
+	`ALTER TABLE lans ADD COLUMN icon_preset TEXT NOT NULL DEFAULT '';
+	ALTER TABLE lans ADD COLUMN icon_image BLOB NOT NULL DEFAULT X'';
+	UPDATE lans SET icon_preset = CASE random() & 15
+		WHEN 0 THEN 'fluent3d/cat' WHEN 1 THEN 'fluent3d/dog' WHEN 2 THEN 'fluent3d/fox' WHEN 3 THEN 'fluent3d/panda'
+		WHEN 4 THEN 'fluent3d/rabbit' WHEN 5 THEN 'fluent3d/frog' WHEN 6 THEN 'fluent3d/penguin' WHEN 7 THEN 'fluent3d/whale'
+		WHEN 8 THEN 'fluent3d/mushroom' WHEN 9 THEN 'fluent3d/cactus' WHEN 10 THEN 'fluent3d/rainbow' WHEN 11 THEN 'fluent3d/planet'
+		WHEN 12 THEN 'fluent3d/gamepad' WHEN 13 THEN 'fluent3d/house' WHEN 14 THEN 'fluent3d/sunflower' ELSE 'fluent3d/rocket' END;`,
 }
 
 func migrate(db *sql.DB) error {

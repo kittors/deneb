@@ -48,6 +48,7 @@
 ### The networks you set up
 
 - **LANs**: the name, who created it, its members and when they joined, its devices, and the two switches for approving new devices and new members.
+  - A LAN's picture — a preset, or one its owner uploads, made 128×128 without its metadata — is stored on the control server, and shown to the LAN's members and to anyone holding an invite link to it. It is deleted with the LAN.
 - **Invitations**: who sent it, whom it was addressed to, whether it has been used and whether it has expired. The invitation link itself is kept too, because members need to be able to see it again.
 - **Shares**: which device was shared with whom, which services are open to them, when it was shared, and also when it was taken back or given up.
 - **Services**: the services you set up on a device (such as Remote Desktop or a shared folder: a name and a port), and which LANs and shares each one is open to.
@@ -116,7 +117,7 @@ The server container's own log (kept by Docker) only has the few lines from befo
   - Their devices get the public address, local address and ports your devices report, so that they can connect to yours directly.
   - **They do not see your email address.** Only you see it.
 - **People you shared a device with**: they see that device and the services you opened to them, not your other devices.
-- **Anyone with an invitation link**: when they open it, they see the LAN's name, who invited them, the names of the people already in it and how many devices it has. They do not see email addresses.
+- **Anyone with an invitation link**: when they open it, they see the LAN's name and picture, who invited them, the names of the people already in it and how many devices it has. They do not see email addresses.
 - **The owner of a relay under "My servers"**: sees which devices and people connect through it and how much traffic each one used, and which of the owner's own devices cannot reach it. Not the content.
 - **Admins of the deployment** (on the operations page): see the names and traffic of the 5 people who used the public relays most this month, but not whom those people connected with.
 
@@ -189,7 +190,7 @@ The server container's own log (kept by Docker) only has the few lines from befo
 | Account | Until it is deleted (section 8) |
 | Device | Until it is deleted: by its owner, together with the account, or when someone signs in on the same computer and the new device replaces the old one. Devices that signed out, or whose sign-in expired (not back for 180 days), are kept too, so that the same person gets the same address when signing in again. But the addresses and ports a device reported are cleared at once when it signs out, and at the daily cleanup when its sign-in has expired |
 | A device's Deneb address | Not given to anyone else until 30 days after the device is deleted |
-| LANs, members, services, refusals | Until they are deleted, left or turned off |
+| LANs (with their pictures), members, services, refusals | Until they are deleted, left or turned off |
 | Shares | Once taken back or given up, the record is kept 30 more days, then deleted. A share just taken back is not deleted during the few seconds it can still be undone |
 | Invitations | Used ones are kept 30 more days; expired or withdrawn ones, 30 days past their end; then they are deleted. They are deleted with their LAN |
 | Relay traffic | By day, for this month and the two before; older days are deleted. Deleted with the relay |

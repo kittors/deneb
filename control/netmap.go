@@ -290,13 +290,14 @@ func (w *World) userView(me proto.PersonID, version uint64, isOnline online, now
 		return nil
 	}
 	v := &proto.UserView{
-		Version:  version,
-		Me:       me,
-		People:   []proto.Person{},
-		LANs:     []proto.LANView{},
-		Devices:  []proto.DeviceView{},
-		Relays:   []proto.Relay{},
-		Features: slices.Clone(proto.M4Features),
+		Version: version,
+		Me:      me,
+		People:  []proto.Person{},
+		LANs:    []proto.LANView{},
+		Devices: []proto.DeviceView{},
+		Relays:  []proto.Relay{},
+		// And the LANs' pictures (M7, lanicon.go).
+		Features: append(slices.Clone(proto.M4Features), proto.FeatureLANIcon),
 	}
 
 	// My LANs, in the order I joined them, or asked to: the ones I wait
@@ -331,10 +332,10 @@ func (w *World) userView(me proto.PersonID, version uint64, isOnline online, now
 
 	for _, l := range mine {
 		if !l.joined(me) {
-			// Waiting to be let in: the name and whose it is, nothing of
-			// what is inside.
+			// Waiting to be let in: the name, its picture and whose it is,
+			// nothing of what is inside.
 			v.LANs = append(v.LANs, proto.LANView{
-				ID: l.ID, Name: l.Name, Owner: l.Owner, CreatedAt: l.CreatedAt, Pending: true,
+				ID: l.ID, Name: l.Name, Owner: l.Owner, CreatedAt: l.CreatedAt, Pending: true, Icon: l.icon(),
 				Members: []proto.Member{}, Devices: []proto.LANDevice{}, Relays: []proto.RelayID{},
 			})
 			people[l.Owner] = true
@@ -354,6 +355,7 @@ func (w *World) userView(me proto.PersonID, version uint64, isOnline online, now
 			ApproveDevices: l.ApproveDevices,
 			ApproveMembers: l.ApproveMembers,
 			Mode:           l.Mode,
+			Icon:           l.icon(),
 		}
 		if l.Mode == proto.LANModeShare && !owner {
 			// A member of a sharing LAN sees whose it is and nothing of it:
@@ -702,6 +704,7 @@ func (w *World) preview(i *invite, asker proto.PersonID, now time.Time) proto.In
 		Invite:    i.ID,
 		LAN:       l.ID,
 		LANName:   l.Name,
+		Icon:      l.icon(),
 		State:     i.state(now),
 		ExpiresAt: i.ExpiresAt,
 		AlreadyIn: asker != "" && l.joined(asker),

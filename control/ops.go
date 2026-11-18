@@ -293,6 +293,7 @@ type opHandler func(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error
 var opHandlers = map[proto.OpType]opHandler{
 	proto.OpLANCreate:       opLANCreate,
 	proto.OpLANRename:       opLANRename,
+	proto.OpLANSetIcon:      opLANSetIcon,
 	proto.OpLANDelete:       opLANDelete,
 	proto.OpLANInvite:       opLANInvite,
 	proto.OpInviteAccept:    opInviteAccept,
@@ -384,9 +385,10 @@ func opLANCreate(c *opCtx, a proto.OpArgs, out *proto.OpOutput) error {
 	id := proto.LANID(newID("l"))
 	// New LANs want new devices and new members approved: the plan's
 	// recommendation (§0.2, DESIGN §12 item 6), which the user took. The
-	// owner turns either off with lan.setApprove*.
-	if err := c.exec(`INSERT INTO lans (id, name, owner, created_at, approve_devices, approve_members) VALUES (?, ?, ?, ?, 1, 1)`,
-		id, name, c.me, ms(c.now)); err != nil {
+	// owner turns either off with lan.setApprove*. Its picture is one of
+	// the presets at random (lanicon.go), the same for everyone.
+	if err := c.exec(`INSERT INTO lans (id, name, owner, created_at, approve_devices, approve_members, icon_preset) VALUES (?, ?, ?, ?, 1, 1, ?)`,
+		id, name, c.me, ms(c.now), randomLANIcon()); err != nil {
 		return err
 	}
 	if err := c.exec(`INSERT INTO members (lan, person, role, state, joined_at) VALUES (?, ?, ?, ?, ?)`,

@@ -160,6 +160,10 @@ func TestMigrateFromM1(t *testing.T) {
 	if l == nil || d == nil || !l.joined("p_1") || l.hasDevice["d_1"] == nil || l.ApproveDevices || !l.ApproveMembers {
 		t.Fatalf("after migrating: lan %+v, device %+v", l, d)
 	}
+	// And a picture, one of the presets (migration 14).
+	if !proto.ValidLANIconPreset(l.IconPreset) || len(l.IconImage) != 0 {
+		t.Fatalf("an old LAN's picture: %q, %d bytes", l.IconPreset, len(l.IconImage))
+	}
 	if d.ExpiresAt.Sub(now) != DefaultLoginLifetime || !d.usable() {
 		t.Fatalf("an M1 device's login: expires %v", d.ExpiresAt)
 	}
